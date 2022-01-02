@@ -1,3 +1,6 @@
+// Copyright (c) 2022 Mohamed
+// Intermediary version 10.1.22
+
 #define PI	  3.14159265359f
 #define TWOPI 6.28318530718f
 
@@ -189,7 +192,7 @@ float perlin(float x, float y)
 	return (value + 1) / 2;
 }
 
-// rng & noise
+// randomness & noise
 
 #define BIT_NOISE_1 0xB5297A4D;
 #define BIT_NOISE_2 0x68E31DA4;
@@ -230,18 +233,18 @@ int random_float()
 
 	return u.ret;
 }
-float random_chance() // random float between 0 and 1
+float random_normalized_float() // random float between 0 and 1
 {
 	uint seed = random_uint();
 	return (float)seed / (float)UINT_MAX; // is there a better way to do this?
 }
-float random_chance_signed() // random float between -1 and 1
+float random_normalized_float_signed() // random float between -1 and 1
 {
-	return ((random_chance() * 2) - 1);
+	return (random_normalized_float() * 2) - 1;
 }
 bool random_boolean(float probability_of_returning_true = 0.5)
 {
-	if (random_chance() < probability_of_returning_true) return true;
+	if (random_normalized_float() < probability_of_returning_true) return true;
 	
 	return false;
 }
@@ -256,7 +259,7 @@ int noise(uint n, uint seed = 0)
 	n ^= (n >> 8);
 	return n;
 }
-float noise_chance(uint n, uint seed = 0)
+float noise_chance(uint n, uint seed = 0) // normalized
 {
 	n *= BIT_NOISE_1;
 	n += seed;
@@ -278,6 +281,15 @@ float perlin(float n)
 
 	return lerp(noise_chance(x1), noise_chance(x2), n - (float)x1);
 }
+
+float randfn(uint n, uint seed = 0) { return noise_chance(n, seed); }
+float randfns(uint n, uint seed = 0) { return (noise_chance(n, seed) * 2) - 1; }
+float randfn() { return random_normalized_float(); }
+float randfns() { return random_normalized_float_signed(); }
+vec3  randf3n() { return vec3(randfn(), randfn(), randfn()); }
+vec3  randf3ns() { return vec3(randfns(), randfns(), randfns()); }
+vec3  randf3n(uint a, uint b, uint c) { return vec3(randfn(a), randfn(b), randfn(c)); }
+vec3  randf3ns(uint a, uint b, uint c) { return vec3(randfns(a), randfns(b), randfns(c)); }
 
 vec3 shake(float trauma) // perlin shake
 {
@@ -379,8 +391,8 @@ Complex gaussian_random_complex()
 {
 	float x1, x2, w;
 	do {
-		x1 = random_chance_signed();
-		x2 = random_chance_signed();
+		x1 = randfns();
+		x2 = randfns();
 		w = x1 * x1 + x2 * x2;
 	} while (w > 1.f);
 	w = sqrt((-2.f * log(w)) / w);

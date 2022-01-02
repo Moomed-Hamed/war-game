@@ -1,16 +1,6 @@
 #include "window.h"
 
-/* -- how 2 draw a mesh --
-
-	Shader shader = {};
-	load(&shader, "vertex_shader.vert", "fragment_shader.frag");
-
-	Drawable_Mesh mesh = {};
-	load(mesh, "object.mesh");
-	
-	bind(shader);
-	draw(mesh);
-*/
+#define DRAW_DISTANCE 1024.0f
 
 // ------------------------------------------------- //
 // -------------------- Shaders -------------------- //
@@ -147,6 +137,11 @@ GLuint load_texture_png(const char* path)
 	stbi_image_free(image);
 
 	return id;
+}
+void bind_texture(GLuint texture, uint texture_unit = 0)
+{
+	glActiveTexture(GL_TEXTURE0 + texture_unit);
+	glBindTexture(GL_TEXTURE_2D, texture);
 }
 
 // ------------------------------------------------- //
@@ -289,7 +284,7 @@ void load(Mesh_Data_Anim_UV* data, const char* path)
 }
 
 // ------------------------------------------------- //
-// ---------------- Mesh Renderables --------------- //
+// ----------------- Mesh Rendering ---------------- //
 // ------------------------------------------------- //
 
 struct Drawable_Mesh
@@ -301,7 +296,7 @@ struct Drawable_Mesh
 struct Drawable_Mesh_UV
 {
 	GLuint VAO, VBO, EBO;
-	uint num_indices, texture_id, material_id;
+	uint num_indices;
 };
 
 struct Drawable_Mesh_Anim
@@ -313,7 +308,7 @@ struct Drawable_Mesh_Anim
 struct Drawable_Mesh_Anim_UV
 {
 	GLuint VAO, VBO, EBO, UBO;
-	uint num_indices, texture_id, material_id;
+	uint num_indices;
 };
 
 void load(Drawable_Mesh* mesh, const char* path, uint reserved_mem_size = 0)
@@ -366,7 +361,7 @@ void draw(Drawable_Mesh mesh, uint num_instances = 1)
 	glDrawElementsInstanced(GL_TRIANGLES, mesh.num_indices, GL_UNSIGNED_INT, 0, num_instances);
 }
 
-void load(Drawable_Mesh_UV* mesh, const char* path, uint reserved_mem_size)
+void load(Drawable_Mesh_UV* mesh, const char* path, uint reserved_mem_size = 0)
 {
 	Mesh_Data_UV mesh_data = {};
 	load(&mesh_data, path);
@@ -416,14 +411,6 @@ void update(Drawable_Mesh_UV mesh, uint vb_size, byte* vb_data)
 {
 	glBindBuffer(GL_ARRAY_BUFFER, mesh.VBO);
 	glBufferSubData(GL_ARRAY_BUFFER, 0, vb_size, vb_data);
-}
-void bind_texture(Drawable_Mesh_UV mesh, uint texture_unit = 0)
-{
-	glActiveTexture(GL_TEXTURE0 + texture_unit);
-	glBindTexture(GL_TEXTURE_2D, mesh.texture_id);
-
-	glActiveTexture(GL_TEXTURE1 + texture_unit);
-	glBindTexture(GL_TEXTURE_2D, mesh.material_id);
 }
 void draw(Drawable_Mesh_UV mesh, uint num_instances = 1)
 {
@@ -578,14 +565,6 @@ void update(Drawable_Mesh_Anim_UV mesh, uint num_bones, mat4* pose, uint vb_size
 	glBindBuffer(GL_UNIFORM_BUFFER, mesh.UBO);
 	glBufferSubData(GL_UNIFORM_BUFFER, 0, num_bones * sizeof(mat4), pose);
 }
-void bind_texture(Drawable_Mesh_Anim_UV mesh, uint texture_unit = 0)
-{
-	glActiveTexture(GL_TEXTURE0 + texture_unit);
-	glBindTexture(GL_TEXTURE_2D, mesh.texture_id);
-
-	glActiveTexture(GL_TEXTURE1 + texture_unit);
-	glBindTexture(GL_TEXTURE_2D, mesh.material_id);
-}
 void draw(Drawable_Mesh_Anim_UV mesh, uint num_instances = 1)
 {
 	glBindVertexArray(mesh.VAO);
@@ -646,7 +625,7 @@ void mesh_add_attrib_mat3 (GLuint attrib_id, uint stride, uint offset)
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
 	bind(lighting_shader);
-	g_buffer_draw(g_buffer);
+	draw(g_buffer);
 */
 
 struct G_Buffer
@@ -656,10 +635,12 @@ struct G_Buffer
 	GLuint VAO, VBO, EBO; // for drawing the quad
 };
 
-void init_g_buffer(G_Buffer* buf, Window window)
+G_Buffer make_g_buffer(Window window)
 {
-	glGenFramebuffers(1, &buf->FBO);
-	glBindFramebuffer(GL_FRAMEBUFFER, buf->FBO);
+	G_Buffer buf = {};
+
+	glGenFramebuffers(1, &buf.FBO);
+	glBindFramebuffer(GL_FRAMEBUFFER, buf.FBO);
 
 	GLuint g_positions, g_normals, g_albedo;
 
@@ -700,9 +681,9 @@ void init_g_buffer(G_Buffer* buf, Window window)
 
 	if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) { out("FRAMEBUFFER ERROR : INCOMPLETE"); stop; }
 
-	buf->positions = g_positions;
-	buf->normals   = g_normals;
-	buf->albedo    = g_albedo;
+	buf.positions = g_positions;
+	buf.normals   = g_normals;
+	buf.albedo    = g_albedo;
 
 	// make a screen quad
 
@@ -727,17 +708,17 @@ void init_g_buffer(G_Buffer* buf, Window window)
 		3,1,0
 	};
 
-	glGenVertexArrays(1, &buf->VAO);
-	glBindVertexArray(buf->VAO);
+	glGenVertexArrays(1, &buf.VAO);
+	glBindVertexArray(buf.VAO);
 
-	glGenBuffers(1, &buf->VBO);
-	glBindBuffer(GL_ARRAY_BUFFER, buf->VBO);
+	glGenBuffers(1, &buf.VBO);
+	glBindBuffer(GL_ARRAY_BUFFER, buf.VBO);
 	glBufferData(GL_ARRAY_BUFFER, sizeof(verts) + sizeof(tex_coords), NULL, GL_STATIC_DRAW);
 	glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(verts), verts);
 	glBufferSubData(GL_ARRAY_BUFFER, sizeof(verts), sizeof(tex_coords), tex_coords);
 
-	glGenBuffers(1, &buf->EBO);
-	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, buf->EBO);
+	glGenBuffers(1, &buf.EBO);
+	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, buf.EBO);
 	glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indicies), indicies, GL_STATIC_DRAW);
 
 	uint offset = 0;
@@ -749,8 +730,10 @@ void init_g_buffer(G_Buffer* buf, Window window)
 	GLint tex_attrib = 1; // texture coordinates
 	glVertexAttribPointer(tex_attrib, 2, GL_FLOAT, GL_FALSE, sizeof(vec2), (void*)offset);
 	glEnableVertexAttribArray(tex_attrib);
+
+	return buf;
 }
-void draw_g_buffer(G_Buffer g_buffer)
+void draw(G_Buffer g_buffer)
 {
 	glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, g_buffer.positions);
 	glActiveTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_2D, g_buffer.normals);
@@ -762,9 +745,9 @@ void draw_g_buffer(G_Buffer g_buffer)
 
 /* -- deferred rendering cheat sheet --
 
-	Position texture = 0
-	Normal   texture = 1
-	Albedo   texture = 2
+	position = texture_unit 0
+	normal   = texture_unit 1
+	albedo   = texture_unit 2
 
 	GL_FRAMEBUFFER = 0 for default framebuffer
 */
@@ -773,40 +756,14 @@ void draw_g_buffer(G_Buffer g_buffer)
 // -------------------- Lighting ------------------- //
 // ------------------------------------------------- //
 
-struct Point_Light
-{
-	vec3 position, color;
-	float intensity;
-};
-
-struct Spot_Light
-{
-	vec3 position, direction, color;
-	float inner_cuttof, outer_cuttof;
-};
-
-struct Light_Renderer
-{
-	Point_Light* point_lights;
-	Spot_Light*  spot_lights;
-	Shader shader;
-};
-
-void init(Light_Renderer* renderer)
-{
-
-}
-
 Shader make_lighting_shader()
 {
 	Shader lighting_shader = {};
 	load(&lighting_shader, "assets/shaders/lighting.vert", "assets/shaders/lighting.frag");
 	bind(lighting_shader);
 
-	vec3 fire = vec3(.90, .57, .11);
-
-	vec3 light_positions[4] = { vec3(9.3,.25,-6.5), vec3(0,.25,-6.5), vec3(10,.5,-12.5), vec3(3,1,3) };
-	vec3 light_colors   [4] = { fire, vec3(0,1,1), vec3(0,1,1), vec3(0,1,1) };
+	vec3 light_positions[4] = { vec3(9, 1.5, 6), vec3(50), vec3(50), vec3(50) };
+	vec3 light_colors   [4] = { vec3(.88, .34, .13), vec3(1), vec3(1), vec3(1) };
 
 	set_vec3(lighting_shader, "light_positions[0]", light_positions[0]);
 	set_vec3(lighting_shader, "light_positions[1]", light_positions[1]);
@@ -833,7 +790,6 @@ struct Drawable_Mesh_2D
 struct Drawable_Mesh_2D_UV
 {
 	GLuint VAO, VBO, EBO;
-	GLuint texture_id;
 };
 
 void init(Drawable_Mesh_2D* mesh, uint reserved_mem_size = 0)
@@ -888,7 +844,7 @@ void draw(Drawable_Mesh_2D mesh, uint num_instances = 1)
 	glDrawElementsInstanced(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0, num_instances);
 }
 
-void init(Drawable_Mesh_2D_UV* mesh, const char* texture_path, uint reserved_mem_size = 0)
+void init(Drawable_Mesh_2D_UV* mesh, uint reserved_mem_size = 0)
 {
 	float verts[] = {
 		// X     Y
@@ -925,27 +881,6 @@ void init(Drawable_Mesh_2D_UV* mesh, const char* texture_path, uint reserved_mem
 		glVertexAttribPointer(vert_attrib, 2, GL_FLOAT, GL_FALSE, sizeof(vec2), (void*)offset);
 		glEnableVertexAttribArray(vert_attrib);
 	}
-
-	if (texture_path)
-	{
-		int width, height, num_channels;
-		byte* image;
-
-		stbi_set_flip_vertically_on_load(true);
-
-		image = stbi_load(texture_path, &width, &height, &num_channels, 0);
-
-		glGenTextures(1, &(mesh->texture_id));
-		glBindTexture(GL_TEXTURE_2D, mesh->texture_id);
-		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, image);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-		glGenerateMipmap(GL_TEXTURE_2D);
-
-		stbi_image_free(image);
-	}
 }
 void update(Drawable_Mesh_2D_UV mesh, uint vb_size = NULL, byte* vb_data = NULL)
 {
@@ -954,11 +889,6 @@ void update(Drawable_Mesh_2D_UV mesh, uint vb_size = NULL, byte* vb_data = NULL)
 		glBindBuffer(GL_ARRAY_BUFFER, mesh.VBO);
 		glBufferSubData(GL_ARRAY_BUFFER, 0, vb_size, vb_data);
 	}
-}
-void bind_texture(Drawable_Mesh_2D_UV mesh, uint texture_unit = 0)
-{
-	glActiveTexture(GL_TEXTURE0 + texture_unit);
-	glBindTexture(GL_TEXTURE_2D, mesh.texture_id);
 }
 void draw(Drawable_Mesh_2D_UV mesh, uint num_instances = 1)
 {
@@ -970,15 +900,15 @@ void draw(Drawable_Mesh_2D_UV mesh, uint num_instances = 1)
 // -------------------- Animation ------------------ //
 // ------------------------------------------------- //
 
-#define MAX_ANIMATED_BONES 16
+#define MAX_ANIM_BONES 16
 
 struct Animation
 {
 	uint num_bones, num_frames;
 
-	mat4  ibm[MAX_ANIMATED_BONES]; // inverse-bind matrices
-	mat4* keyframes[MAX_ANIMATED_BONES];
-	int parents[MAX_ANIMATED_BONES]; // indices of parent bones
+	mat4  ibm       [MAX_ANIM_BONES]; // inverse-bind matrices
+	mat4* keyframes [MAX_ANIM_BONES];
+	int   parents   [MAX_ANIM_BONES]; // indices of parent bones
 
 	// playback
 	uint current_frame;
@@ -1070,7 +1000,7 @@ void update_animation(Animation* anim, mat4* poses, float dtime)
 }
 
 // ------------------------------------------------- //
-// --------------------- Camera -------------------- //
+// -------------------- 3D Camera ------------------ //
 // ------------------------------------------------- //
 
 #define DIR_FORWARD	0
