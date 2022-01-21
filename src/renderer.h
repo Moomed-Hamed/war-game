@@ -350,17 +350,6 @@ void load(Drawable_Mesh* mesh, const char* path, uint reserved_mem_size = 0)
 		glEnableVertexAttribArray(norm_attrib);
 	}
 }
-void update(Drawable_Mesh mesh, uint vb_size, byte* vb_data)
-{
-	glBindBuffer(GL_ARRAY_BUFFER, mesh.VBO);
-	glBufferSubData(GL_ARRAY_BUFFER, 0, vb_size, vb_data);
-}
-void draw(Drawable_Mesh mesh, uint num_instances = 1)
-{
-	glBindVertexArray(mesh.VAO);
-	glDrawElementsInstanced(GL_TRIANGLES, mesh.num_indices, GL_UNSIGNED_INT, 0, num_instances);
-}
-
 void load(Drawable_Mesh_UV* mesh, const char* path, uint reserved_mem_size = 0)
 {
 	Mesh_Data_UV mesh_data = {};
@@ -407,17 +396,6 @@ void load(Drawable_Mesh_UV* mesh, const char* path, uint reserved_mem_size = 0)
 		glEnableVertexAttribArray(tex_attrib);
 	}
 }
-void update(Drawable_Mesh_UV mesh, uint vb_size, byte* vb_data)
-{
-	glBindBuffer(GL_ARRAY_BUFFER, mesh.VBO);
-	glBufferSubData(GL_ARRAY_BUFFER, 0, vb_size, vb_data);
-}
-void draw(Drawable_Mesh_UV mesh, uint num_instances = 1)
-{
-	glBindVertexArray(mesh.VAO);
-	glDrawElementsInstanced(GL_TRIANGLES, mesh.num_indices, GL_UNSIGNED_INT, 0, num_instances);
-}
-
 void load(Drawable_Mesh_Anim* mesh, const char* path, uint reserved_mem_size = 0)
 {
 	Mesh_Data_Anim mesh_data;
@@ -477,20 +455,6 @@ void load(Drawable_Mesh_Anim* mesh, const char* path, uint reserved_mem_size = 0
 	//glBindBufferRange(GL_UNIFORM_BUFFER, 0, renderdata->UBO, 0, model_data.num_joints * sizeof(glm::mat4));
 	glBindBufferBase(GL_UNIFORM_BUFFER, 0, mesh->UBO);
 }
-void update(Drawable_Mesh_Anim mesh, uint num_bones, mat4* pose, uint vb_size, byte* vb_data)
-{
-	glBindBuffer(GL_ARRAY_BUFFER, mesh.VBO);
-	glBufferSubData(GL_ARRAY_BUFFER, 0, vb_size, vb_data);
-
-	glBindBuffer(GL_UNIFORM_BUFFER, mesh.UBO);
-	glBufferSubData(GL_UNIFORM_BUFFER, 0, num_bones * sizeof(mat4), pose);
-}
-void draw(Drawable_Mesh_Anim mesh, uint num_instances = 1)
-{
-	glBindVertexArray(mesh.VAO);
-	glDrawElementsInstanced(GL_TRIANGLES, mesh.num_indices, GL_UNSIGNED_INT, 0, num_instances);
-}
-
 void load(Drawable_Mesh_Anim_UV* mesh, const char* path, uint reserved_mem_size = 0)
 {
 	Mesh_Data_Anim_UV mesh_data;
@@ -557,6 +521,25 @@ void load(Drawable_Mesh_Anim_UV* mesh, const char* path, uint reserved_mem_size 
 	//glBindBufferRange(GL_UNIFORM_BUFFER, 0, renderdata->UBO, 0, model_data.num_joints * sizeof(glm::mat4));
 	glBindBufferBase(GL_UNIFORM_BUFFER, 0, mesh->UBO);
 }
+
+void update(Drawable_Mesh mesh, uint vb_size, byte* vb_data)
+{
+	glBindBuffer(GL_ARRAY_BUFFER, mesh.VBO);
+	glBufferSubData(GL_ARRAY_BUFFER, 0, vb_size, vb_data);
+}
+void update(Drawable_Mesh_UV mesh, uint vb_size, byte* vb_data)
+{
+	glBindBuffer(GL_ARRAY_BUFFER, mesh.VBO);
+	glBufferSubData(GL_ARRAY_BUFFER, 0, vb_size, vb_data);
+}
+void update(Drawable_Mesh_Anim mesh, uint num_bones, mat4* pose, uint vb_size, byte* vb_data)
+{
+	glBindBuffer(GL_ARRAY_BUFFER, mesh.VBO);
+	glBufferSubData(GL_ARRAY_BUFFER, 0, vb_size, vb_data);
+
+	glBindBuffer(GL_UNIFORM_BUFFER, mesh.UBO);
+	glBufferSubData(GL_UNIFORM_BUFFER, 0, num_bones * sizeof(mat4), pose);
+}
 void update(Drawable_Mesh_Anim_UV mesh, uint num_bones, mat4* pose, uint vb_size, byte* vb_data)
 {
 	glBindBuffer(GL_ARRAY_BUFFER, mesh.VBO);
@@ -564,6 +547,22 @@ void update(Drawable_Mesh_Anim_UV mesh, uint num_bones, mat4* pose, uint vb_size
 
 	glBindBuffer(GL_UNIFORM_BUFFER, mesh.UBO);
 	glBufferSubData(GL_UNIFORM_BUFFER, 0, num_bones * sizeof(mat4), pose);
+}
+
+void draw(Drawable_Mesh mesh, uint num_instances = 1)
+{
+	glBindVertexArray(mesh.VAO);
+	glDrawElementsInstanced(GL_TRIANGLES, mesh.num_indices, GL_UNSIGNED_INT, 0, num_instances);
+}
+void draw(Drawable_Mesh_UV mesh, uint num_instances = 1)
+{
+	glBindVertexArray(mesh.VAO);
+	glDrawElementsInstanced(GL_TRIANGLES, mesh.num_indices, GL_UNSIGNED_INT, 0, num_instances);
+}
+void draw(Drawable_Mesh_Anim mesh, uint num_instances = 1)
+{
+	glBindVertexArray(mesh.VAO);
+	glDrawElementsInstanced(GL_TRIANGLES, mesh.num_indices, GL_UNSIGNED_INT, 0, num_instances);
 }
 void draw(Drawable_Mesh_Anim_UV mesh, uint num_instances = 1)
 {

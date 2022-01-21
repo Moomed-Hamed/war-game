@@ -47,7 +47,7 @@ int main()
 	mat4 proj = glm::perspective(FOV, (float)window.screen_width / window.screen_height, 0.1f, DRAW_DISTANCE);
 
 	// frame timer
-	float frame_time = 1.f / 60;
+	float frame_time = 1.f / 45;
 	int64 target_frame_milliseconds = frame_time * 1000.f; // seconds * 1000 = milliseconds
 	Timestamp frame_start = get_timestamp(), frame_end;
 

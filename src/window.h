@@ -1,6 +1,4 @@
-// Copyright (c) 2022 Mohamed
-// Intermediary version 16.1.22
-
+// Copyright (c) 2022 Moomed
 #include "proprietary/boilerplate.h"
 
 #define WINDOW_ERROR(str) out("WINDOW ERROR: " << str)
