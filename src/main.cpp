@@ -1,4 +1,4 @@
-#include "weps.h"
+#include "enemies.h"
 
 int main()
 {
@@ -30,6 +30,10 @@ int main()
 	Gun gun = {};
 	Gun_Renderer* gun_renderer = Alloc(Gun_Renderer, 1);
 	init(gun_renderer);
+
+	Enemy* enemies = Alloc(Enemy, MAX_ENEMIES); init(enemies);
+	Enemy_Renderer* enemy_renderer = Alloc(Enemy_Renderer, 1);
+	init(enemy_renderer);
 
 	Physics_Colliders* colliders = Alloc(Physics_Colliders, 1);
 	colliders->dynamic.cubes     [0] = { {1, 2, 3}, {}, {}, 1, vec3(1) };
@@ -74,6 +78,7 @@ int main()
 		update(emitter, heightmap, frame_time, vec3(0));
 		update(bullets, frame_time);
 		update(&gun, bullets, &player->eyes, mouse, keys, frame_time);
+		update(enemies, frame_time, bullets, emitter, &player->eyes);
 
 		// renderer updates
 		update(crosshair_renderer);
@@ -81,7 +86,8 @@ int main()
 		update(particle_renderer , emitter);
 		update(prop_renderer     , props);
 		update(bullet_renderer   , bullets);
-		update(gun_renderer, gun, frame_time, player->eyes, 0);
+		update(gun_renderer      , gun, frame_time, player->eyes, 0);
+		update(enemy_renderer    , enemies);
 
 		// geometry pass
 		glBindFramebuffer(GL_FRAMEBUFFER, g_buffer.FBO);
@@ -95,6 +101,7 @@ int main()
 		draw(heightmap_renderer, proj_view);
 		draw(bullet_renderer   , proj_view);
 		draw(gun_renderer      , proj_view);
+		draw(enemy_renderer    , proj_view);
 
 		// lighting pass
 		glBindFramebuffer(GL_FRAMEBUFFER, 0);
