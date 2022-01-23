@@ -70,6 +70,8 @@ int main()
 		if (keys.G.is_pressed) player->eyes.trauma = 1;
 		if (keys.G.is_pressed) emit_explosion(emitter, player->eyes.position + 14.f * player->eyes.front);
 
+		if (keys.M.is_pressed) explode(heightmap, player->feet.position, heightmap_renderer->heights);
+
 		static float a = 0; a += frame_time;
 		if (a > .4) { a = 0; emit_fire(emitter, terrain(heightmap, vec2(9, 6))); }
 

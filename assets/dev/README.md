@@ -1,6 +1,6 @@
 # Making Animated Meshes
 
-## Warnings
+### Warnings
 - name your Armature 'Armature' (case sensitive)
 - only ONE mesh per blender file
 - only ONE texture per mesh

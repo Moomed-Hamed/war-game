@@ -4,6 +4,13 @@
 #define HEIGHTMAP_L	64
 #define HEIGHTMAP_S	2
 
+uint height_index(float pos_x, float pos_z)
+{
+	uint x = (pos_x / HEIGHTMAP_L) * HEIGHTMAP_N;
+	uint z = (pos_z / HEIGHTMAP_L) * HEIGHTMAP_N;
+	return (x * HEIGHTMAP_N) + z;
+}
+
 struct Heightmap
 {
 	float height[HEIGHTMAP_N * HEIGHTMAP_N];
@@ -11,21 +18,31 @@ struct Heightmap
 
 float height(Heightmap* map, vec3 pos)
 {
-	uint x = (pos.x / HEIGHTMAP_L) * HEIGHTMAP_N;
-	uint z = (pos.z / HEIGHTMAP_L) * HEIGHTMAP_N;
-	return map->height[(x * HEIGHTMAP_N) + z];
+	return map->height[height_index(pos.x, pos.z)];
 }
 float height(Heightmap* map, vec2 pos)
 {
-	uint x = (pos.x / HEIGHTMAP_L) * HEIGHTMAP_N;
-	uint y = (pos.y / HEIGHTMAP_L) * HEIGHTMAP_N;
-	return map->height[(x * HEIGHTMAP_N) + y];
+	return map->height[height_index(pos.x, pos.y)];
 }
 vec3 terrain(Heightmap* map, vec2 pos)
 {
-	uint x = (pos.x / HEIGHTMAP_L) * HEIGHTMAP_N;
-	uint z = (pos.y / HEIGHTMAP_L) * HEIGHTMAP_N;
-	return vec3(pos.x, map->height[(x * HEIGHTMAP_N) + z], pos.y);
+	return vec3(pos.x, map->height[height_index(pos.x, pos.y)], pos.y);
+}
+
+void explode(Heightmap* map, vec3 position, GLuint tex) // not working yet
+{
+	uint x = (position.x / HEIGHTMAP_L) * HEIGHTMAP_N;
+	uint z = (position.z / HEIGHTMAP_L) * HEIGHTMAP_N;
+	
+	map->height[(x * HEIGHTMAP_N) + z] *= 1.25;
+
+	for (uint x = 256; x < 400; x++) {
+	for (uint z = 256; z < 400; z++) {
+		map->height[x * HEIGHTMAP_N + z] *= .9;
+	}}
+
+	glBindTexture(GL_TEXTURE_2D, tex);
+	glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, HEIGHTMAP_N, HEIGHTMAP_N, GL_RED, GL_FLOAT, map->height);
 }
 
 struct Heightmap_Renderer
@@ -50,8 +67,8 @@ void init(Heightmap_Renderer* renderer, Heightmap* heightmap, const char* path)
 	glTexImage2D(GL_TEXTURE_2D, 0, GL_R32F, HEIGHTMAP_N, HEIGHTMAP_N, 0, GL_RED, GL_FLOAT, heightmap->height);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 }
 void draw(Heightmap_Renderer* renderer, mat4 proj_view)
 {

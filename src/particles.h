@@ -112,6 +112,9 @@ void update(Particle_Emitter* emitter, Heightmap* map, float dtime, vec3 wind = 
 
 			particles[i].position += (particles[i].velocity + wind) * dtime;
 			particles[i].time_alive += dtime;
+
+			if (particles[i].position.x < 0)particles[i].position.x = 0;
+			if (particles[i].position.z < 0)particles[i].position.z = 0;
 		}
 		else particles[i] = {};
 	}
