@@ -1,8 +1,8 @@
 #include "physics.h"
 
-#define HEIGHTMAP_N	1024
-#define HEIGHTMAP_L	64
-#define HEIGHTMAP_S	2
+#define HEIGHTMAP_N	1024 // num data points per row
+#define HEIGHTMAP_L	64   // side length of terrain
+#define HEIGHTMAP_S	2    // terrain vertical scale
 
 uint height_index(float pos_x, float pos_z)
 {
@@ -65,8 +65,8 @@ void init(Heightmap_Renderer* renderer, Heightmap* heightmap, const char* path)
 	glGenTextures(1, &renderer->heights);
 	glBindTexture(GL_TEXTURE_2D, renderer->heights);
 	glTexImage2D(GL_TEXTURE_2D, 0, GL_R32F, HEIGHTMAP_N, HEIGHTMAP_N, 0, GL_RED, GL_FLOAT, heightmap->height);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 }

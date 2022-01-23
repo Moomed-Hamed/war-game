@@ -6,7 +6,7 @@ struct Bullet
 {
 	uint type;
 	vec3 position, velocity;
-	float damage, time_alive;
+	float damage, age; // age is in seconds
 };
 
 void spawn(Bullet* bullets, vec3 position, vec3 velocity, uint type = 1)
@@ -26,8 +26,8 @@ void update(Bullet* bullets, float dtime)
 	{
 		if (bullets[i].type)
 		{
-			if (bullets[i].time_alive > 5) { bullets[i] = {}; continue; }
-			bullets[i].time_alive += dtime;
+			if (bullets[i].age > 5) { bullets[i] = {}; continue; }
+			bullets[i].age += dtime;
 			bullets[i].position += bullets[i].velocity * dtime;
 		}
 	}
@@ -65,7 +65,8 @@ void update(Bullet_Renderer* renderer, Bullet* bullets)
 		if (bullets[i].type > 0)
 		{
 			renderer->bullets[i] = { bullets[i].position , vec3(.01) , vec3(1), mat3(1) };
-		} else renderer->bullets[i] = {};
+		}
+		else renderer->bullets[i] = {};
 	}
 
 	update(renderer->mesh, MAX_BULLETS * sizeof(Bullet_Drawable), (byte*)(&renderer->bullets));
@@ -77,41 +78,84 @@ void draw(Bullet_Renderer* renderer, mat4 proj_view)
 	draw(renderer->mesh, MAX_BULLETS);
 }
 
-#define ACTION_FIRE	1
+// -- weapons -- //
+
+#define ACTION_SHOOT	1
 #define ACTION_RELOAD	2
 #define ACTION_INSPECT	3
+#define ACTION_SWITCH	4
+
+#define NUM_GUNS	4
+
+#define GUN_US_RIFLE	1 // M1 Garand
+#define GUN_GE_RIFLE	2
+#define GUN_RU_RIFLE	3
+
+#define GUN_US_PISTOL	4 // M1911
+
+struct Gun_Meta
+{
+	struct Gun_Audio {
+		Audio shoot[2], empty, reload, foley;
+	} audio[NUM_GUNS];
+
+	struct Gun_Info {
+		uint mag_size;
+		float reload_time;
+		float fire_time;
+		float damage;
+	} info[NUM_GUNS];
+};
+
+void init(Gun_Meta* meta)
+{
+	meta->audio[GUN_US_RIFLE].shoot[0] = load_audio("assets/audio/garand_shot.audio");
+	meta->audio[GUN_US_RIFLE].shoot[1] = load_audio("assets/audio/garand_ping.audio");
+	meta->info[GUN_US_RIFLE] = { 5, 1, .25, 10 };
+
+	meta->audio[GUN_US_PISTOL].shoot[0] = load_audio("assets/audio/pistol_shot.audio");
+	meta->audio[GUN_US_PISTOL].shoot[1] = load_audio("assets/audio/pistol_shot.audio"); // duplicate
+	meta->info[GUN_US_PISTOL] = { 10, 1, .25, 5 };
+}
 
 struct Gun
 {
-	vec3 position;
+	uint type, ammo_count;
 	vec3 look_direction;
 
 	uint action;
 	float action_time;
-
-	Audio shoot;
 };
 
-void update(Gun* gun, Bullet* bullets, Camera* cam, Mouse mouse, Keyboard keys, float dtime)
+void update(Gun* gun, Gun_Meta* meta, Bullet* bullets, Camera* cam, Mouse mouse, Keyboard keys, float dtime)
 {
-	// gun
-	gun->position = cam->position;
+	uint id = gun->type;
 
 	if (gun->action_time < 0)
 	{
+		switch (gun->action)
+		{
+		case ACTION_RELOAD: gun->ammo_count = meta->info[id].mag_size; break;
+		}
+
 		gun->action = NULL; // idle
 		gun->action_time = -1;
-	}
-	else gun->action_time -= dtime;
+	} else gun->action_time -= dtime;
 
 	if (mouse.left_button.is_pressed && !mouse.left_button.was_pressed)
 	{
-		gun->action = ACTION_FIRE;
-		gun->action_time = .1;
-		cam->trauma = .25;
+		if (gun->ammo_count > 0) // shoot
+		{
+			gun->action = ACTION_SHOOT;
+			gun->action_time = .1;
+			cam->trauma = .4;
 
-		spawn(bullets, cam->position, cam->front * 10.f);
-		play_audio(gun->shoot);
+			if (gun->ammo_count == 1) play_audio(meta->audio[id].shoot[1]);
+			else play_audio(meta->audio[id].shoot[0]);
+
+			spawn(bullets, cam->position, cam->front * 10.f);
+			gun->ammo_count -= 1;
+		}
 	}
 	if (keys.R.is_pressed && !keys.R.was_pressed)
 	{
@@ -150,11 +194,11 @@ void init(Gun_Renderer* renderer)
 	renderer->texture  = load_texture("assets/textures/palette.bmp");
 	renderer->material = load_texture("assets/textures/materials.bmp");
 
-	load(&renderer->mesh, "assets/meshes/weps/pistol.mesh_anim", sizeof(Gun_Drawable));
+	load(&renderer->mesh, "assets/meshes/weps/us_rifle.mesh_anim", sizeof(Gun_Drawable));
 	mesh_add_attrib_vec3(5, sizeof(Gun_Drawable), 0); // world pos
 	mesh_add_attrib_mat3(6, sizeof(Gun_Drawable), sizeof(vec3)); // rotation
 
-	load(&renderer->animation, "assets/animations/pistol.anim"); // animaiton keyframes
+	load(&renderer->animation, "assets/animations/us_rifle.anim"); // animaiton keyframes
 	GLint skeleton_id = glGetUniformBlockIndex(renderer->shader.id, "skeleton");
 	glUniformBlockBinding(renderer->shader.id, skeleton_id, 0);
 }
@@ -173,8 +217,10 @@ void update(Gun_Renderer* renderer, Gun& gun, float dtime, Camera cam, float tur
 	turn_amount *= dtime;
 
 	Gun_Drawable drawable = {};
-	drawable.position = gun.position + (front * 1.5f) + (up * -.25f) + (right * .4f);
-	drawable.rotation = mat3(.25f) * point_at(look, up);
+	//drawable.position = cam.position + (front * 1.5f) + (up * -.25f) + (right * .4f); pistol
+	//drawable.rotation = mat3(.25f) * point_at(look, up); pistol
+	drawable.position = cam.position + (front * .65f) + (up * -.45f) + (right * .4f);
+	drawable.rotation = mat3(1.f) * point_at(look, up);
 
 	static float time = 0; time += dtime;
 	if (gun.action == NULL)
@@ -199,7 +245,7 @@ void update_pistol_anim(Gun gun, Animation* anim, mat4* current_pose, float dtim
 {
 	switch (gun.action)
 	{
-	case ACTION_FIRE:
+	case ACTION_SHOOT:
 	{
 		float completeness = (.1 - gun.action_time) / .1;
 

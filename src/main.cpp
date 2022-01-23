@@ -27,7 +27,9 @@ int main()
 	Bullet_Renderer* bullet_renderer = Alloc(Bullet_Renderer, 1);
 	init(bullet_renderer);
 
-	Gun gun = {};
+	Gun_Meta* gun_meta = Alloc(Gun_Meta, 1);
+	init(gun_meta);
+	Gun gun = {GUN_US_RIFLE};
 	Gun_Renderer* gun_renderer = Alloc(Gun_Renderer, 1);
 	init(gun_renderer);
 
@@ -72,6 +74,8 @@ int main()
 
 		if (keys.M.is_pressed) explode(heightmap, player->feet.position, heightmap_renderer->heights);
 
+		//if (mouse.left_button.is_pressed && !mouse.left_button.was_pressed) play_audio(orb);
+
 		static float a = 0; a += frame_time;
 		if (a > .4) { a = 0; emit_fire(emitter, terrain(heightmap, vec2(9, 6))); }
 
@@ -79,7 +83,7 @@ int main()
 		update(player , frame_time, heightmap, keys, mouse);
 		update(emitter, heightmap, frame_time, vec3(0));
 		update(bullets, frame_time);
-		update(&gun, bullets, &player->eyes, mouse, keys, frame_time);
+		update(&gun, gun_meta, bullets, &player->eyes, mouse, keys, frame_time);
 		update(enemies, frame_time, bullets, emitter, &player->eyes);
 
 		// renderer updates
