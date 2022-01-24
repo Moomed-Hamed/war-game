@@ -194,11 +194,11 @@ void init(Gun_Renderer* renderer)
 	renderer->texture  = load_texture("assets/textures/palette.bmp");
 	renderer->material = load_texture("assets/textures/materials.bmp");
 
-	load(&renderer->mesh, "assets/meshes/weps/us_rifle.mesh_anim", sizeof(Gun_Drawable));
+	load(&renderer->mesh, "assets/meshes/weps/pistol.mesh_anim", sizeof(Gun_Drawable));
 	mesh_add_attrib_vec3(5, sizeof(Gun_Drawable), 0); // world pos
 	mesh_add_attrib_mat3(6, sizeof(Gun_Drawable), sizeof(vec3)); // rotation
 
-	load(&renderer->animation, "assets/animations/us_rifle.anim"); // animaiton keyframes
+	load(&renderer->animation, "assets/animations/pistol.anim"); // animaiton keyframes
 	GLint skeleton_id = glGetUniformBlockIndex(renderer->shader.id, "skeleton");
 	glUniformBlockBinding(renderer->shader.id, skeleton_id, 0);
 }
@@ -217,10 +217,11 @@ void update(Gun_Renderer* renderer, Gun& gun, float dtime, Camera cam, float tur
 	turn_amount *= dtime;
 
 	Gun_Drawable drawable = {};
-	//drawable.position = cam.position + (front * 1.5f) + (up * -.25f) + (right * .4f); pistol
-	//drawable.rotation = mat3(.25f) * point_at(look, up); pistol
-	drawable.position = cam.position + (front * .65f) + (up * -.45f) + (right * .4f);
-	drawable.rotation = mat3(1.f) * point_at(look, up);
+	// pistol
+	drawable.position = cam.position + (front * 1.5f) + (up * -.25f) + (right * .4f);
+	drawable.rotation = mat3(.25f) * point_at(look, up);
+	//drawable.position = cam.position + (front * .65f) + (up * -.45f) + (right * .4f);
+	//drawable.rotation = mat3(1.f) * point_at(look, up);
 
 	static float time = 0; time += dtime;
 	if (gun.action == NULL)

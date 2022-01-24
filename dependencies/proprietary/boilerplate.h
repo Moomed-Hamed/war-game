@@ -124,6 +124,7 @@ typedef ALuint Audio;
 
 Audio load_audio(const char* path)
 {
+	print("hi");
 	uint format, size, sample_rate;
 	byte* audio_data = NULL;
 
