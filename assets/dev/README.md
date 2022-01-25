@@ -1,4 +1,4 @@
-# Making Animated Meshes
+## Making Animated Meshes
 
 ### Warnings
 - name your Armature 'Armature' (case sensitive)
@@ -19,7 +19,7 @@
 
 ### Keyframes
 
-#### pistols
+#### pistols [8]
 - 0 : idle
 - 1 : shoot
 - 2 : mag out (slide back)
@@ -29,7 +29,27 @@
 - 6 : inspect 1
 - 7 : inspect 2
 
-#### sub machine guns
+#### bolt action [8]
+- 0 : idle
+- 1 : shoot
+- 2 : mag out (slide back)
+- 3 : mag in  (slide back)
+- 4 : mag out (slide fwd )
+- 5 : mag in  (slide fwd )
+- 6 : inspect 1
+- 7 : inspect 2
+
+#### sub machine guns [8]
+- 0 : idle
+- 1 : shoot
+- 2 : mag out (slide back)
+- 3 : mag in  (slide back)
+- 4 : mag out (slide fwd )
+- 5 : mag in  (slide fwd )
+- 6 : inspect 1
+- 7 : inspect 2
+
+#### light machine guns [8]
 - 0 : idle
 - 1 : shoot
 - 2 : mag out (slide back)

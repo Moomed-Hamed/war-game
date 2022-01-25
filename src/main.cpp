@@ -29,7 +29,7 @@ int main()
 
 	Gun_Meta* gun_meta = Alloc(Gun_Meta, 1);
 	init(gun_meta);
-	Gun gun = {GUN_US_RIFLE};
+	Gun gun = { GUN_US_PISTOL };
 	Gun_Renderer* gun_renderer = Alloc(Gun_Renderer, 1);
 	init(gun_renderer);
 
@@ -74,6 +74,10 @@ int main()
 
 		if (keys.M.is_pressed) explode(heightmap, player->feet.position, heightmap_renderer->heights);
 
+		if (keys.J.is_pressed) gun.type = GUN_US_PISTOL;
+		if (keys.K.is_pressed) gun.type = GUN_US_MG;
+		if (keys.L.is_pressed) gun.type = GUN_US_RIFLE;
+
 		//if (mouse.left_button.is_pressed && !mouse.left_button.was_pressed) play_audio(orb);
 
 		static float a = 0; a += frame_time;
@@ -92,7 +96,7 @@ int main()
 		update(particle_renderer , emitter);
 		update(prop_renderer     , props);
 		update(bullet_renderer   , bullets);
-		update(gun_renderer      , gun, frame_time, player->eyes, 0);
+		update(gun_renderer      , gun, frame_time, player->eyes, mouse.norm_dx);
 		update(enemy_renderer    , enemies);
 
 		// geometry pass

@@ -85,13 +85,33 @@ void draw(Bullet_Renderer* renderer, mat4 proj_view)
 #define ACTION_INSPECT	3
 #define ACTION_SWITCH	4
 
-#define NUM_GUNS	4
+#define NUM_GUNS	14
+
+#define GUN_RIFLE	1
+#define GUN_SMG	4
+#define GUN_AR	5
+#define GUN_LMG	3
+#define GUN_PISTOL	4
+#define GUN_RPG	5
 
 #define GUN_US_RIFLE	1 // M1 Garand
 #define GUN_GE_RIFLE	2
 #define GUN_RU_RIFLE	3
 
-#define GUN_US_PISTOL	4 // M1911
+#define GUN_US_SMG	4
+#define GUN_GE_SMG	5
+#define GUN_RU_SMG	6
+
+#define GUN_US_AR	7
+#define GUN_GE_AR	8
+#define GUN_RU_AR	9
+
+#define GUN_US_MG	10 // Bar
+#define GUN_GE_MG	11
+
+#define GUN_US_PISTOL	12 // M1911
+#define GUN_GE_PISTOL	13
+#define GUN_RU_PISTOL	14
 
 struct Gun_Meta
 {
@@ -171,7 +191,7 @@ void update(Gun* gun, Gun_Meta* meta, Bullet* bullets, Camera* cam, Mouse mouse,
 
 // rendering
 
-void update_pistol_anim(Gun gun, Animation* anim, mat4* current_pose, float dtime);
+void update_us_pistol_anim(Gun gun, Animation* anim, mat4* current_pose, float dtime);
 
 struct Gun_Drawable
 {
@@ -181,56 +201,81 @@ struct Gun_Drawable
 
 struct Gun_Renderer
 {
-	Drawable_Mesh_Anim_UV mesh;
+	Drawable_Mesh_Anim_UV meshes[NUM_GUNS];
+	Animation animations[NUM_GUNS];
+
 	Shader shader;
 	GLuint texture, material;
-	Animation animation;
+
+	uint id; // this prolly shouldn't be here
+
 	mat4 current_pose[MAX_ANIM_BONES];
 };
 
 void init(Gun_Renderer* renderer)
 {
-	load(&(renderer->shader), "assets/shaders/transform/mesh_anim_uv.vert", "assets/shaders/mesh_uv.frag");
-	renderer->texture  = load_texture("assets/textures/palette.bmp");
+	load(&renderer->shader, "assets/shaders/transform/mesh_anim_uv.vert", "assets/shaders/mesh_uv.frag");
+	renderer->texture = load_texture("assets/textures/palette.bmp");
 	renderer->material = load_texture("assets/textures/materials.bmp");
+	glUniformBlockBinding(renderer->shader.id, 1, 0); // uniform 1 reads from UBO binding 0
 
-	load(&renderer->mesh, "assets/meshes/weps/pistol.mesh_anim", sizeof(Gun_Drawable));
-	mesh_add_attrib_vec3(5, sizeof(Gun_Drawable), 0); // world pos
-	mesh_add_attrib_mat3(6, sizeof(Gun_Drawable), sizeof(vec3)); // rotation
+	{
+		load(renderer->meshes + GUN_US_MG, "assets/meshes/weps/us_mg.mesh_anim", sizeof(Gun_Drawable));
+		mesh_add_attrib_vec3(5, sizeof(Gun_Drawable), 0); // world pos
+		mesh_add_attrib_mat3(6, sizeof(Gun_Drawable), sizeof(vec3)); // rotation
 
-	load(&renderer->animation, "assets/animations/pistol.anim"); // animaiton keyframes
-	GLint skeleton_id = glGetUniformBlockIndex(renderer->shader.id, "skeleton");
-	glUniformBlockBinding(renderer->shader.id, skeleton_id, 0);
+		load(renderer->meshes + GUN_US_PISTOL, "assets/meshes/weps/pistol.mesh_anim", sizeof(Gun_Drawable));
+		mesh_add_attrib_vec3(5, sizeof(Gun_Drawable), 0); // world pos
+		mesh_add_attrib_mat3(6, sizeof(Gun_Drawable), sizeof(vec3)); // rotation
+
+		load(renderer->meshes + GUN_US_RIFLE, "assets/meshes/weps/us_rifle.mesh_anim", sizeof(Gun_Drawable));
+		mesh_add_attrib_vec3(5, sizeof(Gun_Drawable), 0); // world pos
+		mesh_add_attrib_mat3(6, sizeof(Gun_Drawable), sizeof(vec3)); // rotation
+
+		 // animaiton keyframes
+		load(renderer->animations + GUN_US_MG, "assets/animations/us_mg.anim");
+		load(renderer->animations + GUN_US_PISTOL, "assets/animations/pistol.anim");
+		load(renderer->animations + GUN_US_RIFLE, "assets/animations/us_rifle.anim");
+	}
 }
-void update(Gun_Renderer* renderer, Gun& gun, float dtime, Camera cam, float turn)
+void update(Gun_Renderer* renderer, Gun gun, float dtime, Camera cam, float turn)
 {
-	vec3 front = cam.front;
-	vec3 right = cam.right;
-	vec3 up    = cam.up;
+	update_us_pistol_anim(gun, renderer->animations + gun.type, renderer->current_pose, dtime);
 
-	update_pistol_anim(gun, &renderer->animation, renderer->current_pose, dtime);
+	vec3 f = cam.front;
+	vec3 r = cam.right;
+	vec3 u = cam.up;
 
-	static float turn_amount = 0; turn_amount += turn;
-	if (turn_amount >  .1) turn_amount =  .1;
-	if (turn_amount < -.1) turn_amount = -.1;
-	vec3 look = lerp(front * -1.f, right, -1 * (-.05 + turn_amount));
-	turn_amount *= dtime;
+	// weapon sway
+	static float turn_amount = 0;
+	turn_amount += turn;
+	turn_amount = dtime * ( turn_amount > .1 ? .1 : -.1 );
+	vec3 look = lerp(-f, r, -1 * (-.05 + turn_amount)); // f is negative
 
-	Gun_Drawable drawable = {};
-	// pistol
-	drawable.position = cam.position + (front * 1.5f) + (up * -.25f) + (right * .4f);
-	drawable.rotation = mat3(.25f) * point_at(look, up);
-	//drawable.position = cam.position + (front * .65f) + (up * -.45f) + (right * .4f);
-	//drawable.rotation = mat3(1.f) * point_at(look, up);
+	// offset & scaling (so first person perspective looks good)
+	vec3 o = { 1, 1, 1 };
+	float s = 1;
 
+	switch (gun.type)
+	{
+	case GUN_US_PISTOL : o = { 1.5, -.25, .4 }; s = .25; break;
+	case GUN_US_MG    : o = { .85, -.45, .4 }; s = 1.0; break;
+	case GUN_US_RIFLE: o = { .65, -.45, .4 }; s = 1.0; break;
+	}
+
+	Gun_Drawable drawable = { cam.position + (f * o.x) + (u * o.y) + (r * o.z) , mat3(s) * point_at(look, u) };
+
+	// weapon bob (for walking / running / breathing)
 	static float time = 0; time += dtime;
 	if (gun.action == NULL)
 	{
-		drawable.position += up    * (.01f  * sin(time * 2.6f));
-		drawable.position += right * (.005f * sin(time * 1.6f));
+		drawable.position += u * (.01f  * sin(time * 2.6f));
+		drawable.position += r * (.005f * sin(time * 1.6f));
 	} else time = 0;
 
-	update(renderer->mesh, renderer->animation.num_bones, renderer->current_pose, sizeof(Gun_Drawable), (byte*)(&drawable));
+	// new
+	renderer->id = gun.type;
+	update(renderer->meshes[gun.type], renderer->animations[gun.type].num_bones, renderer->current_pose, sizeof(Gun_Drawable), (byte*)(&drawable));
 }
 void draw(Gun_Renderer* renderer, mat4 proj_view)
 {
@@ -238,11 +283,11 @@ void draw(Gun_Renderer* renderer, mat4 proj_view)
 	bind_texture(renderer->texture , 0);
 	bind_texture(renderer->material, 1);
 	set_mat4(renderer->shader, "proj_view", proj_view);
-	draw(renderer->mesh);
+	draw(renderer->meshes[renderer->id]);
 }
 
 // weapon animations
-void update_pistol_anim(Gun gun, Animation* anim, mat4* current_pose, float dtime)
+void update_us_pistol_anim(Gun gun, Animation* anim, mat4* current_pose, float dtime)
 {
 	switch (gun.action)
 	{
