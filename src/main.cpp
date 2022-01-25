@@ -29,7 +29,7 @@ int main()
 
 	Gun_Meta* gun_meta = Alloc(Gun_Meta, 1);
 	init(gun_meta);
-	Gun gun = { GUN_US_PISTOL };
+	Gun gun = {};
 	Gun_Renderer* gun_renderer = Alloc(Gun_Renderer, 1);
 	init(gun_renderer);
 
@@ -75,8 +75,11 @@ int main()
 		if (keys.M.is_pressed) explode(heightmap, player->feet.position, heightmap_renderer->heights);
 
 		if (keys.J.is_pressed) gun.type = GUN_US_PISTOL;
-		if (keys.K.is_pressed) gun.type = GUN_US_MG;
+		if (keys.K.is_pressed) gun.type = GUN_GE_RIFLE;
 		if (keys.L.is_pressed) gun.type = GUN_US_RIFLE;
+
+		if (keys.LEFT.is_pressed  && !keys.LEFT.was_pressed ) gun.type--;
+		if (keys.RIGHT.is_pressed && !keys.RIGHT.was_pressed) gun.type++;
 
 		//if (mouse.left_button.is_pressed && !mouse.left_button.was_pressed) play_audio(orb);
 
