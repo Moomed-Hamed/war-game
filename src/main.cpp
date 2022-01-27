@@ -29,7 +29,7 @@ int main()
 
 	Gun_Meta* gun_meta = Alloc(Gun_Meta, 1);
 	init(gun_meta);
-	Gun gun = {};
+	Gun gun = { GUN_GE_SMG };
 	Gun_Renderer* gun_renderer = Alloc(Gun_Renderer, 1);
 	init(gun_renderer);
 
@@ -99,7 +99,7 @@ int main()
 		update(particle_renderer , emitter);
 		update(prop_renderer     , props);
 		update(bullet_renderer   , bullets);
-		update(gun_renderer      , gun, frame_time, player->eyes, mouse.norm_dx);
+		update(gun_renderer      , gun, frame_time, player->eyes, mouse.norm_dx * 2);
 		update(enemy_renderer    , enemies);
 
 		// geometry pass

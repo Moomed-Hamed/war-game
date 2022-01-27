@@ -109,31 +109,48 @@ void draw(Bullet_Renderer* renderer, mat4 proj_view)
 
 struct Gun_Meta
 {
-	struct Gun_Audio {
-		Audio shoot[2], empty, reload, foley;
-	} audio[NUM_GUNS];
-
 	struct Gun_Info {
 		uint mag_size;
 		float reload_time;
 		float fire_time;
 		float damage;
 	} info[NUM_GUNS];
+
+	struct Gun_Audio {
+		Audio shoot[6], empty, reload, foley;
+	} audio[NUM_GUNS];
 };
 
 void init(Gun_Meta* meta)
 {
+	meta->info[GUN_US_RIFLE] = { 5, 1, .25, 10 }; // M1 Garand
 	meta->audio[GUN_US_RIFLE].shoot[0] = load_audio("assets/audio/garand_shot.audio");
 	meta->audio[GUN_US_RIFLE].shoot[1] = load_audio("assets/audio/garand_ping.audio");
-	meta->info[GUN_US_RIFLE] = { 5, 1, .25, 10 };
 
+	meta->info[GUN_UK_RIFLE] = { 5, 1, .25, 10 }; // M1 Garand
+	meta->info[GUN_RU_RIFLE] = { 5, 1, .25, 10 }; // M1 Garand
+	meta->info[GUN_GE_RIFLE] = { 5, 1, .25, 10 }; // M1 Garand
+
+	meta->info[GUN_US_SMG] = { 5, 1, .25, 10 }; // M1 Garand
+	meta->info[GUN_GE_SMG] = { 5, 1, .25, 10 }; // M1 Garand
+	meta->info[GUN_RU_SMG] = { 5, 1, .25, 10 }; // M1 Garand
+
+	meta->info[GUN_US_MG] = { 5, 1, .25, 10 }; // M1 Garand
+	meta->info[GUN_GE_MG] = { 5, 1, .25, 10 }; // M1 Garand
+
+	meta->info[GUN_US_PISTOL] = { 5, 1, .25, 10 }; // M1 Garand
+
+	meta->info[GUN_RPG] = { 5, 1, .25, 10 }; // M1 Garand
+	meta->info[GUN_MORTAR] = { 5, 1, .25, 10 }; // M1 Garand
+	meta->info[GUN_FLAMETHROWER] = { 5, 1, .25, 10 }; // M1 Garand
+
+	meta->info[GUN_US_PISTOL] = { 10, 1, .25, 5 };
 	meta->audio[GUN_US_PISTOL].shoot[0] = load_audio("assets/audio/pistol_shot_1.audio");
 	meta->audio[GUN_US_PISTOL].shoot[1] = load_audio("assets/audio/pistol_shot_2.audio");
-	meta->audio[GUN_US_PISTOL].shoot[0] = load_audio("assets/audio/pistol_shot_3.audio");
-	meta->audio[GUN_US_PISTOL].shoot[1] = load_audio("assets/audio/pistol_shot_4.audio");
-	meta->audio[GUN_US_PISTOL].shoot[0] = load_audio("assets/audio/pistol_shot_5.audio");
-	meta->audio[GUN_US_PISTOL].shoot[1] = load_audio("assets/audio/pistol_shot_6.audio");
-	meta->info[GUN_US_PISTOL] = { 10, 1, .25, 5 };
+	meta->audio[GUN_US_PISTOL].shoot[2] = load_audio("assets/audio/pistol_shot_3.audio");
+	meta->audio[GUN_US_PISTOL].shoot[3] = load_audio("assets/audio/pistol_shot_4.audio");
+	meta->audio[GUN_US_PISTOL].shoot[4] = load_audio("assets/audio/pistol_shot_5.audio");
+	meta->audio[GUN_US_PISTOL].shoot[5] = load_audio("assets/audio/pistol_shot_6.audio");
 }
 
 struct Gun
@@ -173,7 +190,7 @@ shoot:
 	{
 		if (gun->ammo_count <= 0) goto reload;
 		if (gun->ammo_count == 1 && gun->type == GUN_US_RIFLE) play_audio(meta->audio[id].shoot[1]);
-		else play_audio(meta->audio[id].shoot[(uint)(random_normalized_float() * 2.9f)]);
+		else play_audio(meta->audio[id].shoot[(uint)(random_normalized_float() * 6.9f)]);
 
 		gun->action = ACTION_SHOOT;
 		gun->action_time = .1;
@@ -277,8 +294,9 @@ void update(Gun_Renderer* renderer, Gun gun, float dtime, Camera cam, float turn
 
 	// weapon sway
 	static float turn_amount = 0;
-	turn_amount += turn;
-	turn_amount = dtime * ( turn_amount > .1 ? .1 : -.1 );
+	turn_amount = turn * 8 * dtime;
+	turn_amount = turn_amount >  .1 ?  .1 : turn_amount;
+	turn_amount = turn_amount < -.1 ? -.1 : turn_amount;
 	vec3 look = lerp(-f, r, -1 * (-.05 + turn_amount)); // f is negative
 
 	// offset & scaling (so first person perspective looks good)
@@ -293,7 +311,7 @@ void update(Gun_Renderer* renderer, Gun gun, float dtime, Camera cam, float turn
 	case GUN_GE_RIFLE : o = { .65, -.40, .4 }; s = 1.0; break;
 
 	case GUN_US_SMG : o = { .85, -.45, .4 }; s = 1.0; break;
-	case GUN_GE_SMG : o = { .85, -.45, .4 }; s = 1.0; break;
+	case GUN_GE_SMG : o = { .45, -.35, .3 }; s = 1.2; break;
 	case GUN_RU_SMG : o = { .85, -.45, .4 }; s = 1.0; break;
 
 	case GUN_US_MG : o = { .85, -.45, .4 }; s = 1.0; break;
