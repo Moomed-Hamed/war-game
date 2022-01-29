@@ -1,5 +1,5 @@
 # War Game
-this is a war game
+this is a war game for practice 
 
 ### Credits
 - programming : me
