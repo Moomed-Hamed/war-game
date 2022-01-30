@@ -5,8 +5,8 @@
 struct Enemy
 {
 	uint type;
-	Sphere_Collider collider;
 	float health, trauma;
+	Sphere_Collider collider;
 };
 
 void init(Enemy* enemies)
@@ -14,7 +14,7 @@ void init(Enemy* enemies)
 	for (uint i = 0; i < MAX_ENEMIES; i++)
 	{
 		vec3 position = vec3(randfn() * 15.f, 3, randfn() * 15.f);
-		enemies[i] = { 1, { position, {}, {}, 1, .5 }, 100, 0 };
+		enemies[i] = { 1, 100, 0, { position, {}, {}, 1, .5 } };
 	}
 }
 void update(Enemy* enemies, float dtime, Bullet* bullets, Particle_Emitter* emitter, Camera* cam)
@@ -32,6 +32,7 @@ void update(Enemy* enemies, float dtime, Bullet* bullets, Particle_Emitter* emit
 			{
 				if (point_in_sphere(bullets[j].position, enemies[i].collider))
 				{
+					emit_blood(emitter, enemies[i].collider.position);
 					enemies[i].health -= 10;
 					enemies[i].trauma += .25;
 					bullets[j] = {};

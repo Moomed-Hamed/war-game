@@ -112,14 +112,9 @@ float lerp_sin(float start, float end, float amount)
 {
 	return lerp(start, end, sin(amount * (PI / 2.f)));
 }
-float lerp_spring(float start, float end, float amount, float stiffness = 8, float period = 4)
+float lerp_spring(float amount, float stiffness = 1, float period = 1)
 {
-	float p = sin(amount * period * PI);
-	float s = exp(amount * stiffness * -1);
-	float spring = p * s;
-
-	float mix = lerp(abs(p) * s, 1.f - (abs(p) * s), amount);
-	return lerp(start, end, mix);
+	return 1.f - abs(sin(TWOPI * amount * period) * exp(-stiffness * amount));
 }
 vec3 lerp(vec3 start, vec3 end, float amount)
 {

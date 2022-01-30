@@ -68,6 +68,10 @@ void emit_sphere(Particle_Emitter* emitter, vec3 pos, uint type, float speed = 1
 	}
 }
 
+void emit_blood(Particle_Emitter* emitter, vec3 position)
+{
+	for (uint i = 0; i < 12; i++) emit_sphere(emitter, position, PARTICLE_BLOOD, 1);
+}
 void emit_explosion(Particle_Emitter* emitter, vec3 position)
 {
 	for (uint i = 0; i < 12; i++) emit_sphere(emitter, position, PARTICLE_FIRE  , 3);

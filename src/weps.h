@@ -215,8 +215,9 @@ inspect:
 
 // rendering
 
-void update_us_pistol_anim(Gun gun, Animation* anim, mat4* current_pose, float dtime);
+void update_pistol_anim(Gun gun, Animation* anim, mat4* current_pose, float dtime);
 void update_bolt_action_anim(Gun gun, Animation* anim, mat4* current_pose, float dtime);
+void update_smg_anim(Gun gun, Animation* anim, mat4* current_pose, float dtime);
 void update_us_rifle_anim(Gun gun, Animation* anim, mat4* current_pose, float dtime);
 
 struct Gun_Drawable
@@ -277,12 +278,12 @@ void update(Gun_Renderer* renderer, Gun gun, float dtime, Camera cam, float turn
 
 	case GUN_US_SMG:
 	case GUN_GE_SMG:
-	case GUN_RU_SMG: update_us_pistol_anim(gun, renderer->animations + gun.type, renderer->current_pose, dtime); break;
+	case GUN_RU_SMG: update_smg_anim(gun, renderer->animations + gun.type, renderer->current_pose, dtime); break;
 
 	case GUN_US_MG:
-	case GUN_GE_MG: update_us_pistol_anim(gun, renderer->animations + gun.type, renderer->current_pose, dtime); break;
+	case GUN_GE_MG: update_pistol_anim(gun, renderer->animations + gun.type, renderer->current_pose, dtime); break;
 
-	case GUN_US_PISTOL: update_us_pistol_anim(gun, renderer->animations + gun.type, renderer->current_pose, dtime); break;
+	case GUN_US_PISTOL: update_pistol_anim(gun, renderer->animations + gun.type, renderer->current_pose, dtime); break;
 
 	default: out("ERROR : not an animated gun type");
 	}
@@ -359,9 +360,9 @@ uint sub_anim(vec4 t, float at, float* c)
 	}
 
 	*c = 1;
-	return 4; // error, kinda
+	return 4;
 }
-void update_us_pistol_anim(Gun gun, Animation* anim, mat4* current_pose, float dtime)
+void update_pistol_anim(Gun gun, Animation* anim, mat4* current_pose, float dtime)
 {
 	uvec2 frames = {}; // index of frames
 	float mix = 0, c = 0; // completeness
@@ -370,20 +371,20 @@ void update_us_pistol_anim(Gun gun, Animation* anim, mat4* current_pose, float d
 	{
 	case ACTION_SHOOT:
 	{
-		switch (sub_anim({.05,.05, 5, 0}, .1 - gun.action_time, &c))
+		switch (sub_anim({ .05, .05, 0, 0}, .1 - gun.action_time, &c))
 		{
-		case 0: frames = { 0 , 1 }; mix = c; break; // shoot
-		case 1: frames = { 1 , 0 }; mix = c; break; // idle
+		case 0: frames = { 0 , 1 }; mix = c; break; // slide back
+		case 1: frames = { 1 , 0 }; mix = c; break; // slide fwd
 		}
 	} break;
 	case ACTION_RELOAD:
 	{
-		switch (sub_anim({ .4, .3, .1, .6 }, 2 - gun.action_time, &c))
+		switch (sub_anim({ .4, .3, .1, .4 }, 2 - gun.action_time, &c))
 		{
 		case 0: frames = { 0 , 2 }; mix = bounce(sqrt(c)); break;
 		case 1: frames = { 2 , 2 }; mix = bounce(sqrt(c)); break;
 		case 2: frames = { 2 , 3 }; mix = bounce(c); break;
-		case 3: frames = { 3 , 0 }; mix = lerp_spring(0, 1, c); break;
+		case 3: frames = { 3 , 0 }; mix = lerp_spring(c); break;
 		}
 	} break;
 	case ACTION_INSPECT:
@@ -408,7 +409,7 @@ void update_bolt_action_anim(Gun gun, Animation* anim, mat4* current_pose, float
 	{
 	case ACTION_SHOOT:
 	{
-		switch (sub_anim({.05,.05, 5, 0}, .1 - gun.action_time, &c))
+		switch (sub_anim({ .05, .05, 5, 0}, .1 - gun.action_time, &c))
 		{
 		case 0: frames = { 0 , 1 }; mix = c; break; // shoot
 		case 1: frames = { 1 , 0 }; mix = c; break; // idle
@@ -416,12 +417,12 @@ void update_bolt_action_anim(Gun gun, Animation* anim, mat4* current_pose, float
 	} break;
 	case ACTION_RELOAD:
 	{
-		switch (sub_anim({ .25, .75, .75, .25 }, 2 - gun.action_time, &c))
+		switch (sub_anim({ .25, .5, .5, .1 }, 2 - gun.action_time, &c))
 		{
 		case 0: frames = { 0 , 1 }; mix = bounce(c); break; // bolt up
 		case 1: frames = { 1 , 2 }; mix = bounce(c); break; // bolt back
-		case 2: frames = { 2 , 1 }; mix = bounce(c); break; //bounce(c); break; // bolt up
-		case 3: frames = { 1 , 0 }; mix = bounce(c); break; //lerp_spring(0, 1, c); break; // idle
+		case 2: frames = { 2 , 1 }; mix = bounce(c); break; // bolt up
+		case 3: frames = { 1 , 0 }; mix = lerp_spring(c); break; // idle
 		}
 	} break;
 	case ACTION_INSPECT:
@@ -430,6 +431,44 @@ void update_bolt_action_anim(Gun gun, Animation* anim, mat4* current_pose, float
 		{
 		case 0: frames = { 0 , 6 }; mix = bounce(c); // inspect 1
 		case 1: frames = { 6 , 7 }; mix = bounce(c); // inspect 2
+		case 2: frames = { 7 , 0 }; mix = bounce(c); break; // idle
+		}
+	} break;
+	}
+
+	update_animation_pose(anim, current_pose, frames.x, frames.y, mix);
+}
+void update_smg_anim(Gun gun, Animation* anim, mat4* current_pose, float dtime)
+{
+	uvec2 frames = {}; // index of frames
+	float mix = 0, c = 0; // completeness
+
+	switch (gun.action)
+	{
+	case ACTION_SHOOT:
+	{
+		switch (sub_anim({ .05, .05, 0, 0 }, .1 - gun.action_time, &c))
+		{
+		case 0: frames = { 0 , 1 }; mix = c; break; // slide back
+		case 1: frames = { 1 , 0 }; mix = c; break; // slide fwd
+		}
+	} break;
+	case ACTION_RELOAD:
+	{
+		switch (sub_anim({ .6, .6, .5, .3 }, 2 - gun.action_time, &c))
+		{
+		case 0: frames = { 0 , 2 }; mix = lerp_spring(c, 5); break;
+		case 1: frames = { 2 , 3 }; mix = c * c; break;
+		case 2: frames = { 3 , 4 }; mix = c * c; break;
+		case 3: frames = { 4 , 0 }; mix = bounce(c); break;
+		}
+	} break;
+	case ACTION_INSPECT:
+	{
+		switch (sub_anim({ 1, 1, 1, 0 }, 3 - gun.action_time, &c))
+		{
+		case 0: frames = { 0 , 6 }; mix = c; // inspect 1
+		case 1: frames = { 6 , 7 }; mix = c; // inspect 2
 		case 2: frames = { 7 , 0 }; mix = bounce(c); break; // idle
 		}
 	} break;

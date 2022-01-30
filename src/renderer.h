@@ -987,8 +987,7 @@ void update_animation(Animation* anim, mat4* poses, float dtime)
 		next_frame = 0;
 	} //out(frame << ',' << next_frame);
 
-
-	//float mix = lerp_spring(0, 1, anim->timer / 1.f, 10, 15);
+	//float mix = lerp_spring(anim->timer / 1.f, 10, 15);
 	//float mix = lerp(0, 1, anim->timer / 1.f);
 	//float mix = lerp(0, 1, sin(PI - (anim->timer * PI * .5)));
 	float mix = lerp(0, 1, sin(anim->timer * PI * .5));
