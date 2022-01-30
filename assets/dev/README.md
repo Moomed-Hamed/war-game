@@ -31,13 +31,26 @@
 
 #### bolt action [8]
 - 0 : idle
-- 1 : shoot
-- 2 : mag out (slide back)
-- 3 : mag in  (slide back)
-- 4 : mag out (slide fwd )
-- 5 : mag in  (slide fwd )
+- 1 : fire
+- 2 : bolt_up
+- 3 : bolt_back
+- 4 : bullet_in_anticipation
+- 5 : bullet_in
 - 6 : inspect 1
 - 7 : inspect 2
+
+#### clip loaded [10]
+- 0 : idle
+- 1 : fire
+- 2 : slide back
+- 3 : bolt_back
+- 4 : bullet_in_anticipation
+- 5 : bullet_in
+- 6 : clip_in_anticipation
+- 7 : clip_in
+- 8 : clip_flick
+- 9 : inspect 1
+- 10: inspect 2
 
 #### sub machine guns [8]
 - 0 : idle
@@ -52,9 +65,7 @@
 #### light machine guns [8]
 - 0 : idle
 - 1 : shoot
-- 2 : mag out (slide back)
-- 3 : mag in  (slide back)
-- 4 : mag out (slide fwd )
-- 5 : mag in  (slide fwd )
+- 2 : drum out
+- 3 : drum in
 - 6 : inspect 1
 - 7 : inspect 2

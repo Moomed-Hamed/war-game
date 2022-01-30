@@ -75,7 +75,7 @@ int main()
 		if (keys.M.is_pressed) explode(heightmap, player->feet.position, heightmap_renderer->heights);
 
 		if (keys.J.is_pressed) gun.type = GUN_US_PISTOL;
-		if (keys.K.is_pressed) gun.type = GUN_GE_RIFLE;
+		if (keys.K.is_pressed) gun.type = GUN_RU_RIFLE;
 		if (keys.L.is_pressed) gun.type = GUN_US_RIFLE;
 
 		if (keys.LEFT.is_pressed  && !keys.LEFT.was_pressed ) gun.type--;

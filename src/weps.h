@@ -146,18 +146,10 @@ void init(Gun_Meta* meta)
 
 	meta->info[GUN_US_PISTOL] = { 10, 1, .25, 5 };
 	meta->audio[GUN_US_PISTOL].shoot[0] = load_audio("assets/audio/pistol_shot_1.audio");
-	meta->audio[GUN_US_PISTOL].shoot[1] = load_audio("assets/audio/pistol_shot_2.audio");
-	meta->audio[GUN_US_PISTOL].shoot[2] = load_audio("assets/audio/pistol_shot_3.audio");
-	meta->audio[GUN_US_PISTOL].shoot[3] = load_audio("assets/audio/pistol_shot_4.audio");
-	meta->audio[GUN_US_PISTOL].shoot[4] = load_audio("assets/audio/pistol_shot_5.audio");
-	meta->audio[GUN_US_PISTOL].shoot[5] = load_audio("assets/audio/pistol_shot_6.audio");
 
 	meta->audio[GUN_GE_RIFLE].shoot[0] = load_audio("assets/audio/gewehr_shot_1.audio");
-	meta->audio[GUN_GE_RIFLE].shoot[1] = load_audio("assets/audio/gewehr_shot_2.audio");
-	meta->audio[GUN_GE_RIFLE].shoot[2] = load_audio("assets/audio/gewehr_shot_3.audio");
-	meta->audio[GUN_GE_RIFLE].shoot[3] = load_audio("assets/audio/gewehr_shot_4.audio");
-	meta->audio[GUN_GE_RIFLE].shoot[4] = load_audio("assets/audio/gewehr_shot_5.audio");
-	meta->audio[GUN_GE_RIFLE].shoot[5] = load_audio("assets/audio/gewehr_shot_6.audio");
+	meta->audio[GUN_RU_RIFLE].shoot[0] = load_audio("assets/audio/gewehr_shot_2.audio");
+	meta->audio[GUN_UK_RIFLE].shoot[0] = load_audio("assets/audio/gewehr_shot_3.audio");
 }
 
 struct Gun
@@ -197,7 +189,7 @@ shoot:
 	{
 		if (gun->ammo_count <= 0) goto reload;
 		if (gun->ammo_count == 1 && gun->type == GUN_US_RIFLE) play_audio(meta->audio[id].shoot[1]);
-		else play_audio(meta->audio[id].shoot[(uint)(random_normalized_float() * 6.9f)]);
+		else play_audio(meta->audio[id].shoot[0]);
 
 		gun->action = ACTION_SHOOT;
 		gun->action_time = .1;
@@ -352,142 +344,93 @@ void draw(Gun_Renderer* renderer, mat4 proj_view)
 }
 
 // weapon animations
+uint sub_anim(vec4 t, float at, float* c)
+{
+	float x = 0;
+	for (uint i = 0; i < 4; i++)
+	{
+		x += t[i];
+
+		if (at < x)
+		{
+			*c = (at - (x - t[i])) / t[i];
+			return i;
+		}
+	}
+
+	*c = 1;
+	return 4; // error, kinda
+}
 void update_us_pistol_anim(Gun gun, Animation* anim, mat4* current_pose, float dtime)
 {
+	uvec2 frames = {}; // index of frames
+	float mix = 0, c = 0; // completeness
+
 	switch (gun.action)
 	{
 	case ACTION_SHOOT:
 	{
-		float completeness = (.1 - gun.action_time) / .1;
-
-		if (completeness < .5)
+		switch (sub_anim({.05,.05, 5, 0}, .1 - gun.action_time, &c))
 		{
-			float mix = completeness * 2;
-			update_animation_pose(anim, current_pose, 0, 1, mix); // slide back
-		}
-		else
-		{
-			float mix = (completeness - .5) * 2;
-			update_animation_pose(anim, current_pose, 1, 0, mix); // slide fwd
+		case 0: frames = { 0 , 1 }; mix = c; break; // shoot
+		case 1: frames = { 1 , 0 }; mix = c; break; // idle
 		}
 	} break;
 	case ACTION_RELOAD:
 	{
-		float completeness = (2 - gun.action_time) / 2;
-
-		if (completeness < .4) // mag out
+		switch (sub_anim({ .4, .3, .1, .6 }, 2 - gun.action_time, &c))
 		{
-			float mix = bounce(sqrt(completeness * (1 / .4)), -.2);
-			update_animation_pose(anim, current_pose, 0, 2, mix);
-		}
-		else if (completeness < .7) // pause
-		{
-			float mix = bounce(sqrt((completeness - .4) * (1 / .3)));
-			update_animation_pose(anim, current_pose, 2, 2, 1);
-		}
-		else if (completeness < .8) // mag in
-		{
-			float mix = bounce((completeness - .7) * (1 / .1));
-			update_animation_pose(anim, current_pose, 2, 3, mix);
-		}
-		else // rest
-		{
-			float mix = lerp_spring(0, 1, (completeness - .8) * (1 / .2));
-			update_animation_pose(anim, current_pose, 3, 0, mix);
+		case 0: frames = { 0 , 2 }; mix = bounce(sqrt(c)); break;
+		case 1: frames = { 2 , 2 }; mix = bounce(sqrt(c)); break;
+		case 2: frames = { 2 , 3 }; mix = bounce(c); break;
+		case 3: frames = { 3 , 0 }; mix = lerp_spring(0, 1, c); break;
 		}
 	} break;
 	case ACTION_INSPECT:
 	{
-		float completeness = (3 - gun.action_time) / 3;
-
-		if (completeness < .5) //inspect 1
+		switch (sub_anim({ 1, 1, 1, 0}, 3 - gun.action_time, &c))
 		{
-			float mix = bounce(sqrt(completeness * 2));
-			update_animation_pose(anim, current_pose, 0, 6, mix);
+		case 0: frames = { 0 , 6 }; mix = bounce(sqrt(c)); // inspect 1
+		case 1: frames = { 6 , 7 }; mix = bounce(sqrt(c)); // inspect 2
+		case 2: frames = { 7 , 0 }; mix = bounce(c); break; // idle
 		}
-		else if (completeness < .9) //inspect 1
-		{
-			float mix = bounce(sqrt((completeness - .5) * (1 / .4)));
-			update_animation_pose(anim, current_pose, 6, 7, mix);
-		}
-		else // rest
-		{
-			float mix = bounce((completeness - .9) * (1 / .1));
-			update_animation_pose(anim, current_pose, 7, 0, mix);
-		}
-	} break;
-	default: // ACTION_IDLE
-	{
-		update_animation_pose(anim, current_pose, 0, 0, 1);
 	} break;
 	}
+
+	update_animation_pose(anim, current_pose, frames.x, frames.y, mix);
 }
 void update_bolt_action_anim(Gun gun, Animation* anim, mat4* current_pose, float dtime)
 {
 	uvec2 frames = {}; // index of frames
-	float mix = 0, t = gun.action_time, c = 0; // completeness
+	float mix = 0, c = 0; // completeness
 
 	switch (gun.action)
 	{
 	case ACTION_SHOOT:
 	{
-		c = 1 - (t / .1);
-
-		if (c < .5)
+		switch (sub_anim({.05,.05, 5, 0}, .1 - gun.action_time, &c))
 		{
-			frames = { 0 , 6 };
-			mix = c * 2;
-		}
-		else
-		{
-			frames = { 6, 0 };
-			mix = (c - .5) * 2;
+		case 0: frames = { 0 , 1 }; mix = c; break; // shoot
+		case 1: frames = { 1 , 0 }; mix = c; break; // idle
 		}
 	} break;
 	case ACTION_RELOAD:
 	{
-		c = 1 - (t / 2);
-
-		if (c < .1) // bolt up
+		switch (sub_anim({ .25, .75, .75, .25 }, 2 - gun.action_time, &c))
 		{
-			frames = { 0, 1 };
-			mix = c / .1;
-		}
-		else if (c < .7) // bolt back
-		{
-			frames = { 1, 1 };
-			c = (c - .4) / .3;
-			mix = c;
-		}
-		else if (c < .8) // bolt up (and forward)
-		{
-			frames = { 1, 2 };
-			mix = bounce((c - .7) * (1 / .1));
-		}
-		else // ready
-		{
-			frames = { 2, 0 };
-			mix = lerp_spring(0, 1, (c - .8) * (1 / .2));
+		case 0: frames = { 0 , 1 }; mix = bounce(c); break; // bolt up
+		case 1: frames = { 1 , 2 }; mix = bounce(c); break; // bolt back
+		case 2: frames = { 2 , 1 }; mix = bounce(c); break; //bounce(c); break; // bolt up
+		case 3: frames = { 1 , 0 }; mix = bounce(c); break; //lerp_spring(0, 1, c); break; // idle
 		}
 	} break;
 	case ACTION_INSPECT:
 	{
-		c = 1 - (t / 3);
-
-		if (c < .5) // inspect 1
+		switch (sub_anim({ 1, 1, 1, 0}, 3 - gun.action_time, &c))
 		{
-			frames = { 0, 6 };
-			mix = bounce(sqrt(c * 2));
-		}
-		else if (c < .9) // inspect 1
-		{
-			frames = { 6, 7 };
-			mix = bounce(sqrt((c - .5) * (1 / .4)));
-		}
-		else // rest
-		{
-			frames = { 7, 0 };
-			mix = bounce((c - .9) * (1 / .1));
+		case 0: frames = { 0 , 6 }; mix = bounce(c); // inspect 1
+		case 1: frames = { 6 , 7 }; mix = bounce(c); // inspect 2
+		case 2: frames = { 7 , 0 }; mix = bounce(c); break; // idle
 		}
 	} break;
 	}
