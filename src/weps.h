@@ -127,22 +127,22 @@ void init(Gun_Meta* meta)
 	meta->audio[GUN_US_RIFLE].shoot[0] = load_audio("assets/audio/garand_shot.audio");
 	meta->audio[GUN_US_RIFLE].shoot[1] = load_audio("assets/audio/garand_ping.audio");
 
-	meta->info[GUN_UK_RIFLE] = { 5, 1, .25, 10 }; // M1 Garand
-	meta->info[GUN_RU_RIFLE] = { 5, 1, .25, 10 }; // M1 Garand
-	meta->info[GUN_GE_RIFLE] = { 5, 1, .25, 10 }; // M1 Garand
+	meta->info[GUN_UK_RIFLE] = { 5, 1, .25, 10 };
+	meta->info[GUN_RU_RIFLE] = { 5, 1, .25, 10 };
+	meta->info[GUN_GE_RIFLE] = { 5, 1, .25, 10 };
 
-	meta->info[GUN_US_SMG] = { 5, 1, .25, 10 }; // M1 Garand
-	meta->info[GUN_GE_SMG] = { 5, 1, .25, 10 }; // M1 Garand
-	meta->info[GUN_RU_SMG] = { 5, 1, .25, 10 }; // M1 Garand
+	meta->info[GUN_US_SMG] = { 5, 1, .25, 10 };
+	meta->info[GUN_GE_SMG] = { 5, 1, .25, 10 };
+	meta->info[GUN_RU_SMG] = { 5, 1, .25, 10 };
 
-	meta->info[GUN_US_MG] = { 5, 1, .25, 10 }; // M1 Garand
-	meta->info[GUN_GE_MG] = { 5, 1, .25, 10 }; // M1 Garand
+	meta->info[GUN_US_MG] = { 5, 1, .25, 10 };
+	meta->info[GUN_GE_MG] = { 5, 1, .25, 10 };
 
-	meta->info[GUN_US_PISTOL] = { 5, 1, .25, 10 }; // M1 Garand
+	meta->info[GUN_US_PISTOL] = { 5, 1, .25, 10 };
 
-	meta->info[GUN_RPG] = { 5, 1, .25, 10 }; // M1 Garand
-	meta->info[GUN_MORTAR] = { 5, 1, .25, 10 }; // M1 Garand
-	meta->info[GUN_FLAMETHROWER] = { 5, 1, .25, 10 }; // M1 Garand
+	meta->info[GUN_RPG] = { 5, 1, .25, 10 };
+	meta->info[GUN_MORTAR] = { 5, 1, .25, 10 };
+	meta->info[GUN_FLAMETHROWER] = { 5, 1, .25, 10 };
 
 	meta->info[GUN_US_PISTOL] = { 10, 1, .25, 5 };
 	meta->audio[GUN_US_PISTOL].shoot[0] = load_audio("assets/audio/pistol_shot_1.audio");
@@ -271,7 +271,7 @@ void update(Gun_Renderer* renderer, Gun gun, float dtime, Camera cam, float turn
 {
 	switch (gun.type)
 	{
-	case GUN_US_RIFLE:
+	case GUN_US_RIFLE: update_us_rifle_anim(gun, renderer->animations + gun.type, renderer->current_pose, dtime); break;
 	case GUN_UK_RIFLE:
 	case GUN_RU_RIFLE:
 	case GUN_GE_RIFLE: update_bolt_action_anim(gun, renderer->animations + gun.type, renderer->current_pose, dtime); break;
@@ -470,6 +470,44 @@ void update_smg_anim(Gun gun, Animation* anim, mat4* current_pose, float dtime)
 		case 0: frames = { 0 , 6 }; mix = c; // inspect 1
 		case 1: frames = { 6 , 7 }; mix = c; // inspect 2
 		case 2: frames = { 7 , 0 }; mix = bounce(c); break; // idle
+		}
+	} break;
+	}
+
+	update_animation_pose(anim, current_pose, frames.x, frames.y, mix);
+}
+void update_us_rifle_anim(Gun gun, Animation* anim, mat4* current_pose, float dtime)
+{
+	uvec2 frames = { 1, 1 }; // index of frames
+	float mix = 0, c = 0; // completeness
+
+	switch (gun.action)
+	{
+	case ACTION_SHOOT:
+	{
+		switch (sub_anim({ .05, .05, 0, 0 }, .1 - gun.action_time, &c))
+		{
+		case 0: frames = { 1 , 2 }; mix = c; break; // slide back
+		case 1: frames = { 2 , 1 }; mix = c; break; // slide fwd
+		}
+	} break;
+	case ACTION_RELOAD:
+	{
+		switch (sub_anim({ .6, .6, .5, .3 }, 2 - gun.action_time, &c))
+		{
+		case 0: frames = { 1 , 2 }; mix = bounce(c); break;
+		case 1: frames = { 2 , 3 }; mix = c * c; break;
+		case 2: frames = { 3 , 2 }; mix = c * c; break;
+		case 3: frames = { 2 , 1 }; mix = bounce(c); break;
+		}
+	} break;
+	case ACTION_INSPECT:
+	{
+		switch (sub_anim({ 1, 1, 1, 0 }, 3 - gun.action_time, &c))
+		{
+		case 0: frames = { 0 , 0 }; mix = c; // inspect 1
+		case 1: frames = { 0 , 0 }; mix = c; // inspect 2
+		case 2: frames = { 0 , 0 }; mix = bounce(c); break; // idle
 		}
 	} break;
 	}
