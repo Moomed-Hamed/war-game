@@ -72,7 +72,7 @@ void main()
 	// directional light
 	{
 		vec3 light_dir = -1 * normalize(vec3(1, -.1, 1)); // idk why this is flipped
-		vec3 light_color = vec3(1, .5, 0);
+		vec3 light_color = vec3(.31, .41, .53) * .5;
 		
 		vec3 L = normalize(light_dir);
 		vec3 H = normalize(V + L);

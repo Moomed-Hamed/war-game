@@ -17,7 +17,7 @@ out VS_OUT vs_out;
 
 void main()
 {
-	vec2 tex_coord = position.zx / 64; // not sure why xz has to be reversed
+	vec2 tex_coord = position.zx / 256; // not sure why xz has to be reversed
 	float h = texture(heightmap, tex_coord).r;
 
 	vs_out.frag_pos  = position + vec3(0, h, 0);

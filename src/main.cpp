@@ -57,7 +57,6 @@ int main()
 	int64 target_frame_milliseconds = frame_time * 1000.f; // seconds * 1000 = milliseconds
 	Timestamp frame_start = get_timestamp(), frame_end;
 
-	Audio orb = load_audio("assets/audio/orb.audio");
 	Audio headshot = load_audio("assets/audio/headshot.audio");
 
 	while (1)
@@ -80,8 +79,6 @@ int main()
 
 		if (keys.LEFT.is_pressed  && !keys.LEFT.was_pressed ) gun.type--;
 		if (keys.RIGHT.is_pressed && !keys.RIGHT.was_pressed) gun.type++;
-
-		//if (mouse.left_button.is_pressed && !mouse.left_button.was_pressed) play_audio(orb);
 
 		static float a = 0; a += frame_time;
 		if (a > .4) { a = 0; emit_fire(emitter, terrain(heightmap, vec2(9, 6))); }

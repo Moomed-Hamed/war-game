@@ -14,13 +14,17 @@ layout (location = 2) out vec4 frag_albedo;
 
 layout (binding = 3) uniform sampler2D normals;
 layout (binding = 4) uniform sampler2D albedos;
+layout (binding = 5) uniform sampler2D mat;
 
 void main()
 {
-	vec3 normal = (texture(normals, vs_out.tex_coord).rbg * 2) - 1;
-	vec3 albedo = texture(albedos, vs_out.tex_coord).rgb;
+	vec2 tex = vs_out.tex_coord * 40;
 
-	frag_position = vec4(vs_out.frag_pos,.1); // metalness
-	frag_normal   = vec4(normal         ,.5); // roughness
-	frag_albedo   = vec4(albedo         ,.2); // ambient occlusion
+	vec3 normal = (texture(normals, tex).rbg * 2) - 1;
+	vec3 albedo = texture(albedos , tex).rgb;
+	vec3 mat    = texture(mat     , tex).rgb;
+
+	frag_position = vec4(vs_out.frag_pos, mat.x); // metalness
+	frag_normal   = vec4(normal         , mat.y); // roughness
+	frag_albedo   = vec4(albedo         , mat.z); // ambient occlusion
 }

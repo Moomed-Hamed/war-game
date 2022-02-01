@@ -85,7 +85,7 @@ void draw(Bullet_Renderer* renderer, mat4 proj_view)
 #define ACTION_INSPECT	3
 #define ACTION_SWITCH	4
 
-#define NUM_GUNS	14
+#define NUM_GUNS	15
 
 #define GUN_US_RIFLE	0 // M1 Garand
 #define GUN_GE_RIFLE	1 // bolt action
@@ -103,9 +103,10 @@ void draw(Bullet_Renderer* renderer, mat4 proj_view)
 
 #define GUN_US_PISTOL	10 // M1911
 
-#define GUN_MORTAR	11
-#define GUN_RPG	12
-#define GUN_FLAMETHROWER	13
+#define GUN_SHOTGUN	11
+#define GUN_MORTAR	12
+#define GUN_RPG	13
+#define GUN_FLAMETHROWER	14
 
 struct Gun_Meta
 {
@@ -215,10 +216,10 @@ inspect:
 
 // rendering
 
-void update_pistol_anim(Gun gun, Animation* anim, mat4* current_pose, float dtime);
-void update_bolt_action_anim(Gun gun, Animation* anim, mat4* current_pose, float dtime);
-void update_smg_anim(Gun gun, Animation* anim, mat4* current_pose, float dtime);
-void update_us_rifle_anim(Gun gun, Animation* anim, mat4* current_pose, float dtime);
+void update_pistol_anim(Gun gun, Animation* anim, mat4* current_pose);
+void update_bolt_action_anim(Gun gun, Animation* anim, mat4* current_pose);
+void update_smg_anim(Gun gun, Animation* anim, mat4* current_pose);
+void update_us_rifle_anim(Gun gun, Animation* anim, mat4* current_pose);
 
 struct Gun_Drawable
 {
@@ -246,7 +247,8 @@ void init(Gun_Renderer* renderer)
 		"ak"	      ,
 		"us_mg"	   , "ak"	   ,
 		"us_pistol" ,
-		"ak"	      , "ak"	   , "ak"
+		"shotgun"   ,
+		"ak"	      , "m4"	   , "sniper"
 	};
 
 	load(&renderer->shader, "assets/shaders/transform/mesh_anim_uv.vert", "assets/shaders/mesh_uv.frag");
@@ -269,23 +271,26 @@ void init(Gun_Renderer* renderer)
 }
 void update(Gun_Renderer* renderer, Gun gun, float dtime, Camera cam, float turn)
 {
+	Animation* anim = renderer->animations;
+	mat4* pose = renderer->current_pose;
+
 	switch (gun.type)
 	{
-	case GUN_US_RIFLE: update_us_rifle_anim(gun, renderer->animations + gun.type, renderer->current_pose, dtime); break;
+	case GUN_US_RIFLE: update_us_rifle_anim(gun, anim + gun.type, pose); break;
 	case GUN_UK_RIFLE:
 	case GUN_RU_RIFLE:
-	case GUN_GE_RIFLE: update_bolt_action_anim(gun, renderer->animations + gun.type, renderer->current_pose, dtime); break;
+	case GUN_GE_RIFLE: update_bolt_action_anim(gun, anim + gun.type, pose); break;
 
 	case GUN_US_SMG:
 	case GUN_GE_SMG:
-	case GUN_RU_SMG: update_smg_anim(gun, renderer->animations + gun.type, renderer->current_pose, dtime); break;
+	case GUN_RU_SMG: update_smg_anim(gun, anim + gun.type, pose); break;
 
 	case GUN_US_MG:
-	case GUN_GE_MG: update_pistol_anim(gun, renderer->animations + gun.type, renderer->current_pose, dtime); break;
+	case GUN_GE_MG: update_pistol_anim(gun, anim + gun.type, pose); break;
 
-	case GUN_US_PISTOL: update_pistol_anim(gun, renderer->animations + gun.type, renderer->current_pose, dtime); break;
+	case GUN_US_PISTOL: update_pistol_anim(gun, anim + gun.type, pose); break;
 
-	default: out("ERROR : not an animated gun type");
+	default: update_smg_anim(gun, anim + gun.type, pose); out("ERROR : not an animated gun type");
 	}
 
 	vec3 f = cam.front;
@@ -319,7 +324,7 @@ void update(Gun_Renderer* renderer, Gun gun, float dtime, Camera cam, float turn
 
 	case GUN_US_PISTOL : o = { 1.5, -.25, .4 }; s = .25; break;
 
-	default : o = { 1, 0, 1 }; s = 1.0; break;
+	default : o = { .85, -.45, .4 }; s = 1.0; break;
 	}
 
 	Gun_Drawable drawable = { cam.position + (f * o.x) + (u * o.y) + (r * o.z) , mat3(s) * point_at(look, u) };
@@ -362,7 +367,7 @@ uint sub_anim(vec4 t, float at, float* c)
 	*c = 1;
 	return 4;
 }
-void update_pistol_anim(Gun gun, Animation* anim, mat4* current_pose, float dtime)
+void update_pistol_anim(Gun gun, Animation* anim, mat4* current_pose)
 {
 	uvec2 frames = {}; // index of frames
 	float mix = 0, c = 0; // completeness
@@ -400,7 +405,7 @@ void update_pistol_anim(Gun gun, Animation* anim, mat4* current_pose, float dtim
 
 	update_animation_pose(anim, current_pose, frames.x, frames.y, mix);
 }
-void update_bolt_action_anim(Gun gun, Animation* anim, mat4* current_pose, float dtime)
+void update_bolt_action_anim(Gun gun, Animation* anim, mat4* current_pose)
 {
 	uvec2 frames = {}; // index of frames
 	float mix = 0, c = 0; // completeness
@@ -438,7 +443,7 @@ void update_bolt_action_anim(Gun gun, Animation* anim, mat4* current_pose, float
 
 	update_animation_pose(anim, current_pose, frames.x, frames.y, mix);
 }
-void update_smg_anim(Gun gun, Animation* anim, mat4* current_pose, float dtime)
+void update_smg_anim(Gun gun, Animation* anim, mat4* current_pose)
 {
 	uvec2 frames = {}; // index of frames
 	float mix = 0, c = 0; // completeness
@@ -476,7 +481,7 @@ void update_smg_anim(Gun gun, Animation* anim, mat4* current_pose, float dtime)
 
 	update_animation_pose(anim, current_pose, frames.x, frames.y, mix);
 }
-void update_us_rifle_anim(Gun gun, Animation* anim, mat4* current_pose, float dtime)
+void update_us_rifle_anim(Gun gun, Animation* anim, mat4* current_pose)
 {
 	uvec2 frames = { 1, 1 }; // index of frames
 	float mix = 0, c = 0; // completeness

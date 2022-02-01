@@ -1,8 +1,8 @@
 #include "physics.h"
 
 #define HEIGHTMAP_N	1024 // num data points per row
-#define HEIGHTMAP_L	64   // side length of terrain
-#define HEIGHTMAP_S	2    // terrain vertical scale
+#define HEIGHTMAP_L	256  // side length of terrain
+#define HEIGHTMAP_S	5    // terrain vertical scale
 
 uint height_index(float pos_x, float pos_z)
 {
@@ -49,7 +49,7 @@ struct Heightmap_Renderer
 {
 	Drawable_Mesh mesh;
 	Shader shader;
-	GLuint heights, normals, albedo;
+	GLuint heights, normals, albedo, mat;
 };
 
 void init(Heightmap_Renderer* renderer, Heightmap* heightmap, const char* path)
@@ -58,6 +58,7 @@ void init(Heightmap_Renderer* renderer, Heightmap* heightmap, const char* path)
 	load(&(renderer->shader), "assets/shaders/terrain.vert", "assets/shaders/terrain.frag");
 	renderer->normals = load_texture_png("assets/textures/normals.png");
 	renderer->albedo = load_texture_png("assets/textures/albedo.png");
+	renderer->mat = load_texture_png("assets/textures/mat.png");
 
 	load_file_r32(path, heightmap->height, HEIGHTMAP_N);
 	for (uint i = 0; i < HEIGHTMAP_N * HEIGHTMAP_N; i++) heightmap->height[i] *= HEIGHTMAP_S;
@@ -75,6 +76,7 @@ void draw(Heightmap_Renderer* renderer, mat4 proj_view)
 	bind_texture(renderer->heights, 2);
 	bind_texture(renderer->normals, 3);
 	bind_texture(renderer->albedo , 4);
+	bind_texture(renderer->mat    , 5);
 	bind(renderer->shader);
 	set_mat4(renderer->shader, "proj_view", proj_view);
 	draw(renderer->mesh);
