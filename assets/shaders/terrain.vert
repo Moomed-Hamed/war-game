@@ -3,7 +3,7 @@
 struct VS_OUT
 {
 	vec3 frag_pos;
-	vec2 tex_coord;
+	vec3 tex_coord;
 };
 
 layout (location = 0) in vec3 position;
@@ -20,8 +20,16 @@ void main()
 	vec2 tex_coord = position.zx / 256; // not sure why xz has to be reversed
 	float h = texture(heightmap, tex_coord).r;
 
+	vs_out.tex_coord.z = 1;
+	if(h < 0)
+	{
+		h *= -1;
+		vs_out.tex_coord.z = -1;
+	}
+
+
 	vs_out.frag_pos  = position + vec3(0, h, 0);
-	vs_out.tex_coord = tex_coord;
+	vs_out.tex_coord.xy = tex_coord.xy;
 
 	gl_Position = proj_view * vec4(vs_out.frag_pos, 1.0);
 }

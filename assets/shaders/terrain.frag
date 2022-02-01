@@ -3,7 +3,7 @@
 struct VS_OUT
 {
 	vec3 frag_pos;
-	vec2 tex_coord;
+	vec3 tex_coord;
 };
 
 in VS_OUT vs_out;
@@ -12,17 +12,28 @@ layout (location = 0) out vec4 frag_position;
 layout (location = 1) out vec4 frag_normal;
 layout (location = 2) out vec4 frag_albedo;
 
-layout (binding = 3) uniform sampler2D normals;
-layout (binding = 4) uniform sampler2D albedos;
-layout (binding = 5) uniform sampler2D mat;
+layout (binding = 3) uniform sampler2D grass_normals;
+layout (binding = 4) uniform sampler2D grass_albedos;
+layout (binding = 5) uniform sampler2D grass_mat;
+
+layout (binding = 6) uniform sampler2D dirt_normals;
+layout (binding = 7) uniform sampler2D dirt_albedos;
+layout (binding = 8) uniform sampler2D dirt_mat;
 
 void main()
 {
-	vec2 tex = vs_out.tex_coord * 40;
+	vec2 tex = vs_out.tex_coord.xy * 64;
 
-	vec3 normal = (texture(normals, tex).rbg * 2) - 1;
-	vec3 albedo = texture(albedos , tex).rgb;
-	vec3 mat    = texture(mat     , tex).rgb;
+	vec3 normal = (texture(grass_normals, tex).rbg * 2) - 1;
+	vec3 albedo =  texture(grass_albedos , tex).rgb;
+	vec3 mat    =  texture(grass_mat     , tex).rgb;
+
+	if(vs_out.tex_coord.z < 0)
+	{
+		normal = (texture(dirt_normals, tex).rbg * 2) - 1;
+		albedo =  texture(dirt_albedos , tex).rgb;
+		mat    =  texture(dirt_mat     , tex).rgb;
+	}
 
 	frag_position = vec4(vs_out.frag_pos, mat.x); // metalness
 	frag_normal   = vec4(normal         , mat.y); // roughness

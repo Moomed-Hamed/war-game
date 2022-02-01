@@ -36,9 +36,9 @@ void explode(Heightmap* map, vec3 position, GLuint tex) // not working yet
 	
 	map->height[(x * HEIGHTMAP_N) + z] *= 1.25;
 
-	for (uint x = 256; x < 400; x++) {
-	for (uint z = 256; z < 400; z++) {
-		map->height[x * HEIGHTMAP_N + z] *= .9;
+	for (uint x = 56; x < 80; x++) {
+	for (uint z = 56; z < 80; z++) {
+		map->height[x * HEIGHTMAP_N + z] *= -.9;
 	}}
 
 	glBindTexture(GL_TEXTURE_2D, tex);
@@ -49,16 +49,22 @@ struct Heightmap_Renderer
 {
 	Drawable_Mesh mesh;
 	Shader shader;
-	GLuint heights, normals, albedo, mat;
+	GLuint heights;
+	GLuint grass[3], dirt[3];
 };
 
 void init(Heightmap_Renderer* renderer, Heightmap* heightmap, const char* path)
 {
-	load(&renderer->mesh, "assets/meshes/env/terrain.mesh", 0);
-	load(&(renderer->shader), "assets/shaders/terrain.vert", "assets/shaders/terrain.frag");
-	renderer->normals = load_texture_png("assets/textures/normals.png");
-	renderer->albedo = load_texture_png("assets/textures/albedo.png");
-	renderer->mat = load_texture_png("assets/textures/mat.png");
+	load(&renderer->mesh, "assets/meshes/env/terrain.mesh");
+	load(&renderer->shader, "assets/shaders/terrain.vert", "assets/shaders/terrain.frag");
+
+	renderer->grass[0] = load_texture_png("assets/textures/grass_normal.png");
+	renderer->grass[1] = load_texture_png("assets/textures/grass_albedo.png");
+	renderer->grass[2] = load_texture_png("assets/textures/grass_mat.png");
+
+	renderer->dirt [0] = load_texture_png("assets/textures/dirt_normal.png");
+	renderer->dirt [1] = load_texture_png("assets/textures/dirt_albedo.png");
+	renderer->dirt [2] = load_texture_png("assets/textures/dirt_mat.png");
 
 	load_file_r32(path, heightmap->height, HEIGHTMAP_N);
 	for (uint i = 0; i < HEIGHTMAP_N * HEIGHTMAP_N; i++) heightmap->height[i] *= HEIGHTMAP_S;
@@ -74,9 +80,12 @@ void init(Heightmap_Renderer* renderer, Heightmap* heightmap, const char* path)
 void draw(Heightmap_Renderer* renderer, mat4 proj_view)
 {
 	bind_texture(renderer->heights, 2);
-	bind_texture(renderer->normals, 3);
-	bind_texture(renderer->albedo , 4);
-	bind_texture(renderer->mat    , 5);
+	bind_texture(renderer->grass[0], 3);
+	bind_texture(renderer->grass[1], 4);
+	bind_texture(renderer->grass[2], 5);
+	bind_texture(renderer->dirt [0], 6);
+	bind_texture(renderer->dirt [1], 7);
+	bind_texture(renderer->dirt [2], 8);
 	bind(renderer->shader);
 	set_mat4(renderer->shader, "proj_view", proj_view);
 	draw(renderer->mesh);

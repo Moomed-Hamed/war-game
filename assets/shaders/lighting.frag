@@ -62,7 +62,7 @@ void main()
 	vec3 V = normalize(vs_out.view_pos - position); // world_pos -> camera
 
 	// if dia-electric (eg. plastic) use 0.04. if metal, use albedo (metallic workflow)    
-	vec3 F0 = mix(vec3(0.04), albedo, metallic); // base reflectivity
+	vec3 F0 = mix(vec3(0.02), albedo, metallic); // base reflectivity
 
 	vec3 Lo = vec3(0); // Lo = outgoing radiance (final color - ambient)
 
