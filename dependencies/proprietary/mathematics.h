@@ -1,5 +1,16 @@
-// Copyright (c) 2022 Mohamed
-// Intermediary version 10.1.22
+#define GLM_ENABLE_EXPERIMENTAL
+#include <external/GLM/glm.hpp> // for math
+#include <external/GLM/gtc/matrix_transform.hpp>
+#include <external/GLM/gtc/quaternion.hpp> // for quaternions
+#include <external/GLM/gtx/quaternion.hpp>
+#include <external/GLM/gtx/transform.hpp>
+
+using glm::vec2;  using glm::vec3; using glm::vec4;
+using glm::mat3;  using glm::mat4;
+using glm::quat;
+using glm::ivec2; using glm::ivec3;
+using glm::uvec2; using glm::uvec3;
+using glm::lookAt; using glm::perspective;
 
 #define PI	  3.14159265359f
 #define TWOPI 6.28318530718f
@@ -7,191 +18,21 @@
 #define ToRadians(value) ( ((value) * PI) / 180.0f )
 #define ToDegrees(value) ( ((value) * 180.0f) / PI )
 
-#define GLM_ENABLE_EXPERIMENTAL
-#include <external/GLM/glm.hpp> //for math
-#include <external/GLM/gtc/matrix_transform.hpp>
-#include <external/GLM/gtc/quaternion.hpp> //for quaternions
-#include <external/GLM/gtx/quaternion.hpp>
-#include <external/GLM/gtx/transform.hpp>
-using glm::vec2;  using glm::vec3; using glm::vec4;
-using glm::mat3;  using glm::mat4;
-using glm::quat;
-using glm::ivec2; using glm::ivec3;
-using glm::uvec2; using glm::uvec3;
-using glm::lookAt;
+typedef signed   char      int8 , i8;
+typedef signed   short     int16, i16;
+typedef signed   int       int32, i32;
+typedef signed   long long int64, i64;
 
-#define NONE 0
-#define INVALID 65535
+typedef unsigned char      uint8 , u8 , byte;
+typedef unsigned short     uint16, u16;
+typedef unsigned int       uint32, u32, uint;
+typedef unsigned long long uint64, u64;
 
-typedef signed char  int8;
-typedef signed short int16;
-typedef signed int   int32;
-typedef signed long long int64;
+// random numbers
 
-typedef unsigned char  uint8;
-typedef unsigned short uint16;
-typedef unsigned int   uint32;
-typedef unsigned long long uint64;
-
-typedef uint8  u8;
-typedef uint16 u16;
-typedef uint32 u32;
-typedef uint64 u64;
-
-typedef int8  s8;
-typedef int16 s16;
-typedef int32 s32;
-typedef int64 s64;
-
-typedef s32 sint;
-typedef u32 uint;
-typedef u32 bool32;
-
-typedef float  f32;
-typedef double f64;
-
-typedef uint8 byte;
-
-mat3 point_at(vec3 dir, vec3 up)
-{
-	//Assumed to be normalized
-	vec3 f = dir; //front
-	vec3 r = cross(up, f); //right
-	vec3 u = up;
-
-	mat3 result(1);
-	result[0][0] = r.x;
-	result[1][0] = r.y;
-	result[2][0] = r.z;
-	result[0][1] = u.x;
-	result[1][1] = u.y;
-	result[2][1] = u.z;
-	result[0][2] = f.x;
-	result[1][2] = f.y;
-	result[2][2] = f.z;
-
-	return inverse(result);
-}
-
-//linearly interpolate between a0 and a1, Weight w should be in the range [0.0, 1.0]
-float interpolate(float f1, float f2, float w)
-{
-	if (0.0 > w) return f1;
-	if (1.0 < w) return f2;
-
-	//return (f2 - f1) * w + f1;
-	// Use this cubic interpolation (smoothstep) instead, for a smooth appearance:
-	 return (f2 - f1) * (3.0 - w * 2.0) * w * w + f1;
-	// Use (smoothstep) for an even smoother result with a second derivative equal to zero on boundaries:
-	//return (f2 - f1) * (x * (w * 6.0 - 15.0) * w * w *w + 10.0) + f1;
-}
-
-// create random direction vector
-vec2 random_gradient(int ix, int iy)
-{
-	// random float. no precomputed gradients = this works for any number of grid coordinates
-	float random = 2920.f * sin(ix * 21942.f + iy * 171324.f + 8912.f) * cos(ix * 23157.f * iy * 217832.f + 9758.f);
-	return vec2(cos(random), sin(random));
-}
-
-// Computes the dot product of the distance and gradient vectors.
-float dot_grid_gradient(int ix, int iy, float x, float y)
-{
-	vec2 gradient = random_gradient(ix, iy);
-	vec2 distance = { x - (float)ix, y - (float)iy };
-
-	return glm::dot(distance, gradient);
-}
-
-// linear interpolation
-float lerp(float start, float end, float amount)
-{
-	return (start + amount * (end - start));
-}
-float lerp_sin(float start, float end, float amount)
-{
-	return lerp(start, end, sin(amount * (PI / 2.f)));
-}
-float lerp_spring(float amount, float stiffness = 1, float period = 1)
-{
-	return 1.f - abs(sin(TWOPI * amount * period) * exp(-stiffness * amount));
-}
-vec3 lerp(vec3 start, vec3 end, float amount)
-{
-	return (start + amount * (end - start));
-}
-quat lerp(quat start, quat end, float amount)
-{
-	return (start + amount * (end - start));
-}
-mat4 lerp(mat4 frame_1, mat4 frame_2, float amount)
-{
-	vec3 pos_1 = vec3(frame_1[0][3], frame_1[1][3], frame_1[2][3]);
-	vec3 pos_2 = vec3(frame_2[0][3], frame_2[1][3], frame_2[2][3]);
-
-	quat rot_1 = quat(frame_1);
-	quat rot_2 = quat(frame_2);
-
-	vec3 pos = lerp(pos_1, pos_2, amount);
-	quat rot = lerp(rot_1, rot_2, amount);
-
-	mat4 ret = mat4(rot);
-	ret[0][3] = pos.x;
-	ret[1][3] = pos.y;
-	ret[2][3] = pos.z;
-
-	return ret;
-}
-mat4 nlerp(mat4 frame_1, mat4 frame_2, float amount)
-{
-	vec3 pos_1 = vec3(frame_1[0][3], frame_1[1][3], frame_1[2][3]);
-	vec3 pos_2 = vec3(frame_2[0][3], frame_2[1][3], frame_2[2][3]);
-
-	quat rot_1 = quat(frame_1);
-	quat rot_2 = quat(frame_2);
-
-	vec3 pos = lerp(pos_1, pos_2, amount);
-	quat rot = glm::normalize(lerp(rot_1, rot_2, amount));
-
-	mat4 ret = mat4(rot);
-	ret[0][3] = pos.x;
-	ret[1][3] = pos.y;
-	ret[2][3] = pos.z;
-
-	return ret;
-}
-
-// compute perlin noise at coordinates x, y
-float perlin(float x, float y)
-{
-	// grid coordinates
-	int x0 = (int)x, y0 = (int)y;
-	int x1 = x0 + 1, y1 = y0 + 1;
-
-	// interpolation weights (could also use higher order polynomial/s-curve here)
-	float sx = x - (float)x0;
-	float sy = y - (float)y0;
-
-	// interpolate between grid point gradients
-	float n0, n1, ix0, ix1, value;
-
-	n0 = dot_grid_gradient(x0, y0, x, y);
-	n1 = dot_grid_gradient(x1, y0, x, y);
-	ix0 = interpolate(n0, n1, sx);
-
-	n0 = dot_grid_gradient(x0, y1, x, y);
-	n1 = dot_grid_gradient(x1, y1, x, y);
-	ix1 = interpolate(n0, n1, sx);
-
-	value = interpolate(ix0, ix1, sy);
-	return (value + 1) / 2;
-}
-
-// randomness & noise
-
-#define BIT_NOISE_1 0xB5297A4D;
-#define BIT_NOISE_2 0x68E31DA4;
-#define BIT_NOISE_3 0x1B56C4E9;
+#define BIT_NOISE_1 0xB5297A4D
+#define BIT_NOISE_2 0x68E31DA4
+#define BIT_NOISE_3 0x1B56C4E9
 
 uint random_uint()
 {
@@ -207,21 +48,9 @@ uint random_uint()
 }
 int random_int()
 {
-	union
-	{
-		uint seed;
-		int ret;
-	} u;
-
-	u.seed = random_uint();
-
-	return u.ret;
-}
-int random_float()
-{
 	union {
 		uint seed;
-		float ret;
+		int ret;
 	} u;
 
 	u.seed = random_uint();
@@ -235,18 +64,21 @@ float random_normalized_float() // random float between 0 and 1
 }
 float random_normalized_float_signed() // random float between -1 and 1
 {
-	return (random_normalized_float() * 2) - 1;
+	return (random_normalized_float() * 2.f) - 1.f;
 }
-bool random_boolean(float probability_of_returning_true = 0.5)
+bool random_boolean(float probability_of_returning_true = .5f)
 {
 	if (random_normalized_float() < probability_of_returning_true) return true;
-	
+
 	return false;
 }
-int noise(uint n, uint seed = 0)
+
+// noise
+
+uint random_uint(uint n, uint seed = 0)
 {
 	n *= BIT_NOISE_1;
-	n += seed;
+	n *= seed; // helps avoid linearity
 	n ^= (n >> 8);
 	n += BIT_NOISE_2;
 	n ^= (n >> 8);
@@ -254,31 +86,31 @@ int noise(uint n, uint seed = 0)
 	n ^= (n >> 8);
 	return n;
 }
-float noise_chance(uint n, uint seed = 0) // normalized
+int random_int(uint n, uint seed = 0)
 {
-	n *= BIT_NOISE_1;
-	n += seed;
-	n ^= (n >> 8);
-	n += BIT_NOISE_2;
-	n ^= (n >> 8);
-	n *= BIT_NOISE_3;
-	n ^= (n >> 8);
+	union {
+		uint seed;
+		int ret;
+	} u;
 
-	return (float)n / (float)UINT_MAX;
+	u.seed = random_uint(n, seed);
+
+	return u.ret;
 }
-float perlin(float n)
+float random_normalized_float(uint n, uint seed = 0) // random float between 0 and 1
 {
-	int x1 = (int)n;
-	int x2 = x1 + 1;
-
-	//int gradient_1 = noise(x1);
-	//int gradient_2 = noise(x2);
-
-	return lerp(noise_chance(x1), noise_chance(x2), n - (float)x1);
+	seed = random_uint(n, seed);
+	return (float)seed / (float)UINT_MAX; // is there a better way to do this?
+}
+float random_normalized_float_signed(uint n, uint seed = 0) // random float between -1 and 1
+{
+	return (random_normalized_float(n, seed) * 2.f) - 1.f;
 }
 
-float randfn(uint n, uint seed = 0) { return noise_chance(n, seed); }
-float randfns(uint n, uint seed = 0) { return (noise_chance(n, seed) * 2) - 1; }
+// random & noise utilities
+
+float randfn(uint n, uint seed = 0) { return random_normalized_float(n, seed); }
+float randfns(uint n, uint seed = 0) { return (random_normalized_float(n, seed) * 2) - 1; }
 float randfn() { return random_normalized_float(); }
 float randfns() { return random_normalized_float_signed(); }
 vec3  randf3n() { return vec3(randfn(), randfn(), randfn()); }
@@ -286,16 +118,52 @@ vec3  randf3ns() { return vec3(randfns(), randfns(), randfns()); }
 vec3  randf3n(uint a, uint b, uint c) { return vec3(randfn(a), randfn(b), randfn(c)); }
 vec3  randf3ns(uint a, uint b, uint c) { return vec3(randfns(a), randfns(b), randfns(c)); }
 
-vec3 shake(float trauma) // perlin shake
+// interpolation
+
+float lerp_spring(float amount, float stiffness = 1, float period = 1) // probably broken
 {
-	uint offset = random_uint() % 64;
-	float o1 = ((perlin((trauma + offset + 0) * 1000) * 2) - 1) * trauma;
-	float o2 = ((perlin((trauma + offset + 1) * 2000) * 2) - 1) * trauma;
-	float o3 = ((perlin((trauma + offset + 2) * 3000) * 2) - 1) * trauma;
-	return vec3(o1, o2, o3);
+	return 1.f - abs(sin(TWOPI * amount * period) * exp(-stiffness * amount));
+}
+float lerp(float a, float b, float amount) { return (a + amount * (b - a)); }
+vec3  lerp(vec3  a, vec3  b, float amount) { return (a + amount * (b - a)); }
+quat  lerp(quat  a, quat  b, float amount) { return (a + amount * (b - a)); }
+mat4  lerp(mat4 a, mat4 b, float amount)
+{
+	vec3 pos_1 = vec3(a[0][3], a[1][3], a[2][3]);
+	vec3 pos_2 = vec3(b[0][3], b[1][3], b[2][3]);
+
+	quat rot_1 = quat(a);
+	quat rot_2 = quat(b);
+
+	vec3 pos = lerp(pos_1, pos_2, amount);
+	quat rot = lerp(rot_1, rot_2, amount);
+
+	mat4 ret = mat4(rot);
+	ret[0][3] = pos.x;
+	ret[1][3] = pos.y;
+	ret[2][3] = pos.z;
+
+	return ret;
+}
+mat4  nlerp(mat4 a, mat4 b, float amount)
+{
+	vec3 pos_1 = vec3(a[0][3], a[1][3], a[2][3]);
+	vec3 pos_2 = vec3(b[0][3], b[1][3], b[2][3]);
+
+	quat rot_1 = quat(a);
+	quat rot_2 = quat(b);
+
+	vec3 pos = lerp(pos_1, pos_2, amount);
+	quat rot = normalize(lerp(rot_1, rot_2, amount));
+
+	mat4 ret = mat4(rot);
+	ret[0][3] = pos.x;
+	ret[1][3] = pos.y;
+	ret[2][3] = pos.z;
+
+	return ret;
 }
 
-// tweening
 float bezier3(float b, float c, float t) // a = 0 and d = 1
 {
 	float s = 1.f - t;
@@ -352,32 +220,147 @@ float bezier7(float b, float c, float d, float e, float f, float g, float t) // 
 
 	return (7.f * b * s6 * t) + (21.f * c * s5 * t2) + (35.f * d * s4 * t3) * (35.f * e * s3 * t4) + (21.f * f * s2 * t5) + (7.f * g * s * t6) + t7;
 }
-
 float bounce(float t, float a = -.45, float b = .25, float c = .55, float d = .75)
 {
 	return 1 - abs(bezier5(a, b, c, d, 1 - t));
 	//return 1 - abs(bezier3(-.45, 0, 1 - t));
 }
 
-/*
-struct complex
+float smoothstep(float a, float b, float amount)
 {
-	union
-	{
-		struct { float real, imag; };
-		struct { float r, i; };
-	};
-};
-
-complex conjugate(complex c)
-{
-	return complex{ c.real, c.imag * -1 };
+	// Use this cubic interpolation (smoothstep) instead, for a smooth appearance:
+	return (b - a) * (3.0 - amount * 2.0) * amount * amount + a;
+	// Use (smoothstep) for an even smoother result with a second derivative equal to zero on boundaries:
+	//return (b - a) * (amount * (amount * 6.0 - 15.0) * amount * amount * amount + 10.0) + a;
 }
 
-void mul(complex a, complex b)
-{
+// specialized noise
 
-}*/
+float dot_grid_gradient(int ix, int iy, float x, float y)
+{
+	// random float; no precomputed gradients = this works for any number of grid coordinates
+	//float random = 2920.f * sin(ix * 21942.f + iy * 171324.f + 8912.f) * cos(ix * 23157.f * iy * 217832.f + 9758.f);
+
+	float random = (float)random_int(ix, iy);
+
+	// dot product of distance & gradient vectors.
+	vec2 gradient = vec2(cos(random), sin(random));
+	vec2 distance = { x - (float)ix, y - (float)iy };
+
+	return dot(distance, gradient);
+}
+
+float perlin(float x, float y)
+{
+	// grid coordinates
+	int x0 = (int)x, y0 = (int)y;
+	int x1 = x0 + 1, y1 = y0 + 1;
+
+	// interpolation weights (could also use higher order polynomial/s-curve here)
+	float sx = x - (float)x0;
+	float sy = y - (float)y0;
+
+	// interpolate between grid point gradients
+	float n0, n1, ix0, ix1, value;
+
+	n0  = dot_grid_gradient(x0, y0, x, y);
+	n1  = dot_grid_gradient(x1, y0, x, y);
+	ix0 = smoothstep(n0, n1, sx);
+
+	n0  = dot_grid_gradient(x0, y1, x, y);
+	n1  = dot_grid_gradient(x1, y1, x, y);
+	ix1 = smoothstep(n0, n1, sx);
+
+	value = smoothstep(ix0, ix1, sy);
+	return (value + 1) / 2;
+}
+float perlin(float x)
+{
+	int x1 = (int)x;
+	int x2 = x1 + 1;
+
+	return lerp(random_normalized_float(x1), random_normalized_float(x2), x - (float)x1);
+}
+
+float worley(vec2 uv, float columns, float rows)
+{
+	vec2 index_uv = floor(vec2(uv.x * columns, uv.y * rows));
+	vec2 fract_uv = fract(vec2(uv.x * columns, uv.y * rows));
+
+	float minimum_dist = 1.0;
+
+	for (int y = -1; y <= 1; y++) {
+	for (int x = -1; x <= 1; x++)
+	{
+		vec2 neighbor = vec2(float(x), float(y));
+		vec2 point = vec2(glm::fract(sin(dot(index_uv + neighbor, vec2(12.9898, 78.233))) * 43758.5453123)); // random
+
+		vec2 diff = neighbor + point - fract_uv;
+		float dist = length(diff);
+		minimum_dist = glm::min(minimum_dist, dist);
+	} }
+
+	return minimum_dist;
+}
+vec2 voronoi(vec2 uv, float columns, float rows)
+{
+	vec2 index_uv = floor(vec2(uv.x * columns, uv.y * rows));
+	vec2 fract_uv = fract(vec2(uv.x * columns, uv.y * rows));
+
+	float minimum_dist = 1.0;
+	vec2 minimum_point = {};
+
+	for (int y = -1; y <= 1; y++) {
+	for (int x = -1; x <= 1; x++)
+	{
+		vec2 neighbor = vec2(float(x), float(y));
+		vec2 point = vec2(glm::fract(sin(dot(index_uv + neighbor, vec2(12.9898, 78.233))) * 43758.5453123)); // random
+
+		vec2 diff = neighbor + point - fract_uv;
+		float dist = length(diff);
+
+		if (dist < minimum_dist)
+		{
+			minimum_dist = dist;
+			minimum_point = point;
+		}
+	} }
+
+	return minimum_point;
+}
+
+// misc utilities
+
+vec3 shake(float trauma) // perlin shake
+{
+	uint offset = random_uint() % 64;
+	float o1 = ((perlin((trauma + offset + 0) * 1000) * 2) - 1) * trauma;
+	float o2 = ((perlin((trauma + offset + 1) * 2000) * 2) - 1) * trauma;
+	float o3 = ((perlin((trauma + offset + 2) * 3000) * 2) - 1) * trauma;
+	return vec3(o1, o2, o3);
+}
+mat3 point_at(vec3 dir, vec3 up)
+{
+	// assumed to be normalized
+	vec3 f = dir; //front
+	vec3 r = cross(up, f); //right
+	vec3 u = up;
+
+	mat3 result(1);
+	result[0][0] = r.x;
+	result[1][0] = r.y;
+	result[2][0] = r.z;
+	result[0][1] = u.x;
+	result[1][1] = u.y;
+	result[2][1] = u.z;
+	result[0][2] = f.x;
+	result[1][2] = f.y;
+	result[2][2] = f.z;
+
+	return inverse(result);
+}
+
+// fast fourier transforms
 
 #include <complex>
 typedef std::complex<double> Complex;
@@ -386,8 +369,8 @@ Complex gaussian_random_complex()
 {
 	float x1, x2, w;
 	do {
-		x1 = randfns();
-		x2 = randfns();
+		x1 = random_normalized_float_signed();
+		x2 = random_normalized_float_signed();
 		w = x1 * x1 + x2 * x2;
 	} while (w > 1.f);
 	w = sqrt((-2.f * log(w)) / w);

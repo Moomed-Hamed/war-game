@@ -29,7 +29,7 @@ int main()
 
 	Gun_Meta* gun_meta = Alloc(Gun_Meta, 1);
 	init(gun_meta);
-	Gun gun = { GUN_GE_SMG };
+	Gun gun = { GUN_US_RIFLE};
 	Gun_Renderer* gun_renderer = Alloc(Gun_Renderer, 1);
 	init(gun_renderer);
 
@@ -53,7 +53,7 @@ int main()
 	mat4 proj = glm::perspective(FOV, (float)window.screen_width / window.screen_height, 0.1f, DRAW_DISTANCE);
 
 	// frame timer
-	float frame_time = 1.f / 45;
+	float frame_time = 1.f / 60;
 	int64 target_frame_milliseconds = frame_time * 1000.f; // seconds * 1000 = milliseconds
 	Timestamp frame_start = get_timestamp(), frame_end;
 
@@ -71,7 +71,7 @@ int main()
 		if (keys.G.is_pressed) player->eyes.trauma = 1;
 		if (keys.G.is_pressed) emit_explosion(emitter, player->eyes.position + 14.f * player->eyes.front);
 
-		if (keys.M.is_pressed) explode(heightmap, player->feet.position, heightmap_renderer->heights);
+		if (keys.M.is_pressed) explode(heightmap, player->feet.position, heightmap_renderer->heights, frame_time);
 
 		if (keys.J.is_pressed) gun.type = GUN_US_PISTOL;
 		if (keys.K.is_pressed) gun.type = GUN_RU_RIFLE;

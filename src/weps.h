@@ -193,7 +193,7 @@ shoot:
 		else play_audio(meta->audio[id].shoot[0]);
 
 		gun->action = ACTION_SHOOT;
-		gun->action_time = .1;
+		gun->action_time = .2;
 		cam->trauma += .4;
 		gun->ammo_count--;
 
@@ -306,35 +306,40 @@ void update(Gun_Renderer* renderer, Gun gun, float dtime, Camera cam, float turn
 
 	// offset & scaling (so first person perspective looks good)
 	vec3 o = { 1, 1, 1 };
+	mat3 rot = mat3(1);
 	float s = 1;
 
 	switch (gun.type)
 	{
-	case GUN_US_RIFLE : o = { .65, -.45, .4 }; s = 1.0; break;
+	case GUN_US_RIFLE : o = { .45, -.45, .35 }; s = 1.0; break;
 	case GUN_UK_RIFLE : o = { .65, -.45, .4 }; s = 1.0; break;
 	case GUN_RU_RIFLE : o = { .65, -.25, .4 }; s = 1.0; break;
 	case GUN_GE_RIFLE : o = { .65, -.40, .4 }; s = 1.0; break;
 
 	case GUN_US_SMG : o = { .85, -.45, .4 }; s = 1.0; break;
-	case GUN_GE_SMG : o = { .45, -.35, .3 }; s = 1.2; break;
+	case GUN_GE_SMG : o = { .28, -.35, .2 }; s = 1.2; break;
 	case GUN_RU_SMG : o = { .85, -.45, .4 }; s = 1.0; break;
 
 	case GUN_US_MG : o = { .85, -.45, .4 }; s = 1.0; break;
 	case GUN_GE_MG : o = { .85, -.45, .4 }; s = 1.0; break;
 
-	case GUN_US_PISTOL : o = { 1.5, -.25, .4 }; s = .25; break;
+	case GUN_US_PISTOL : o = { 1, -.25, .3 }; s = .25; break;
 
 	default : o = { .85, -.45, .4 }; s = 1.0; break;
 	}
 
-	Gun_Drawable drawable = { cam.position + (f * o.x) + (u * o.y) + (r * o.z) , mat3(s) * point_at(look, u) };
+	Gun_Drawable drawable = { cam.position + (f * o.x) + (u * o.y) + (r * o.z) , 
+		mat3(s) * mat3(rot) * point_at(look, u) };
 
-	// weapon bob (for walking / running / breathing)
 	static float time = 0; time += dtime;
-	if (gun.action == NULL)
+	if (gun.action == NULL) // weapon bob (for walking / running / breathing)
 	{
 		drawable.position += u * (.01f  * sin(time * 2.6f));
 		drawable.position += r * (.005f * sin(time * 1.6f));
+	} 
+	else if (gun.action == ACTION_SHOOT)
+	{
+		drawable.position -= f * (.04f * sin(time * 50.f));
 	} else time = 0;
 
 	renderer->id = gun.type;
@@ -349,8 +354,70 @@ void draw(Gun_Renderer* renderer, mat4 proj_view)
 	draw(renderer->meshes[renderer->id]);
 }
 
+float ease_out_bounce(float x)
+{
+	const float n1 = 7.5625;
+	const float d1 = 2.75;
+
+	if (x < 1 / d1)
+		return n1 * x * x;
+	else if (x < 2 / d1)
+		return n1 * (x -= 1.5 / d1) * x + 0.75;
+	else if (x < 2.5 / d1)
+		return n1 * (x -= 2.25 / d1) * x + 0.9375;
+	else
+		return n1 * (x -= 2.625 / d1) * x + 0.984375;
+}
+float ease_out_elastic(float x)
+{
+	const float c = TWOPI / 3.f;
+	const float t = x * x * x;
+	return pow(2.f, -6 * x) * sin((t * 10.f - 0.75) * c) + 1.f;
+}
+float ease_out_quint(float x)
+{
+	return 1 - pow(1 - x, 5);
+}
+float ease_in_back(float x)
+{
+	const float c1 = 1.70158;
+	const float c3 = c1 + 1;
+
+	return c3 * x * x * x - c1 * x * x;
+}
+float ease_out_circ(float x)
+{
+	return sqrt(1 - pow(x - 1, 2));
+}
+float ease_inout_quart(float x)
+{
+	return x < 0.5 ? 8 * x * x * x * x : 1 - pow(-2 * x + 2, 4) / 2;
+}
+float ease_inout_back(float x)
+{
+	const float c1 = 1.70158;
+	const float c2 = c1 * 1.525;
+
+	return x < 0.5
+		? (pow(2 * x, 2) * ((c2 + 1) * 2 * x - c2)) / 2
+		: (pow(2 * x - 2, 2) * ((c2 + 1) * (x * 2 - 2) + c2) + 2) / 2;
+}
+float spring_lerp(float x)
+{
+	const float p = -20.9, a = 10, h = .67;
+	const float k = 1.48, j = .64;
+	const float b = x - h;
+	const float s = .73, s2 = .93;
+	const float c = 1.77;
+
+	float f = pow(2, p*b) * sinf((a*b - .75f) * (TWOPI / 3.f)) + 1.f;
+	float g = j + (x * (k - j));
+
+	return x < .768 ? c * s2 * x * x : s * s2 * g * f;
+}
+
 // weapon animations
-uint sub_anim(vec4 t, float at, float* c)
+uint sub_anim(vec4 t, float at, float* c) // DOCUMENT YOUR CODE DIPSHIT
 {
 	float x = 0;
 	for (uint i = 0; i < 4; i++)
@@ -359,7 +426,9 @@ uint sub_anim(vec4 t, float at, float* c)
 
 		if (at < x)
 		{
-			*c = (at - (x - t[i])) / t[i];
+			// im sure you're very smart for coming up with this
+			// but even you can forget things sometimes dumbass
+			*c = (at - (x - t[i])) / t[i]; // ??????
 			return i;
 		}
 	}
@@ -386,19 +455,19 @@ void update_pistol_anim(Gun gun, Animation* anim, mat4* current_pose)
 	{
 		switch (sub_anim({ .4, .3, .1, .4 }, 2 - gun.action_time, &c))
 		{
-		case 0: frames = { 0 , 2 }; mix = bounce(sqrt(c)); break;
-		case 1: frames = { 2 , 2 }; mix = bounce(sqrt(c)); break;
-		case 2: frames = { 2 , 3 }; mix = bounce(c); break;
-		case 3: frames = { 3 , 0 }; mix = lerp_spring(c); break;
+		case 0: frames = { 0 , 2 }; mix = ease_inout_back(c); break;
+		case 1: frames = { 2 , 2 }; mix = c; break;
+		case 2: frames = { 2 , 3 }; mix = c; break;
+		case 3: frames = { 3 , 0 }; mix = ease_inout_back(c); break;
 		}
 	} break;
 	case ACTION_INSPECT:
 	{
 		switch (sub_anim({ 1, 1, 1, 0}, 3 - gun.action_time, &c))
 		{
-		case 0: frames = { 0 , 6 }; mix = bounce(sqrt(c)); // inspect 1
-		case 1: frames = { 6 , 7 }; mix = bounce(sqrt(c)); // inspect 2
-		case 2: frames = { 7 , 0 }; mix = bounce(c); break; // idle
+		case 0: frames = { 0 , 6 }; mix = ease_inout_back(c); break; // inspect 1
+		case 1: frames = { 6 , 7 }; mix = ease_out_quint(c); break; // inspect 2
+		case 2: frames = { 7 , 0 }; mix = spring_lerp(c); break; // idle
 		}
 	} break;
 	}
@@ -416,18 +485,18 @@ void update_bolt_action_anim(Gun gun, Animation* anim, mat4* current_pose)
 	{
 		switch (sub_anim({ .05, .05, 5, 0}, .1 - gun.action_time, &c))
 		{
-		case 0: frames = { 0 , 1 }; mix = c; break; // shoot
-		case 1: frames = { 1 , 0 }; mix = c; break; // idle
+		case 0: frames = {}; mix = c; break; // shoot
+		case 1: frames = {}; mix = c; break; // idle
 		}
 	} break;
 	case ACTION_RELOAD:
 	{
-		switch (sub_anim({ .25, .5, .5, .1 }, 2 - gun.action_time, &c))
+		switch (sub_anim({ .25, .5, .4, .2 }, 2 - gun.action_time, &c))
 		{
-		case 0: frames = { 0 , 1 }; mix = bounce(c); break; // bolt up
-		case 1: frames = { 1 , 2 }; mix = bounce(c); break; // bolt back
-		case 2: frames = { 2 , 1 }; mix = bounce(c); break; // bolt up
-		case 3: frames = { 1 , 0 }; mix = lerp_spring(c); break; // idle
+		case 0: frames = { 0 , 1 }; mix = ease_out_quint(c); break; // bolt up
+		case 1: frames = { 1 , 2 }; mix = ease_out_elastic(c); break; // bolt back
+		case 2: frames = { 2 , 1 }; mix = ease_out_elastic(c); break; // bolt up
+		case 3: frames = { 1 , 0 }; mix = c; break; // idle
 		}
 	} break;
 	case ACTION_INSPECT:
@@ -462,19 +531,19 @@ void update_smg_anim(Gun gun, Animation* anim, mat4* current_pose)
 	{
 		switch (sub_anim({ .6, .6, .5, .3 }, 2 - gun.action_time, &c))
 		{
-		case 0: frames = { 0 , 2 }; mix = lerp_spring(c, 5); break;
-		case 1: frames = { 2 , 3 }; mix = c * c; break;
-		case 2: frames = { 3 , 4 }; mix = c * c; break;
-		case 3: frames = { 4 , 0 }; mix = bounce(c); break;
+		case 0: frames = { 0 , 2 }; mix = spring_lerp(c); break;
+		case 1: frames = { 2 , 3 }; mix = spring_lerp(c); break;
+		case 2: frames = { 3 , 4 }; mix = spring_lerp(c); break;
+		case 3: frames = { 4 , 0 }; mix = spring_lerp(c); break;
 		}
 	} break;
 	case ACTION_INSPECT:
 	{
 		switch (sub_anim({ 1, 1, 1, 0 }, 3 - gun.action_time, &c))
 		{
-		case 0: frames = { 0 , 6 }; mix = c; // inspect 1
-		case 1: frames = { 6 , 7 }; mix = c; // inspect 2
-		case 2: frames = { 7 , 0 }; mix = bounce(c); break; // idle
+		case 0: frames = { 0 , 6 }; mix = ease_out_bounce(c); break;
+		case 1: frames = { 6 , 7 }; mix = ease_out_bounce(c); break;
+		case 2: frames = { 7 , 0 }; mix = ease_out_bounce(c); break;
 		}
 	} break;
 	}
@@ -490,7 +559,7 @@ void update_us_rifle_anim(Gun gun, Animation* anim, mat4* current_pose)
 	{
 	case ACTION_SHOOT:
 	{
-		switch (sub_anim({ .05, .05, 0, 0 }, .1 - gun.action_time, &c))
+		switch (sub_anim({ .16, .04, 0, 0 }, .2 - gun.action_time, &c))
 		{
 		case 0: frames = { 1 , 2 }; mix = c; break; // slide back
 		case 1: frames = { 2 , 1 }; mix = c; break; // slide fwd
@@ -498,19 +567,19 @@ void update_us_rifle_anim(Gun gun, Animation* anim, mat4* current_pose)
 	} break;
 	case ACTION_RELOAD:
 	{
-		switch (sub_anim({ .6, .6, .5, .3 }, 2 - gun.action_time, &c))
+		switch (sub_anim({ .4, .6, .7, .3 }, 2 - gun.action_time, &c))
 		{
-		case 0: frames = { 1 , 2 }; mix = bounce(c); break;
-		case 1: frames = { 2 , 3 }; mix = c * c; break;
-		case 2: frames = { 3 , 2 }; mix = c * c; break;
-		case 3: frames = { 2 , 1 }; mix = bounce(c); break;
+		case 0: frames = { 1 , 2 }; mix = spring_lerp(c); break;
+		case 1: frames = { 2 , 3 }; mix = ease_inout_quart(c); break;
+		case 2: frames = { 3 , 2 }; mix = ease_out_circ(c); break;
+		case 3: frames = { 2 , 1 }; mix = ease_inout_back(c); break;
 		}
 	} break;
 	case ACTION_INSPECT:
 	{
 		switch (sub_anim({ 1, 1, 1, 0 }, 3 - gun.action_time, &c))
 		{
-		case 0: frames = { 0 , 0 }; mix = c; // inspect 1
+		case 0: frames = { 0 , 0 }; mix = ease_inout_quart(c); // inspect 1
 		case 1: frames = { 0 , 0 }; mix = c; // inspect 2
 		case 2: frames = { 0 , 0 }; mix = bounce(c); break; // idle
 		}

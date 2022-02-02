@@ -2,9 +2,7 @@
 
 #define DRAW_DISTANCE 1024.0f
 
-// ------------------------------------------------- //
 // -------------------- Shaders -------------------- //
-// ------------------------------------------------- //
 
 struct Shader { GLuint id; };
 
@@ -86,9 +84,7 @@ void set_mat4 (Shader shader, const char* name, mat4 value )
 	glUniformMatrix4fv(glGetUniformLocation(shader.id, name), 1, GL_FALSE, (float*)&value);
 }
 
-// ------------------------------------------------- //
 // -------------------- Textures ------------------- //
-// ------------------------------------------------- //
 
 GLuint load_texture(const char* path)
 {
@@ -144,9 +140,7 @@ void bind_texture(GLuint texture, uint texture_unit = 0)
 	glBindTexture(GL_TEXTURE_2D, texture);
 }
 
-// ------------------------------------------------- //
 // ------------------ Mesh Loading ----------------- //
-// ------------------------------------------------- //
 
 struct Mesh_Data
 {
@@ -283,9 +277,7 @@ void load(Mesh_Data_Anim_UV* data, const char* path)
 	fclose(mesh_file);
 }
 
-// ------------------------------------------------- //
 // ----------------- Mesh Rendering ---------------- //
-// ------------------------------------------------- //
 
 struct Drawable_Mesh
 {
@@ -608,9 +600,7 @@ void mesh_add_attrib_mat3 (GLuint attrib_id, uint stride, uint offset)
 	glEnableVertexAttribArray(attrib_id);
 }
 
-// ------------------------------------------------- //
 // ---------- Deferred Rendering Pipeline ---------- //
-// ------------------------------------------------- //
 
 /* -- deferred rendering theory --
 
@@ -751,9 +741,7 @@ void draw(G_Buffer g_buffer)
 	GL_FRAMEBUFFER = 0 for default framebuffer
 */
 
-// ------------------------------------------------- //
 // -------------------- Lighting ------------------- //
-// ------------------------------------------------- //
 
 Shader make_lighting_shader()
 {
@@ -777,9 +765,7 @@ Shader make_lighting_shader()
 	return lighting_shader;
 }
 
-// ------------------------------------------------- //
 // ------------------ 2D Rendering ----------------- //
-// ------------------------------------------------- //
 
 struct Drawable_Mesh_2D
 {
@@ -895,9 +881,7 @@ void draw(Drawable_Mesh_2D_UV mesh, uint num_instances = 1)
 	glDrawElementsInstanced(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0, num_instances);
 }
 
-// ------------------------------------------------- //
 // -------------------- Animation ------------------ //
-// ------------------------------------------------- //
 
 #define MAX_ANIM_BONES 16
 
@@ -997,9 +981,7 @@ void update_animation(Animation* anim, mat4* poses, float dtime)
 	free(keyframes);
 }
 
-// ------------------------------------------------- //
 // -------------------- 3D Camera ------------------ //
-// ------------------------------------------------- //
 
 #define DIR_FORWARD	0
 #define DIR_BACKWARD	1

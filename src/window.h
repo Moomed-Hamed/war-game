@@ -1,4 +1,3 @@
-// Copyright (c) 2022 Moomed
 #include "proprietary/boilerplate.h"
 
 #define WINDOW_ERROR(str) out("WINDOW ERROR: " << str)
@@ -37,7 +36,7 @@ void init_window(Window* window, uint screen_width, uint screen_height, const ch
 	glClearColor(0, 0, 0, 1);
 	glEnable(GL_DEPTH_TEST);
 	glEnable(GL_CULL_FACE);
-	//glEnable(GL_FRAMEBUFFER_SRGB); // gamma correction
+	glEnable(GL_FRAMEBUFFER_SRGB); // gamma correction
 	//glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
 
 	//audio
@@ -127,7 +126,7 @@ void update_mouse(Mouse* mouse, Window window)
 // for selecting game objecs
 vec3 get_mouse_world_dir(Mouse mouse, mat4 proj_view)
 {
-	proj_view = glm::inverse(proj_view); //what is an unproject matrix?
+	proj_view = glm::inverse(proj_view); // what is an unproject matrix?
 
 	vec4 ray_near = vec4(mouse.norm_x, mouse.norm_y, -1, 1); // near plane is z = -1
 	vec4 ray_far = vec4(mouse.norm_x, mouse.norm_y, 0, 1);

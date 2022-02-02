@@ -166,35 +166,35 @@ void update(Particle_Renderer* renderer, Particle_Emitter* emitter)
 		{
 		case PARTICLE_DEBRIS:
 		{
-			mat3 rotation = rotate(completeness * 2 * TWOPI, randf3ns(noise(i), randfns(i), noise(i)));
+			mat3 rotation = rotate(completeness * 2 * TWOPI, randf3ns(randfns(i, 1), randfns(i), randfns(i, -1)));
 			drawable->scale = vec3(.08f);
 			drawable->color = vec3(.2);
 			drawable->transform = rotation;
 		} break;
 		case PARTICLE_FIRE:
 		{
-			mat3 rotation = rotate(completeness * 2 * TWOPI, randf3ns(noise(i), randfns(i), noise(i)));
+			mat3 rotation = rotate(completeness * 2 * TWOPI, randf3ns(randfns(i + 1), randfns(i), randfns(i - 1)));
 			drawable->scale = vec3(lerp(.08, .02, completeness));
 			drawable->color = lerp(vec3(1,1,0), vec3(1,0,0), completeness * 1.5);
 			drawable->transform = rotation;
 		} break;
 		case PARTICLE_SPARK:
 		{
-			mat3 rotation = rotate(completeness * 2 * TWOPI, randf3ns(noise(i), randfns(i), noise(i)));
+			mat3 rotation = rotate(completeness * 2 * TWOPI, randf3ns(randfns(i + 1), randfns(i), randfns(i - 1)));
 			drawable->scale = vec3(lerp(.02, .02, completeness));
 			drawable->color = lerp(vec3(1), vec3(1, 1, 0), completeness * .5);
 			drawable->transform = rotation;
 		} break;
 		case PARTICLE_SMOKE:
 		{
-			mat3 rotation = rotate(completeness * TWOPI, randf3ns(noise(i), randfns(i), noise(i)));
+			mat3 rotation = rotate(completeness * TWOPI, randf3ns(randfns(i + 1), randfns(i), randfns(i - 1)));
 			drawable->scale = vec3(lerp(.3, .02, completeness));
 			drawable->color = lerp(vec3(1), vec3(0), completeness);
 			drawable->transform = rotation;
 		} break;
 		case PARTICLE_BLOOD:
 		{
-			mat3 rotation = rotate(completeness * 2 * TWOPI, randf3ns(noise(i), randfns(i), noise(i)));
+			mat3 rotation = rotate(completeness * 2 * TWOPI, randf3ns(randfns(i + 1), randfns(i), randfns(i - 1)));
 			drawable->scale = normalize(emitter->particles[i].velocity) * .05f;
 			drawable->color = lerp(vec3(0.843, 0.015, 0.015), vec3(.1), completeness);
 			drawable->transform = rotation;
