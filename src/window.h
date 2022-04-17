@@ -1,4 +1,4 @@
-#include "proprietary/boilerplate.h"
+#include "../dependencies/proprietary/boilerplate.h"
 
 #define WINDOW_ERROR(str) out("WINDOW ERROR: " << str)
 

@@ -749,8 +749,8 @@ Shader make_lighting_shader()
 	load(&lighting_shader, "assets/shaders/lighting.vert", "assets/shaders/lighting.frag");
 	bind(lighting_shader);
 
-	vec3 light_positions[4] = { vec3(9, 1.5, 6), vec3(50), vec3(50), vec3(50) };
-	vec3 light_colors   [4] = { vec3(.88, .34, .13), vec3(1), vec3(1), vec3(1) };
+	vec3 light_positions[4] = { vec3(3), vec3(1), vec3(4), vec3(5) };
+	vec3 light_colors[4]    = { vec3(.06), vec3(.06), vec3(.06), vec3(.05) };
 
 	set_vec3(lighting_shader, "light_positions[0]", light_positions[0]);
 	set_vec3(lighting_shader, "light_positions[1]", light_positions[1]);

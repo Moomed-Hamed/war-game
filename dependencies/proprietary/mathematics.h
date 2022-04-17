@@ -1,9 +1,9 @@
 #define GLM_ENABLE_EXPERIMENTAL
-#include <external/GLM/glm.hpp> // for math
-#include <external/GLM/gtc/matrix_transform.hpp>
-#include <external/GLM/gtc/quaternion.hpp> // for quaternions
-#include <external/GLM/gtx/quaternion.hpp>
-#include <external/GLM/gtx/transform.hpp>
+#include "../external/GLM/glm.hpp" // for math
+#include "../external/GLM/gtc/matrix_transform.hpp"
+#include "../external/GLM/gtc/quaternion.hpp" // for quaternions
+#include "../external/GLM/gtx/quaternion.hpp"
+#include "../external/GLM/gtx/transform.hpp"
 
 using glm::vec2;  using glm::vec3; using glm::vec4;
 using glm::mat3;  using glm::mat4;

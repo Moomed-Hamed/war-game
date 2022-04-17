@@ -4,23 +4,23 @@
 #pragma comment(lib, "winmm")
 #pragma comment (lib, "Ws2_32.lib") // networking
 #pragma comment(lib, "opengl32")
-#pragma comment(lib, "external/GLEW/glew32s")
-#pragma comment(lib, "external/GLFW/glfw3")
-#pragma comment(lib, "external/OpenAL/OpenAL32.lib")
+#pragma comment(lib, "dependencies/external/GLEW/glew32s")
+#pragma comment(lib, "dependencies/external/GLFW/glfw3")
+#pragma comment(lib, "dependencies/external/OpenAL/OpenAL32.lib")
 
 #define _CRT_SECURE_NO_WARNINGS // because printf is "too dangerous"
 
 #define STB_IMAGE_IMPLEMENTATION
 #define STB_IMAGE_WRITE_IMPLEMENTATION
-#include "external/stb_image.h"
-#include "external/stb_image_write.h"
+#include "../external/stb_image.h"
+#include "../external/stb_image_write.h"
 
 #define GLEW_STATIC
-#include <external/GLEW\glew.h> // OpenGL functions
-#include <external/GLFW\glfw3.h>// window & input
+#include "../external/GLEW\glew.h" // OpenGL functions
+#include "../external/GLFW\glfw3.h"// window & input
 
-#include "external/OpenAL/al.h" // for audio
-#include "external/OpenAL/alc.h"
+#include "../external/OpenAL/al.h" // for audio
+#include "../external/OpenAL/alc.h"
 
 #include <winsock2.h> // for some reason rearranging these includes breaks everything
 #include <Windows.h>
@@ -34,7 +34,7 @@
 #define Alloc(type, count) (type *)calloc(count, sizeof(type))
 
 struct bvec3 { union { struct { byte x, y, z; }; struct { byte r, g, b; }; }; };
-#include <proprietary/mathematics.h> // this is pretty much GLM for now
+#include "mathematics.h" // this is pretty much GLM for now
 
 byte* read_text_file_into_memory(const char* path)
 {
