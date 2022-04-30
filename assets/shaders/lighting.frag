@@ -121,7 +121,7 @@ void main()
 
 	vec3 color = Lo + (albedo * ao); // albedo * ao = ambient (replace with env. lighting)
 	//color = color / (color + vec3(1.0)); // HDR tonemapping
-	//color = pow(color, vec3(.8)); // gamma correct 1/2.2
+	//color = pow(color, vec3(.5)); // gamma correct 1/2.2
 
 	frag_color = vec4(color, 1.0);
 }

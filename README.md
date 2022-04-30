@@ -1,21 +1,34 @@
-# War Game
-simple war game i made for practice
+﻿# war game
 
-![showcase](assets/misc/showcase_0.gif)
+## file structure
+```
+🎮war_game
+ ┣ 📂src
+ ┃ ┣ 🔹main.cpp
+ ┃ ┣ 🔸window.h
+ ┃ ┗ 📖readme.md
+ ┣ 📂assets
+ ┃ ┣ 📂audio
+ ┃ ┣ 📂dev
+ ┃ ┣ 📂meshes
+ ┃ ┣ 📂misc
+ ┃ ┣ 📂shaders
+ ┃ ┗ 📂textures
+ ┣ 📂dependencies
+ ┃ ┣ 📂external
+ ┃ ┃ ┣📚GLEW
+ ┃ ┃ ┣📚GLFW
+ ┃ ┃ ┣📚GLM
+ ┃ ┃ ┣📚OpenAL
+ ┃ ┃ ┣🔸stb_image.h
+ ┃ ┃ ┗🔸stb_image_write.h
+ ┃ ┗ 📂proprietary
+ ┃    ┣🔸boilerplate.h
+ ┃    ┗🔸mathematics.h
+ ┣ 📖README.txt
+ ┗ ⚖️LICENSE.txt
+```
 
-### Animations
-a library of poses is used in combination with various interpolation techniques to add impact and fidelity.
+## credits
 
-![showcase](assets/misc/showcase_1.gif)
-
-### Particle System
-simple but versatile particle system that is capable of basic effects
-like fire, explosions, blood spurts, etc. supports wind & physics as well.
-
-![showcase](assets/misc/showcase_2.gif)
-
-### Physics
-coming soonish
-
-### Credits
-- art : some assets were purchased from the very talanted artists at [Synty Studios](https://syntystore.com/collections/frontpage)
+- Some assets were purchased from the very talanted artists at [Synty Studios](https://syntystore.com/collections/frontpage)

@@ -1,5 +1,4 @@
-// Copyright (c) 2022 Mohamed
-// Boilerplate version 1.1.22
+// boilerplate version 4.7.22
 
 #pragma comment(lib, "winmm")
 #pragma comment (lib, "Ws2_32.lib") // networking

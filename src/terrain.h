@@ -45,12 +45,15 @@ void explode(Heightmap* map, vec3 position, GLuint tex, float dtime)
 	glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, HEIGHTMAP_N, HEIGHTMAP_N, GL_RED, GL_FLOAT, map->height);
 }
 
+// is this a good idea?
+struct PBR_Texture { GLuint normal, albedo, material; };
+
 struct Heightmap_Renderer
 {
 	Drawable_Mesh mesh;
 	Shader shader;
 	GLuint heights;
-	GLuint grass[3], dirt[3];
+	PBR_Texture grass, dirt;
 };
 
 void init(Heightmap_Renderer* renderer, Heightmap* heightmap, const char* path)
@@ -58,13 +61,13 @@ void init(Heightmap_Renderer* renderer, Heightmap* heightmap, const char* path)
 	load(&renderer->mesh, "assets/meshes/env/terrain.mesh");
 	load(&renderer->shader, "assets/shaders/terrain.vert", "assets/shaders/terrain.frag");
 
-	renderer->grass[0] = load_texture_png("assets/textures/ground/grass_normal.png");
-	renderer->grass[1] = load_texture_png("assets/textures/ground/grass_albedo.png");
-	renderer->grass[2] = load_texture_png("assets/textures/ground/grass_mat.png");
+	renderer->grass.normal = load_texture_png("assets/textures/ground/grass_normal.png");
+	renderer->grass.albedo = load_texture_png("assets/textures/ground/grass_albedo.png");
+	renderer->grass.material = load_texture_png("assets/textures/ground/grass_mat.png");
 
-	renderer->dirt [0] = load_texture_png("assets/textures/ground/dirt_normal.png");
-	renderer->dirt [1] = load_texture_png("assets/textures/ground/dirt_albedo.png");
-	renderer->dirt [2] = load_texture_png("assets/textures/ground/dirt_mat.png");
+	renderer->dirt.normal = load_texture_png("assets/textures/ground/dirt_normal.png");
+	renderer->dirt.albedo = load_texture_png("assets/textures/ground/dirt_albedo.png");
+	renderer->dirt.material = load_texture_png("assets/textures/ground/dirt_mat.png");
 
 	load_file_r32(path, heightmap->height, HEIGHTMAP_N);
 	for (uint i = 0; i < HEIGHTMAP_N * HEIGHTMAP_N; i++) heightmap->height[i] *= HEIGHTMAP_S;
@@ -81,12 +84,13 @@ void init(Heightmap_Renderer* renderer, Heightmap* heightmap, const char* path)
 void draw(Heightmap_Renderer* renderer, mat4 proj_view)
 {
 	bind_texture(renderer->heights, 2);
-	bind_texture(renderer->grass[0], 3);
-	bind_texture(renderer->grass[1], 4);
-	bind_texture(renderer->grass[2], 5);
-	bind_texture(renderer->dirt [0], 6);
-	bind_texture(renderer->dirt [1], 7);
-	bind_texture(renderer->dirt [2], 8);
+	bind_texture(renderer->grass.normal  , 3);
+	bind_texture(renderer->grass.albedo  , 4);
+	bind_texture(renderer->grass.material, 5);
+	bind_texture(renderer->dirt.normal   , 6);
+	bind_texture(renderer->dirt.albedo   , 7);
+	bind_texture(renderer->dirt.material , 8);
+
 	bind(renderer->shader);
 	set_mat4(renderer->shader, "proj_view", proj_view);
 	draw(renderer->mesh);

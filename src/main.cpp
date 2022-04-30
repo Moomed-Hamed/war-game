@@ -6,7 +6,7 @@ int main()
 	Mouse    mouse  = {};
 	Keyboard keys   = {};
 
-	init_window(&window, 1920/2, 1080/2, "war game");
+	init_window(&window, 1920, 1080, "war game");
 	init_keyboard(&keys);
 
 	Heightmap* heightmap = Alloc(Heightmap, 1);
