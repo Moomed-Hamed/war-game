@@ -15,7 +15,7 @@ layout (location = 2) out vec4 frag_albedo;
 
 void main()
 {
-	frag_position = vec4(vs_out.frag_pos,.9); // metalness
-	frag_normal   = vec4(vs_out.normal  ,.9); // roughness
-	frag_albedo   = vec4(vs_out.color   ,.1); // ambient occlusion
+	frag_position = vec4(vs_out.frag_pos,.3); // metalness
+	frag_normal   = vec4(vs_out.normal  ,.8); // roughness
+	frag_albedo   = vec4(vs_out.color   ,.0); // ambient occlusion
 }

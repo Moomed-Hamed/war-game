@@ -71,7 +71,7 @@ void main()
 
 	// directional light
 	{
-		vec3 light_dir = -1 * normalize(vec3(1, -.1, 1)); // idk why this is flipped
+		vec3 light_dir = normalize(vec3(1, -.1, 1)) * -1; // idk why this is flipped
 		vec3 light_color = vec3(.31, .41, .53) * .5;
 		
 		vec3 L = normalize(light_dir);
@@ -120,8 +120,8 @@ void main()
 	}
 
 	vec3 color = Lo + (albedo * ao); // albedo * ao = ambient (replace with env. lighting)
-	//color = color / (color + vec3(1.0)); // HDR tonemapping
-	//color = pow(color, vec3(.5)); // gamma correct 1/2.2
+	color = color / (color + vec3(1.0)); // HDR tonemapping
+	color = pow(color, vec3(.5)); // gamma correct 1/2.2
 
 	frag_color = vec4(color, 1.0);
 }

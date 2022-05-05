@@ -80,6 +80,8 @@ int main()
 		if (keys.LEFT.is_pressed  && !keys.LEFT.was_pressed ) gun.type--;
 		if (keys.RIGHT.is_pressed && !keys.RIGHT.was_pressed) gun.type++;
 
+		if (keys.O.is_pressed) set_vec3(lighting_shader, "light_positions[0]", player->eyes.position);
+
 		static float a = 0; a += frame_time;
 		if (a > .4) { a = 0; emit_fire(emitter, terrain(heightmap, vec2(9, 6))); }
 
