@@ -71,8 +71,8 @@ void main()
 
 	// directional light
 	{
-		vec3 light_dir = normalize(vec3(1, -.1, 1)) * -1; // idk why this is flipped
-		vec3 light_color = vec3(.31, .41, .53) * .5;
+		vec3 light_dir = normalize(vec3(1, -.1, 0)) * -1; // idk why this is flipped
+		vec3 light_color = vec3(.97, .95, .47) * .5;
 		
 		vec3 L = normalize(light_dir);
 		vec3 H = normalize(V + L);
@@ -91,7 +91,7 @@ void main()
 		vec3 cook_torrance = n / d;
 		vec3 BRDF = Kd * lambert + cook_torrance;
 		
-		Lo += 2 * BRDF * light_color * n_dot_l;
+		//Lo += 2 * BRDF * light_color * n_dot_l;
 	}
 
 	for(int i = 0; i < 4; ++i) // point lights
