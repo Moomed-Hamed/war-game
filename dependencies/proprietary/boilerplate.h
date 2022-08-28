@@ -1,11 +1,17 @@
-// boilerplate version 4.7.22
+// ------------------------------------------------- //
+// -------  boilerplate version 1 : 16.9.22  ------- //
+// ------------------------------------------------- //
 
-#pragma comment(lib, "winmm")
+// -------------------- Libraries ------------------ //
+
+#pragma comment(lib, "winmm") // for timeBeginPeriod
 #pragma comment (lib, "Ws2_32.lib") // networking
 #pragma comment(lib, "opengl32")
-#pragma comment(lib, "dependencies/external/GLEW/glew32s")
-#pragma comment(lib, "dependencies/external/GLFW/glfw3")
-#pragma comment(lib, "dependencies/external/OpenAL/OpenAL32.lib")
+#pragma comment(lib, "dependencies/external/GLEW/glew32s") // opengl extensions
+#pragma comment(lib, "dependencies/external/GLFW/glfw3") // window & input
+#pragma comment(lib, "dependencies/external/OpenAL/OpenAL32.lib") //  audio
+
+// --------------------- includes ------------------ //
 
 #define _CRT_SECURE_NO_WARNINGS // because printf is "too dangerous"
 
@@ -21,10 +27,16 @@
 #include "../external/OpenAL/al.h" // for audio
 #include "../external/OpenAL/alc.h"
 
-#include <winsock2.h> // for some reason rearranging these includes breaks everything
+#include <winsock2.h> // rearranging these includes breaks everything; idk why
+#include <ws2tcpip.h>
 #include <Windows.h>
+
 #include <fileapi.h>
 #include <iostream>
+
+// ------------------------------------------------- //
+// --------------------- Helpers ------------------- //
+// ------------------------------------------------- //
 
 #define out(val) std::cout << ' ' << val << '\n'
 #define stop std::cin.get()
@@ -32,31 +44,23 @@
 #define printvec(vec) printf("%f %f %f\n", vec.x, vec.y, vec.z)
 #define Alloc(type, count) (type *)calloc(count, sizeof(type))
 
+typedef signed   char      int8, i8;
+typedef signed   short     int16, i16;
+typedef signed   int       int32, i32;
+typedef signed   long long int64, i64;
+
+typedef unsigned char      uint8, u8, byte;
+typedef unsigned short     uint16, u16;
+typedef unsigned int       uint32, u32, uint;
+typedef unsigned long long uint64, u64;
+
 struct bvec3 { union { struct { byte x, y, z; }; struct { byte r, g, b; }; }; };
+
+// ------------------------------------------------- //
+// ------------------- Mathematics ----------------- //
+// ------------------------------------------------- //
+
 #include "mathematics.h" // this is pretty much GLM for now
-
-byte* read_text_file_into_memory(const char* path)
-{
-	DWORD BytesRead;
-	HANDLE os_file = CreateFile(path, GENERIC_READ | GENERIC_WRITE, NULL, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-
-	LARGE_INTEGER size;
-	GetFileSizeEx(os_file, &size);
-
-	byte* memory = (byte*)calloc(size.QuadPart + 1, sizeof(byte));
-	ReadFile(os_file, memory, size.QuadPart, &BytesRead, NULL);
-
-	CloseHandle(os_file);
-
-	return memory;
-}
-void load_file_r32(const char* path, float* memory, uint n)
-{
-	DWORD BytesRead;
-	HANDLE os_file = CreateFile(path, GENERIC_READ, NULL, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-	ReadFile(os_file, (byte*)memory, n * n * sizeof(float), &BytesRead, NULL);
-	CloseHandle(os_file);
-}
 
 // ------------------------------------------------- //
 // --------------------- Timers -------------------- // // might be broken idk
@@ -175,3 +179,131 @@ uint64 create_thread(thread_function function, void* params = NULL)
 //uint test(float a) { out(a); return 0; }
 //typedef uint temp(float);
 //void wtf(temp func) { func(7); return; }
+
+// ------------------------------------------------- //
+// --------------- Files & Directories ------------- //
+// ------------------------------------------------- //
+
+byte* read_text_file_into_memory(const char* path)
+{
+	DWORD BytesRead;
+	HANDLE os_file = CreateFile(path, GENERIC_READ | GENERIC_WRITE, NULL, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+
+	LARGE_INTEGER size;
+	GetFileSizeEx(os_file, &size);
+
+	byte* memory = (byte*)calloc(size.QuadPart + 1, sizeof(byte));
+	ReadFile(os_file, memory, size.QuadPart, &BytesRead, NULL);
+
+	CloseHandle(os_file);
+
+	return memory;
+}
+void load_file_r32(const char* path, float* memory, uint n)
+{
+	float* temp = Alloc(float, n * n); // n should always be a power of 2
+
+	DWORD BytesRead;
+	HANDLE os_file = CreateFile(path, GENERIC_READ, NULL, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+	ReadFile(os_file, (byte*)temp, n * n * sizeof(float), &BytesRead, NULL);
+	CloseHandle(os_file); // assert(BytesRead == n * n);
+
+	uint half_n = n / 2; // n << something? is this faster?
+
+	for (uint x = 0; x < n; x++) { // rotate about horizontal
+	for (uint y = 0; y < half_n; y++)
+	{
+		uint index1 = (y * n) + x;
+
+		uint distance_to_center = half_n - 1 - y;
+		uint y2 = distance_to_center + half_n;
+		uint index2 = (y2 * n) + x; // index of point to flip with
+
+		float tmp = temp[index2];
+
+		temp[index2] = temp[index1];
+		temp[index1] = tmp;
+
+	} }
+
+	for (uint x = 0; x < n; x++) { // rotate about y = -x
+	for (uint y = 0; y < n; y++)
+	{
+		memory[y * n + x] = temp[x * n + y];
+
+	} }
+
+	free(temp); // for some reason we have to rotate the image
+}
+
+#define DIRECTORY_ERROR(str) std::cout << "DIRECTORY ERROR: " << str << '\n';
+#define MAX_DIRECTORY_FILES 256 //WARNING: harcoded file name limit here
+
+struct Directory
+{
+	uint num_files;
+	char* names[MAX_DIRECTORY_FILES];
+};
+
+// allocates memory & fills directory struct. free the memory with free_directory
+void parse_directory(Directory* dir, const char* path)
+{
+	char filepath[256] = {};
+	snprintf(filepath, 256, "%s\\*.*", path); // file mask: *.* = get everything
+
+	WIN32_FIND_DATA FoundFile;
+	HANDLE Find = FindFirstFile(filepath, &FoundFile);
+	if (Find == INVALID_HANDLE_VALUE) { print("Path not found: [%s]\n", path); return; }
+
+	//FindFirstFile always returns "." & ".." as first two directories
+	while (!strcmp(FoundFile.cFileName, ".") || !strcmp(FoundFile.cFileName, "..")) FindNextFile(Find, &FoundFile);
+
+	uint num_files = 0; // for readability
+	do
+	{
+		uint length = strlen(FoundFile.cFileName);
+
+		dir->names[num_files] = Alloc(char, length + 1);
+		dir->names[num_files][length] = 0;
+		memcpy(dir->names[num_files], FoundFile.cFileName, length);
+
+		++num_files;
+
+	} while (FindNextFile(Find, &FoundFile));
+
+	FindClose(Find);
+
+	dir->num_files = num_files;
+
+	//	out("Finished parsing " << path << "/ and found " << num_files << " files");
+}
+
+// prints file count, names, and extensions to std output
+void print_directory(Directory dir)
+{
+	print("directory contains %d files", dir.num_files);
+	for (uint i = 0; i < dir.num_files; ++i)
+		print(" %d: %s\n", i + 1, dir.names[i]);
+}
+
+// frees all memory used by this directory struct
+void free_directory(Directory* dir)
+{
+	for (uint i = 0; i < dir->num_files; ++i) free(dir->names[i]);
+	*dir = {};
+}
+
+// TODO : helper functions to get file extentions and names seperately?
+
+// ------------------------------------------------- //
+// --------------------- Physics ------------------- //
+// ------------------------------------------------- //
+
+#include "../BULLET/btBulletDynamicsCommon.h"
+#include "../BULLET/BulletSoftBody/btSoftRigidDynamicsWorld.h"
+
+// ------------------------------------------------- //
+// ------------------- Networking ------------------ //
+// ------------------------------------------------- //
+
+#include "networking.h"

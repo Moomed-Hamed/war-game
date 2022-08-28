@@ -1,8 +1,5 @@
 #include "../dependencies/proprietary/boilerplate.h"
 
-#include "bullet/btBulletDynamicsCommon.h"
-#include "BulletSoftBody/btSoftRigidDynamicsWorld.h"
-
 #define WINDOW_ERROR(str) out("WINDOW ERROR: " << str)
 
 struct Window
@@ -39,7 +36,7 @@ void init_window(Window* window, uint screen_width, uint screen_height, const ch
 	glClearColor(0, 0, 0, 1);
 	glEnable(GL_DEPTH_TEST);
 	glEnable(GL_CULL_FACE);
-	//glEnable(GL_FRAMEBUFFER_SRGB); // gamma correction
+	glEnable(GL_FRAMEBUFFER_SRGB); // gamma correction
 	//glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
 
 	//audio

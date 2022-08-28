@@ -18,6 +18,7 @@ layout (location = 0) out vec4 frag_color;
 // lights
 uniform vec3 light_positions[4];
 uniform vec3 light_colors[4];
+uniform float radiances[4];
 
 const float PI = 3.14159265359;
 const float MINF = 0.00001;
@@ -99,7 +100,7 @@ void main()
 		vec3 L = normalize(light_positions[i] - position); // world_pos -> light source
 		vec3 H = normalize(V + L);
 		float distance = length(light_positions[i] - position);
-		float attenuation = 5 * ( (1 / distance) + 1.0 / (distance * distance) );
+		float attenuation = radiances[i] * ( (1 / distance) + 1.0 / (distance * distance) );
 		vec3 radiance = light_colors[i] * attenuation;
 	
 		float n_dot_v = max(dot(N, V), MINF);
@@ -120,8 +121,8 @@ void main()
 	}
 
 	vec3 color = Lo + (albedo * ao); // albedo * ao = ambient (replace with env. lighting)
-	color = color / (color + vec3(1.0)); // HDR tonemapping
-	color = pow(color, vec3(.5)); // gamma correct 1/2.2
+	//color = color / (color + vec3(1.0)); // HDR tonemapping
+	//color = pow(color, vec3(.5)); // gamma correct 1/2.2
 
 	frag_color = vec4(color, 1.0);
 }

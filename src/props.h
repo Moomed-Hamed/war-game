@@ -36,7 +36,7 @@ void init(Props* props, Heightmap* map)
 	props->crates    [0] = { PROP_STATIC , terrain(map, vec2(15, 6)) , mat3(1) };
 	props->tanktraps [0] = { PROP_STATIC , terrain(map, vec2(8 , 7)) , mat3(1) };
 	props->sandbags  [0] = { PROP_STATIC , terrain(map, vec2(15, 6)) , mat3(1) };
-	props->trees     [0] = { PROP_STATIC , terrain(map, vec2(12, 4)) , mat3(1) };
+	props->trees     [0] = { PROP_STATIC , terrain(map, vec2(32, 4)) , mat3(1) };
 	props->campfires [0] = { PROP_STATIC , terrain(map, vec2(9 , 6)) , mat3(1) };
 	props->barrels   [0] = { PROP_STATIC , terrain(map, vec2(13, 6)) , mat3(1) };
 }

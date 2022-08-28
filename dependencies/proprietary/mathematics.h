@@ -10,23 +10,13 @@ using glm::mat3;  using glm::mat4;
 using glm::quat;
 using glm::ivec2; using glm::ivec3;
 using glm::uvec2; using glm::uvec3;
-using glm::lookAt; using glm::perspective;
+using glm::lookAt; using glm::perspective; using glm::fract;
 
 #define PI	  3.14159265359f
 #define TWOPI 6.28318530718f
 
 #define ToRadians(value) ( ((value) * PI) / 180.0f )
 #define ToDegrees(value) ( ((value) * 180.0f) / PI )
-
-typedef signed   char      int8 , i8;
-typedef signed   short     int16, i16;
-typedef signed   int       int32, i32;
-typedef signed   long long int64, i64;
-
-typedef unsigned char      uint8 , u8 , byte;
-typedef unsigned short     uint16, u16;
-typedef unsigned int       uint32, u32, uint;
-typedef unsigned long long uint64, u64;
 
 // random numbers
 
@@ -236,50 +226,48 @@ float smoothstep(float a, float b, float amount)
 
 // specialized noise
 
-float dot_grid_gradient(int ix, int iy, float x, float y)
-{
-	// random float; no precomputed gradients = this works for any number of grid coordinates
-	//float random = 2920.f * sin(ix * 21942.f + iy * 171324.f + 8912.f) * cos(ix * 23157.f * iy * 217832.f + 9758.f);
-
-	float random = (float)random_int(ix, iy);
-
-	// dot product of distance & gradient vectors.
-	vec2 gradient = vec2(cos(random), sin(random));
-	vec2 distance = { x - (float)ix, y - (float)iy };
-
-	return dot(distance, gradient);
-}
-
 float perlin(float x, float y)
 {
+	const auto dot_grid_gradient = [](float ix, float iy, float x, float y)
+	{
+		float n = TWOPI * randfns(ix, iy);
+
+		vec2 gradient = vec2(cos(n), sin(n));
+		vec2 distance = { x - ix, y - iy };
+
+		return dot(distance, gradient);
+	};
+
 	// grid coordinates
-	int x0 = (int)x, y0 = (int)y;
-	int x1 = x0 + 1, y1 = y0 + 1;
+	int X = (int)x;
+	int Y = (int)y;
 
 	// interpolation weights (could also use higher order polynomial/s-curve here)
-	float sx = x - (float)x0;
-	float sy = y - (float)y0;
+	float wx = x - (float)X;
+	float wy = y - (float)Y;
 
 	// interpolate between grid point gradients
-	float n0, n1, ix0, ix1, value;
+	float a, b, c, d;
 
-	n0  = dot_grid_gradient(x0, y0, x, y);
-	n1  = dot_grid_gradient(x1, y0, x, y);
-	ix0 = smoothstep(n0, n1, sx);
+	a  = dot_grid_gradient(X + 0, Y + 0, x, y);
+	b  = dot_grid_gradient(X + 1, Y + 0, x, y);
+	c = smoothstep(a, b, wx);
 
-	n0  = dot_grid_gradient(x0, y1, x, y);
-	n1  = dot_grid_gradient(x1, y1, x, y);
-	ix1 = smoothstep(n0, n1, sx);
+	a  = dot_grid_gradient(X + 0, Y + 1, x, y);
+	b  = dot_grid_gradient(X + 1, Y + 1, x, y);
+	d = smoothstep(a, b, wx);
 
-	value = smoothstep(ix0, ix1, sy);
-	return (value + 1) / 2;
+	return (smoothstep(c, d, wy) + 1.f) / 2.f;
 }
 float perlin(float x)
 {
-	int x1 = (int)x;
-	int x2 = x1 + 1;
+	return lerp(random_normalized_float(floor(x)), random_normalized_float(ceil(x)), fract(x));
+}
 
-	return lerp(random_normalized_float(x1), random_normalized_float(x2), x - (float)x1);
+// signed perlin
+float perlins(float x, float y)
+{
+	return (perlin(x, y) * 2) - 1;
 }
 
 float worley(vec2 uv, float columns, float rows)
@@ -515,14 +503,15 @@ void save_fft2D(Complex* data, uint N, const char* name = "fft2D.bmp")
 {
 	bvec3* bitmap = (bvec3*)calloc(N * N, 3); // 3 bytes per channel
 	for (int i = 0; i < N; i++) { // up & down
-	for (int j = 0; j < N; j++)	// left & right
-	{
-		Complex z = data[(i * N) + j];
-		byte r = (cos(arg(z)) * 127) + 128;
-		byte g = (cos(arg(z)) * 127) + 128;
-		byte b = (cos(arg(z)) * 127) + 128;
-		bitmap[(i * N) + j] = { r , g , b };
-	} }
+		for (int j = 0; j < N; j++)	// left & right
+		{
+			Complex z = data[(i * N) + j];
+			byte r = (cos(arg(z)) * 127) + 128;
+			byte g = (cos(arg(z)) * 127) + 128;
+			byte b = (cos(arg(z)) * 127) + 128;
+			bitmap[(i * N) + j] = { r , g , b };
+		}
+	}
 
 	stbi_write_bmp(name, N, N, 3, (byte*)bitmap);
 	free(bitmap);
@@ -531,15 +520,16 @@ void save_ifft2D(Complex* data, uint N, const char* name = "ifft2D.bmp")
 {
 	bvec3* bitmap = (bvec3*)calloc(N * N, 3); // 3 bytes per channel
 	for (int i = 0; i < N; i++) { // up & down
-	for (int j = 0; j < N; j++)	// left & right
-	{
-		Complex z = data[(i * N) + j];
+		for (int j = 0; j < N; j++)	// left & right
+		{
+			Complex z = data[(i * N) + j];
 
-		byte r = (abs(z) * cos(arg(z)) * 127) + 128;
-		byte g = (abs(z) * cos(arg(z)) * 127) + 128;
-		byte b = (abs(z) * cos(arg(z)) * 127) + 128;
-		bitmap[(i * N) + j] = { r , g , b };
-	} }
+			byte r = (abs(z) * cos(arg(z)) * 127) + 128;
+			byte g = (abs(z) * cos(arg(z)) * 127) + 128;
+			byte b = (abs(z) * cos(arg(z)) * 127) + 128;
+			bitmap[(i * N) + j] = { r , g , b };
+		}
+	}
 
 	stbi_write_bmp(name, N, N, 3, (byte*)bitmap);
 	free(bitmap);

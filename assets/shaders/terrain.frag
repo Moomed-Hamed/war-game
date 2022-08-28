@@ -7,6 +7,7 @@ struct VS_OUT
 };
 
 in VS_OUT vs_out;
+in float texture_scale;
 
 layout (location = 0) out vec4 frag_position;
 layout (location = 1) out vec4 frag_normal;
@@ -22,13 +23,13 @@ layout (binding = 8) uniform sampler2D dirt_mat;
 
 void main()
 {
-	vec2 tex = vs_out.tex_coord.xy * 64;
+	vec2 tex = vs_out.tex_coord.xy * texture_scale / 1.5;
 
 	vec3 normal = (texture(grass_normals, tex).rbg * 2) - 1;
-	vec3 albedo =  texture(grass_albedos , tex).rgb;
-	vec3 mat    =  texture(grass_mat     , tex).rgb;
+	vec3 albedo =  texture(grass_albedos, tex).rgb;
+	vec3 mat    =  texture(grass_mat    , tex).rgb;
 
-	if(vs_out.tex_coord.z < 0)
+	if(vs_out.tex_coord.z < .25) // stone texture; this is a hack
 	{
 		normal = (texture(dirt_normals, tex).rbg * 2) - 1;
 		albedo =  texture(dirt_albedos , tex).rgb;

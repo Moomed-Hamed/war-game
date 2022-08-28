@@ -421,48 +421,6 @@ public:
 	{
 		return m_updateRevision;
 	}
-
-	virtual int calculateSerializeBufferSize() const;
-
-	///fills the dataBuffer and returns the struct name (and 0 on failure)
-	virtual const char* btCompoundShape::serialize(void* dataBuffer, btSerializer* serializer) const
-	{
-		btCompoundShapeData* shapeData = (btCompoundShapeData*)dataBuffer;
-		btCollisionShape::serialize(&shapeData->m_collisionShapeData, serializer);
-
-		shapeData->m_collisionMargin = float(m_collisionMargin);
-		shapeData->m_numChildShapes = m_children.size();
-		shapeData->m_childShapePtr = 0;
-		if (shapeData->m_numChildShapes)
-		{
-			btChunk* chunk = serializer->allocate(sizeof(btCompoundShapeChildData), shapeData->m_numChildShapes);
-			btCompoundShapeChildData* memPtr = (btCompoundShapeChildData*)chunk->m_oldPtr;
-			shapeData->m_childShapePtr = (btCompoundShapeChildData*)serializer->getUniquePointer(memPtr);
-
-			for (int i = 0; i < shapeData->m_numChildShapes; i++, memPtr++)
-			{
-				memPtr->m_childMargin = float(m_children[i].m_childMargin);
-				memPtr->m_childShape = (btCollisionShapeData*)serializer->getUniquePointer(m_children[i].m_childShape);
-				//don't serialize shapes that already have been serialized
-				if (!serializer->findPointer(m_children[i].m_childShape))
-				{
-					btChunk* chunk = serializer->allocate(m_children[i].m_childShape->calculateSerializeBufferSize(), 1);
-					const char* structType = m_children[i].m_childShape->serialize(chunk->m_oldPtr, serializer);
-					serializer->finalizeChunk(chunk, structType, BT_SHAPE_CODE, m_children[i].m_childShape);
-				}
-
-				memPtr->m_childShapeType = m_children[i].m_childShapeType;
-				m_children[i].m_transform.serializeFloat(memPtr->m_transform);
-			}
-			serializer->finalizeChunk(chunk, "btCompoundShapeChildData", BT_ARRAY_CODE, chunk->m_oldPtr);
-		}
-		return "btCompoundShapeData";
-	}
 };
-
-SIMD_FORCE_INLINE int btCompoundShape::calculateSerializeBufferSize() const
-{
-	return sizeof(btCompoundShapeData);
-}
 
 #endif  //BT_COMPOUND_SHAPE_H

@@ -1,4 +1,4 @@
-#include "terrain.h"
+#include "physics.h"
 
 #define MAX_PARTICLES 512
 

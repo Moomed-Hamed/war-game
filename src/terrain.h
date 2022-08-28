@@ -1,19 +1,20 @@
-#include "physics.h"
+#include "renderer.h"
 
-#define HEIGHTMAP_N	1024 // num data points per row
-#define HEIGHTMAP_L	256  // side length of terrain
-#define HEIGHTMAP_S	5    // terrain vertical scale
+#define HEIGHTMAP_N	1024 // num data points per row | resolution
+#define HEIGHTMAP_L	256  // side length of terrain in meters
+#define HEIGHTMAP_S	30   // terrain vertical scale in meters
 
 uint height_index(float pos_x, float pos_z)
 {
-	uint x = (pos_x / HEIGHTMAP_L) * HEIGHTMAP_N;
-	uint z = (pos_z / HEIGHTMAP_L) * HEIGHTMAP_N;
+	uint x = pos_x / (HEIGHTMAP_N / (float)HEIGHTMAP_L);
+	uint z = pos_z / (HEIGHTMAP_N / (float)HEIGHTMAP_L);
 	return (x * HEIGHTMAP_N) + z;
 }
 
 struct Heightmap
 {
 	float height[HEIGHTMAP_N * HEIGHTMAP_N];
+	vec3 normals[HEIGHTMAP_N * HEIGHTMAP_N];
 };
 
 float height(Heightmap* map, vec3 pos)
@@ -29,20 +30,35 @@ vec3 terrain(Heightmap* map, vec2 pos)
 	return vec3(pos.x, map->height[height_index(pos.x, pos.y)], pos.y);
 }
 
-void explode(Heightmap* map, vec3 position, GLuint tex, float dtime)
+void explode(Heightmap* map, vec3 position, float radius = 15)
 {
-	uint x = (position.x / HEIGHTMAP_L) * HEIGHTMAP_N;
-	uint z = (position.z / HEIGHTMAP_L) * HEIGHTMAP_N;
+	float scale = HEIGHTMAP_N / (float)HEIGHTMAP_L;
+	uint nx = (uint)position.x * scale;
+	uint nz = (uint)position.z * scale;
 
-	for (uint x = 56; x < 100; x++) {
-	for (uint z = 56; z < 100; z++) {
-		float a = map->height[x * HEIGHTMAP_N + z];
-		a *= a < 0 ? .9 : -.9;
-		map->height[x * HEIGHTMAP_N + z] = a;
+	uint n_length = radius * scale; // radius of the circle
+
+	for (uint x = nx - n_length; x < nx + n_length; x++) {
+	for (uint z = nz - n_length; z < nz + n_length; z++)
+	{
+		float k = length(vec2{ nx, nz } - vec2{ x, z }) / n_length;
+		map->height[z * HEIGHTMAP_N + x] *= k < 1.f ? k : 1.f;
 	}}
+}
+void extrude(Heightmap* map, vec3 position, float radius = 5)
+{
+	float scale = HEIGHTMAP_N / (float)HEIGHTMAP_L;
+	uint nx = (uint)position.x * scale;
+	uint nz = (uint)position.z * scale;
 
-	glBindTexture(GL_TEXTURE_2D, tex);
-	glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, HEIGHTMAP_N, HEIGHTMAP_N, GL_RED, GL_FLOAT, map->height);
+	uint n_length = radius * scale; // radius of the circle
+
+	for (uint x = nx - n_length; x < nx + n_length; x++) {
+	for (uint z = nz - n_length; z < nz + n_length; z++)
+	{
+		float k = length(vec2{ nx, nz } - vec2{ x, z }) / n_length;
+		map->height[z * HEIGHTMAP_N + x] += k < 1.f ? 1 - k : 0.f;
+	} }
 }
 
 // is this a good idea?
@@ -61,25 +77,31 @@ void init(Heightmap_Renderer* renderer, Heightmap* heightmap, const char* path)
 	load(&renderer->mesh, "assets/meshes/env/terrain.mesh");
 	load(&renderer->shader, "assets/shaders/terrain.vert", "assets/shaders/terrain.frag");
 
-	renderer->grass.normal = load_texture_png("assets/textures/ground/grass_normal.png");
-	renderer->grass.albedo = load_texture_png("assets/textures/ground/grass_albedo.png");
+	renderer->grass.normal   = load_texture_png("assets/textures/ground/grass_normal.png");
+	renderer->grass.albedo   = load_texture_png("assets/textures/ground/grass_albedo.png");
 	renderer->grass.material = load_texture_png("assets/textures/ground/grass_mat.png");
 
-	renderer->dirt.normal = load_texture_png("assets/textures/ground/dirt_normal.png");
-	renderer->dirt.albedo = load_texture_png("assets/textures/ground/dirt_albedo.png");
+	renderer->dirt.normal   = load_texture_png("assets/textures/ground/dirt_normal.png");
+	renderer->dirt.albedo   = load_texture_png("assets/textures/ground/unit_albedo.png");
 	renderer->dirt.material = load_texture_png("assets/textures/ground/dirt_mat.png");
 
+	// load the heightmap data + scale it + raise it
 	load_file_r32(path, heightmap->height, HEIGHTMAP_N);
 	for (uint i = 0; i < HEIGHTMAP_N * HEIGHTMAP_N; i++) heightmap->height[i] *= HEIGHTMAP_S;
-	for (uint i = 0; i < HEIGHTMAP_N * HEIGHTMAP_N; i++) heightmap->height[i] += 1;
+	//for (uint i = 0; i < HEIGHTMAP_N * HEIGHTMAP_N; i++) heightmap->height[i] += 1.f;
 
 	glGenTextures(1, &renderer->heights);
 	glBindTexture(GL_TEXTURE_2D, renderer->heights);
 	glTexImage2D(GL_TEXTURE_2D, 0, GL_R32F, HEIGHTMAP_N, HEIGHTMAP_N, 0, GL_RED, GL_FLOAT, heightmap->height);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+}
+void update(Heightmap_Renderer* renderer, Heightmap* map)
+{
+	glBindTexture(GL_TEXTURE_2D, renderer->heights);
+	glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, HEIGHTMAP_N, HEIGHTMAP_N, GL_RED, GL_FLOAT, map->height);
 }
 void draw(Heightmap_Renderer* renderer, mat4 proj_view)
 {

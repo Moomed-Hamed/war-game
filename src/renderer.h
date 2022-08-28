@@ -2,6 +2,9 @@
 
 #define DRAW_DISTANCE 1024.0f
 
+#define LOG_RNDR(msg) out("[renderer] " << msg)
+#define ERR_RNDR(msg) LOG_RNDR("ERROR: " << msg)
+
 // -------------------- Shaders -------------------- //
 
 struct Shader { GLuint id; };
@@ -119,7 +122,8 @@ GLuint load_texture_png(const char* path)
 	stbi_set_flip_vertically_on_load(false);
 
 	image = stbi_load(path, &width, &height, &num_channels, 0);
-	if (image == NULL) out("ERROR : '" << path << "' NOT FOUND!");
+	if (image == NULL) ERR_RNDR("'" << path << "' NOT FOUND!");
+	if (num_channels != 4) ERR_RNDR("'" << path << "' must be 32 bits deep!");
 
 	glGenTextures(1, &id);
 	glBindTexture(GL_TEXTURE_2D, id);
@@ -749,20 +753,67 @@ Shader make_lighting_shader()
 	load(&lighting_shader, "assets/shaders/lighting.vert", "assets/shaders/lighting.frag");
 	bind(lighting_shader);
 
-	vec3 light_positions[4] = { vec3(3), vec3(4), vec3(5), vec3(6) };
-	vec3 light_colors[4] = { vec3(1) };// { vec3(1, 0, 0), vec3(0, 1, 0), vec3(0, 0, 1), vec3(0, 1, 1) };
-
-	set_vec3(lighting_shader, "light_positions[0]", light_positions[0]);
-	set_vec3(lighting_shader, "light_positions[1]", light_positions[1]);
-	set_vec3(lighting_shader, "light_positions[2]", light_positions[2]);
-	set_vec3(lighting_shader, "light_positions[3]", light_positions[3]);
-
-	set_vec3(lighting_shader, "light_colors[0]", light_colors[0]);
-	set_vec3(lighting_shader, "light_colors[1]", light_colors[1]);
-	set_vec3(lighting_shader, "light_colors[2]", light_colors[2]);
-	set_vec3(lighting_shader, "light_colors[3]", light_colors[3]);
-
 	return lighting_shader;
+}
+
+#define NUM_LIGHTS 4
+
+struct Point_Light
+{
+	vec3 position, color;
+	float radiance;
+};
+
+struct Light_Renderer
+{
+	Point_Light lights[NUM_LIGHTS];
+
+	Drawable_Mesh sphere_mesh;
+	Shader mesh_shader, light_shader;
+};
+
+void init(Light_Renderer* renderer)
+{
+	renderer->lights[0] = { vec3(9, 1, 3) , vec3(1, 0, 0), 2 };
+	renderer->lights[1] = { vec3(4, 1, 9) , vec3(0, 1, 0), 4 };
+	renderer->lights[2] = { vec3(2, 1, 2) , vec3(0, 0, 1), 6 };
+	renderer->lights[3] = { vec3(0, 1, 0) , vec3(1, 1, 1), 3 };
+
+	load(&renderer->sphere_mesh, "assets/meshes/basic/sphere.mesh", NUM_LIGHTS * sizeof(Point_Light));
+	load(&renderer->mesh_shader, "assets/shaders/transform/light.vert", "assets/shaders/mesh.frag");
+
+	mesh_add_attrib_vec3 (2, sizeof(Point_Light), 0 * sizeof(vec3)); // position
+	mesh_add_attrib_mat3 (3, sizeof(Point_Light), 1 * sizeof(vec3)); // color
+	mesh_add_attrib_float(4, sizeof(Point_Light), 2 * sizeof(vec3)); // radiance
+
+	update(renderer->sphere_mesh, sizeof(Point_Light), (byte*)&renderer->lights);
+}
+void update(Light_Renderer* renderer, Shader lighting_shader)
+{
+	set_vec3(lighting_shader, "light_positions[0]", renderer->lights[0].position);
+	set_vec3(lighting_shader, "light_positions[1]", renderer->lights[1].position);
+	set_vec3(lighting_shader, "light_positions[2]", renderer->lights[2].position);
+	set_vec3(lighting_shader, "light_positions[3]", renderer->lights[3].position);
+
+	set_vec3(lighting_shader, "light_colors[0]", renderer->lights[0].color);
+	set_vec3(lighting_shader, "light_colors[1]", renderer->lights[1].color);
+	set_vec3(lighting_shader, "light_colors[2]", renderer->lights[2].color);
+	set_vec3(lighting_shader, "light_colors[3]", renderer->lights[3].color);
+
+	set_float(lighting_shader, "radiances[0]", renderer->lights[0].radiance);
+	set_float(lighting_shader, "radiances[1]", renderer->lights[1].radiance);
+	set_float(lighting_shader, "radiances[2]", renderer->lights[2].radiance);
+	set_float(lighting_shader, "radiances[3]", renderer->lights[3].radiance);
+
+	update(renderer->sphere_mesh, NUM_LIGHTS * sizeof(Point_Light), (byte*)renderer->lights);
+}
+void draw(Light_Renderer* renderer, mat4 proj_view)
+{
+	bind(renderer->mesh_shader);
+	set_mat4(renderer->mesh_shader, "proj_view", proj_view);
+	glCullFace(GL_FRONT);
+	draw(renderer->sphere_mesh, NUM_LIGHTS);
+	glCullFace(GL_BACK);
 }
 
 // ------------------ 2D Rendering ----------------- //
