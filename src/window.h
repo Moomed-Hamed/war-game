@@ -1,5 +1,8 @@
 #include "../dependencies/proprietary/boilerplate.h"
 
+#include "bullet/btBulletDynamicsCommon.h"
+#include "BulletSoftBody/btSoftRigidDynamicsWorld.h"
+
 #define WINDOW_ERROR(str) out("WINDOW ERROR: " << str)
 
 struct Window
