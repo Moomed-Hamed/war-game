@@ -5,7 +5,7 @@
 struct Player
 {
 	Camera eyes;
-	RigidBody body;
+	//RigidBody body;
 };
 
 void init(Player* player)

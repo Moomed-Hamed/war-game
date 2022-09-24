@@ -13,26 +13,23 @@ int main()
 	Heightmap_Renderer* heightmap_renderer = Alloc(Heightmap_Renderer, 1);
 	init(heightmap_renderer, heightmap, "assets/textures/heightmap.r32");
 
-	Physics_Colliders* colliders = Alloc(Physics_Colliders, 1);
+	Physics* phys = Alloc(Physics, 1);
+	init(phys);
+
 	Physics_Renderer* physics_renderer = Alloc(Physics_Renderer, 1);
 	init(physics_renderer);
 
-	Bullet_Objects* bullet = Alloc(Bullet_Objects, 1);
-	init(bullet);
+	add_phys_terrain (phys, heightmap);
+	add_phys_cube    (phys, { 10 , height(heightmap, vec2(10, 7)) + 5.f , 7 }, { 1, 1, 1 });
+	add_phys_cone    (phys, { 16 , height(heightmap, vec2(16, 3)) + 5.f , 3 }, .5, 1);
+	add_phys_sphere  (phys, { 7  , height(heightmap, vec2(7 , 6)) + 5.f , 6 }, .5);
+	add_phys_cylinder(phys, { 7  , height(heightmap, vec2(7 , 6)) + 5.f , 6 }, .5, 1);
+	add_phys_capsule (phys, { 10 , height(heightmap, vec2(10, 7)) + 5.f , 7 }, .5, 1);
 
-	add_phys_terrain(bullet, heightmap);
-	add_phys_cube    (bullet, { 10 , height(heightmap, vec2(10, 7)) + 5.f , 7 }, { 1, 1, 1 });
-	add_phys_cone    (bullet, { 16 , height(heightmap, vec2(16, 3)) + 5.f , 3 }, .5, 1);
-	add_phys_sphere  (bullet, { 7  , height(heightmap, vec2(7 , 6)) + 5.f , 6 }, .5);
-	add_phys_cylinder(bullet, { 7  , height(heightmap, vec2(7 , 6)) + 5.f , 6 }, .5, 1);
-	add_phys_capsule (bullet, { 10 , height(heightmap, vec2(10, 7)) + 5.f , 7 }, .5, 1);
+	add_phys_vehicle(phys); phys->num_vehicles = 1;
+	add_phys_ragdoll(phys, 2, Vec3(5,5,5));
 
-	add_phys_ragdoll(bullet, 2, Vec3(5,5,5));
-
-	//make_phys_vehicle(bullet);
-	make_phys_vehicle(bullet);
-
-	check_colliders(bullet); // this contains a hack
+	print_phys(phys->world);
 
 	Player* player = Alloc(Player, 1); init(player);
 
@@ -60,9 +57,6 @@ int main()
 	Light_Renderer* light_renderer = Alloc(Light_Renderer, 1);
 	init(light_renderer);
 
-	Ragdoll_Renderer* rag_renderer = Alloc(Ragdoll_Renderer, 1);
-	init(rag_renderer);
-
 	G_Buffer g_buffer = make_g_buffer(window);
 	Shader lighting_shader = make_lighting_shader();
 	mat4 proj = glm::perspective(FOV, (float)window.screen_width / window.screen_height, 0.1f, DRAW_DISTANCE);
@@ -88,19 +82,19 @@ int main()
 
 		if (keys.H.is_pressed)
 		{
-			bullet->capsules[0]->applyCentralImpulse(Vec3(5,5,5) * frame_time);
+			phys->capsules[0].body->applyCentralImpulse(Vec3(5,5,5) * frame_time);
 		}
 
 		if (keys.M.is_pressed)
 		{
 			explode(heightmap, player->eyes.position, 5);
-			update_terrain(bullet, heightmap);
+			update_phys_terrain(phys, heightmap);
 		}
 
 		if (keys.N.is_pressed)
 		{
 			extrude(heightmap, player->eyes.position, 5);
-			update_terrain(bullet, heightmap);
+			update_phys_terrain(phys, heightmap);
 		}
 
 		if (keys.J.is_pressed) gun.type = GUN_US_PISTOL;
@@ -117,14 +111,13 @@ int main()
 		if (a > .4) { a = 0; emit_fire(emitter, terrain(heightmap, vec2(9, 6))); }
 
 		if (keys.L.is_pressed && !keys.L.was_pressed)
-			bullet->world->removeConstraint(bullet->wheel_hinges[0]);
+			phys->world->removeConstraint(phys->wheel_hinges[0]);
 
 		if (keys.U.is_pressed)
-			bullet->doll.bodies[2]->applyCentralImpulse({ 0, 2, 0 });
+			phys->ragdoll.bodies[2]->applyCentralImpulse({ 0, 2, 0 });
 
 		// game updates
-		update_vehicle(bullet, keys);
-		update(bullet, colliders, frame_time); // physics update
+		update(phys, frame_time, keys); // physics update
 		update(player , frame_time, heightmap, keys, mouse);
 		update(emitter, heightmap, frame_time, vec3(0));
 		update(bullets, frame_time);
@@ -137,9 +130,8 @@ int main()
 		update(bullet_renderer   , bullets);
 		update(gun_renderer      , gun, frame_time, player->eyes, mouse.norm_dx * 2);
 		update(heightmap_renderer, heightmap);
-		update(physics_renderer  , colliders);
-		update(light_renderer    , lighting_shader);
-		update(rag_renderer, &bullet->doll);
+		update(physics_renderer  , phys);
+		update(light_renderer, lighting_shader); out(phys->num_cylinders);
 
 		// geometry pass
 		glBindFramebuffer(GL_FRAMEBUFFER, g_buffer.FBO);
@@ -155,7 +147,6 @@ int main()
 
 		// debug wireframes
 		glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-		draw(rag_renderer   , proj_view);
 		//draw(light_renderer , proj_view);
 
 		// lighting pass
