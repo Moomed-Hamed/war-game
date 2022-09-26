@@ -31,7 +31,7 @@ int main()
 
 	print_phys(phys->world);
 
-	Player* player = Alloc(Player, 1); init(player);
+	Player* player = Alloc(Player, 1); init(player, phys);
 
 	Props* props = Alloc(Props, 1); init(props, heightmap);
 	Prop_Renderer* prop_renderer = Alloc(Prop_Renderer, 1);
@@ -91,18 +91,18 @@ int main()
 			update_phys_terrain(phys, heightmap);
 		}
 
-		if (keys.N.is_pressed)
-		{
-			extrude(heightmap, player->eyes.position, 5);
-			update_phys_terrain(phys, heightmap);
-		}
+		//if (keys.N.is_pressed)
+		//{
+		//	extrude(heightmap, player->eyes.position, 5);
+		//	update_phys_terrain(phys, heightmap);
+		//}
 
 		if (keys.J.is_pressed) gun.type = GUN_US_PISTOL;
 		if (keys.K.is_pressed) gun.type = GUN_RU_RIFLE;
 		if (keys.L.is_pressed) gun.type = GUN_US_RIFLE;
 
-		//if (keys.LEFT.is_pressed  && !keys.LEFT.was_pressed ) gun.type--;
-		//if (keys.RIGHT.is_pressed && !keys.RIGHT.was_pressed) gun.type++;
+		if (keys.DOWN.is_pressed  && !keys.DOWN.was_pressed ) gun.type--;
+		if (keys.UP.is_pressed && !keys.UP.was_pressed) gun.type++;
 
 		if (keys.O.is_pressed)
 			set_vec3(lighting_shader, "light_positions[0]", player->eyes.position);
@@ -115,6 +115,9 @@ int main()
 
 		if (keys.U.is_pressed)
 			phys->ragdoll.bodies[2]->applyCentralImpulse({ 0, 2, 0 });
+
+		props->crates[0].position  = phys->cubes[0].position;
+		props->crates[0].transform = phys->cubes[0].rotation;
 
 		// game updates
 		update(phys, frame_time, keys); // physics update
@@ -131,7 +134,7 @@ int main()
 		update(gun_renderer      , gun, frame_time, player->eyes, mouse.norm_dx * 2);
 		update(heightmap_renderer, heightmap);
 		update(physics_renderer  , phys);
-		update(light_renderer, lighting_shader); out(phys->num_cylinders);
+		update(light_renderer, lighting_shader);
 
 		// geometry pass
 		glBindFramebuffer(GL_FRAMEBUFFER, g_buffer.FBO);

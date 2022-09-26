@@ -21,8 +21,8 @@ struct Props
 
 		struct // don't rearrange these pl0x
 		{
-			Prop crates    [MAX_PROPS];
 			Prop tanktraps [MAX_PROPS];
+			Prop crates    [MAX_PROPS];
 			Prop sandbags  [MAX_PROPS];
 			Prop campfires [MAX_PROPS];
 			Prop trees     [MAX_PROPS];
@@ -100,7 +100,5 @@ void draw(Prop_Renderer* renderer, mat4 proj_view)
 	bind_texture(renderer->material, 1);
 
 	for (uint i = 0; i < NUM_PROP_TYPES; i++)
-	{
 		draw(renderer->meshes[i], MAX_PROPS);
-	}
 }

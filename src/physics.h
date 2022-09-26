@@ -180,7 +180,7 @@ void init(Physics* p)
 	p->world->setGravity(btVector3(0, GRAVITY, 0));
 }
 
-void add_phys_cube(Physics* p, vec3 position, vec3 dimensions, float mass = 1)
+uint add_phys_cube(Physics* p, vec3 position, vec3 dimensions, float mass = 1)
 {
 	uint i = p->num_cubes++;
 	p->cubes[i].scale = dimensions;
@@ -203,6 +203,8 @@ void add_phys_cube(Physics* p, vec3 position, vec3 dimensions, float mass = 1)
 	p->cubes[i].body = new btRigidBody(rbInfo);
 
 	p->world->addRigidBody(p->cubes[i].body);
+
+	return i; // index of this cube in the phys array
 }
 void add_phys_cone(Physics* b, vec3 position, float radius, float height, float mass = 1)
 {
@@ -251,8 +253,12 @@ void add_phys_sphere(Physics* b, vec3 position, float radius, float mass = 1)
 
 	b->world->addRigidBody(b->spheres[i].body);
 }
-void add_phys_capsule(Physics* b, vec3 position, float radius, float height, float mass = 1)
+uint add_phys_capsule(Physics* b, vec3 position, float radius = .5, float height = 1, float mass = 1)
 {
+	uint i = b->num_capsules++;
+	b->capsules[i].radius = radius;
+	b->capsules[i].height = height + (2.f * radius); // total height
+
 	btCollisionShape* shape = new btCapsuleShape(radius, height);
 
 	btTransform startTransform;
@@ -263,11 +269,11 @@ void add_phys_capsule(Physics* b, vec3 position, float radius, float height, flo
 	if (mass != 0.f) shape->calculateLocalInertia(mass, localInertia);
 	btDefaultMotionState* myMotionState = new btDefaultMotionState(startTransform);
 	btRigidBody::btRigidBodyConstructionInfo rbInfo(mass, myMotionState, shape, localInertia);
-	b->capsules[b->num_capsules].body = new btRigidBody(rbInfo);
+	b->capsules[i].body = new btRigidBody(rbInfo);
 
-	b->capsules[b->num_capsules].body->setAngularFactor(0); // disable rotation
-	b->world->addRigidBody(b->capsules[b->num_capsules].body);
-	b->num_capsules++;
+	b->world->addRigidBody(b->capsules[i].body);
+
+	return i;
 }
 void add_phys_cylinder(Physics* b, vec3 position, float radius, float height, float mass = 1)
 {
