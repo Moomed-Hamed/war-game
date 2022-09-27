@@ -28,20 +28,33 @@ void init(Player* player, Physics* phys)
 }
 void update(Player* player, float dtime, Heightmap* map, Keyboard keys, Mouse mouse)
 {
-	static float counter = 0; counter += dtime * 3.f;
+	static float counter = 0; counter += dtime * 2.f;
 
-	// player height = 1.8 units here
+	// player height = 1.8 units
 	vec3 pos; get_transform(player->capsule->body, &pos);
-	player->eyes.position = pos + vec3(0, .8, 0) + vec3(0, sin(counter) * .05f, 0);
+	player->eyes.position = pos + vec3(0, .8, 0) + vec3(0, sin(counter) * .01f, 0);
+
+	player->capsule->body->setDamping(0,0);
+
+	if (keys.SHIFT.is_pressed) // sprint
+	{
+		if (keys.W.is_pressed) set_linear_velocity(player->capsule->body, player->eyes.front *  10.f * dtime);
+		if (keys.S.is_pressed) set_linear_velocity(player->capsule->body, player->eyes.front * -10.f * dtime);
+		if (keys.A.is_pressed) set_linear_velocity(player->capsule->body, player->eyes.right * -10.f * dtime);
+		if (keys.D.is_pressed) set_linear_velocity(player->capsule->body, player->eyes.right *  10.f * dtime);
+	}
+	else if(keys.W.is_pressed || keys.A.is_pressed || keys.S.is_pressed || keys.D.is_pressed) // move
+	{
+		if (keys.W.is_pressed) set_linear_velocity(player->capsule->body, player->eyes.front *  5.f * dtime);
+		if (keys.S.is_pressed) set_linear_velocity(player->capsule->body, player->eyes.front * -5.f * dtime);
+		if (keys.A.is_pressed) set_linear_velocity(player->capsule->body, player->eyes.right * -5.f * dtime);
+		if (keys.D.is_pressed) set_linear_velocity(player->capsule->body, player->eyes.right *  5.f * dtime);
+	} // else if (keys.SPACE.is_pressed) set_linear_velocity(player->capsule->body, vec3(0, 10, 0));
+	else
+	{
+		player->capsule->body->setDamping(.8, .8);
+	}
 
 	camera_update_dir(&player->eyes, mouse.dx, mouse.dy, dtime);
-	if (keys.W.is_pressed) set_linear_velocity(player->capsule->body, player->eyes.front *  5.f * dtime);
-	if (keys.S.is_pressed) set_linear_velocity(player->capsule->body, player->eyes.front * -5.f * dtime);
-	if (keys.A.is_pressed) set_linear_velocity(player->capsule->body, player->eyes.right * -5.f * dtime);
-	if (keys.D.is_pressed) set_linear_velocity(player->capsule->body, player->eyes.right *  5.f * dtime);
 
-	//if (keys.W.is_pressed) player->eyes.position += player->eyes.front * 15.f * dtime;
-	//if (keys.S.is_pressed) player->eyes.position -= player->eyes.front * 15.f * dtime;
-	//if (keys.A.is_pressed) player->eyes.position -= player->eyes.right * 15.f * dtime;
-	//if (keys.D.is_pressed) player->eyes.position += player->eyes.right * 15.f * dtime;
 }

@@ -19,15 +19,10 @@ int main()
 	Physics_Renderer* physics_renderer = Alloc(Physics_Renderer, 1);
 	init(physics_renderer);
 
-	add_phys_terrain (phys, heightmap);
-	add_phys_cube    (phys, { 10 , height(heightmap, vec2(10, 7)) + 5.f , 7 }, { 1, 1, 1 });
-	add_phys_cone    (phys, { 16 , height(heightmap, vec2(16, 3)) + 5.f , 3 }, .5, 1);
-	add_phys_sphere  (phys, { 7  , height(heightmap, vec2(7 , 6)) + 5.f , 6 }, .5);
-	add_phys_cylinder(phys, { 7  , height(heightmap, vec2(7 , 6)) + 5.f , 6 }, .5, 1);
-	add_phys_capsule (phys, { 10 , height(heightmap, vec2(10, 7)) + 5.f , 7 }, .5, 1);
-
+	// add phys stuff
+	add_phys_terrain(phys, heightmap);
 	add_phys_vehicle(phys); phys->num_vehicles = 1;
-	add_phys_ragdoll(phys, 2, Vec3(5,5,5));
+	add_phys_ragdoll(phys, 2, Vec3(5, 5, 5));
 
 	print_phys(phys->world);
 

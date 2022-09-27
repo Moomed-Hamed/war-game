@@ -89,6 +89,7 @@ void init(Heightmap_Renderer* renderer, Heightmap* heightmap, const char* path)
 	load_file_r32(path, heightmap->height, HEIGHTMAP_N);
 	for (uint i = 0; i < HEIGHTMAP_N * HEIGHTMAP_N; i++) heightmap->height[i] *= HEIGHTMAP_S;
 	//for (uint i = 0; i < HEIGHTMAP_N * HEIGHTMAP_N; i++) heightmap->height[i] += 1.f;
+	for (uint i = 0; i < HEIGHTMAP_N * HEIGHTMAP_N; i++) heightmap->height[i] += perlin((float)i / 100);
 
 	glGenTextures(1, &renderer->heights);
 	glBindTexture(GL_TEXTURE_2D, renderer->heights);

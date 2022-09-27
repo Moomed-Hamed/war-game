@@ -677,13 +677,13 @@ void update_phys_vehicle(Physics* b, Keyboard keys)
 
 	// left
 	if (keys.LEFT.is_pressed)
-		for (int i = 0; i < 4; i++)
+		for (int i = 0; i < 2; i++)
 			hinge[i]->setTargetVelocity(5, -1);
 	else if (keys.RIGHT.is_pressed)
-		for (int i = 0; i < 4; i++)
+		for (int i = 0; i < 2; i++)
 			hinge[i]->setTargetVelocity(5, 1);
 	else
-		for (int i = 0; i < 4; i++)
+		for (int i = 0; i < 2; i++)
 			hinge[i]->setTargetVelocity(5, 0);
 
 	static float EngineForce = 0.f;
