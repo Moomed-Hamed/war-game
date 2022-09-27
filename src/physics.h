@@ -160,6 +160,7 @@ struct Physics
 
 	// vehicle
 	uint num_vehicles;
+	Phys_Vehicle* vehicles;
 
 	btRigidBody* chassis [MAX_COLLIDERS];
 	btRigidBody* wheels  [4];
@@ -348,7 +349,7 @@ btRigidBody* make_phys_wheel(uint i, Physics* phys, float mass, const btTransfor
 	phys->wheels[i] = new btRigidBody(cInfo);
 	//body->setContactProcessingThreshold(m_defaultContactProcessingThreshold);
 
-	phys->wheels[i]->setUserIndex(-1); // what is this?
+	//phys->wheels[i]->setUserIndex(-1); // what is this?
 	phys->world->addRigidBody(phys->wheels[i]);
 	return phys->wheels[i];
 }
@@ -359,7 +360,7 @@ void add_phys_vehicle(Physics* b)
 	tr.setOrigin(btVector3(0, -3, 0));
 
 	btRigidBody* car_chassis = NULL;
-	btCollisionShape* chassisShape = new btBoxShape(btVector3(1.f, 0.5f, 2.f));
+	btCollisionShape* chassisShape = new btBoxShape(Vec3(1.f, 0.5f, 2.f));
 
 	btCompoundShape* compound = new btCompoundShape();
 	btTransform localTrans; // effectively shifts the center of mass with respect to the chassis
@@ -369,14 +370,14 @@ void add_phys_vehicle(Physics* b)
 	compound->addChildShape(localTrans, chassisShape);
 
 	{ // localTrans effectively shifts the center of mass with respect to the chassis
-		btCollisionShape* suppShape = new btBoxShape(btVector3(0.5f, 0.1f, 0.5f));
+		btCollisionShape* suppShape = new btBoxShape(Vec3(0.5f, 0.1f, 0.5f));
 		btTransform suppLocalTrans;
 		suppLocalTrans.setIdentity();
-		suppLocalTrans.setOrigin(btVector3(0, 1.0, 2.5));
+		suppLocalTrans.setOrigin(Vec3(0, 1.0, 2.5));
 		compound->addChildShape(suppLocalTrans, suppShape);
 	}
 
-	const btVector3 start_offset(4, 5, 4);
+	const Vec3 start_offset(4, 5, 4);
 	tr.setOrigin(start_offset);
 
 	const float chassis_mass = 2.0f;
@@ -385,10 +386,10 @@ void add_phys_vehicle(Physics* b)
 	//car_chassis->setDamping(0.2, 0.2);
 
 	btVector3 wheel_positions[4] = {
-		start_offset + btVector3(-1., -0.25,  1.25),
-		start_offset + btVector3(1., -0.25,  1.25),
-		start_offset + btVector3(1., -0.25, -1.25),
-		start_offset + btVector3(-1., -0.25, -1.25)
+		start_offset + Vec3(-1., -0.25,  1.25),
+		start_offset + Vec3(1. , -0.25,  1.25),
+		start_offset + Vec3(1. , -0.25, -1.25),
+		start_offset + Vec3(-1., -0.25, -1.25)
 	};
 
 	const float wheel_radius = 0.5f;

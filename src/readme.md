@@ -53,13 +53,19 @@ green spheres that turn more red as they take damage and explode when destroyed
 
 ### 🔫 weps.h
 
-#### bullets
-bullets have a type, damage, and age(for despawning)
-#### weapon types
-Gun_Meta: struct containing information for all weapon types like mag count, fire rate, audio, etc.
-#### weapon animation
-every weapon has it's own animation function that handles all the visual aspects of the animation
-such as keyframe selection and blending based on the state of the weapon
+Bullet : sphere that moves every frame until it hits something
+Gun_Meta : struct containing information about each gun(rifle reload sound, pistol mag size, etc.)
+Gun : instance of a gun, stores it's type and ammo count
+
+#### Weapon Animation (WIP)
+The idea is to get high-quality animation with as few keyframes as possible and juice them up by
+cleverly interpolating between each frame. If done right, this has the potential to allow for much
+more complex player-wep interaction and animation variety.
+
+- ease_in_x : easing functions that are used to interpolate between animation keyframes
+- sub_anim() : takes a vec4 containing the time to transition between each sub-keyframe
+as well as the current time of the animation and returns a uint representing which sub-frame
+we are on and stores the mix value (0-1) for interpolating between this sub-keyframe and the next
 
 in general, weapon animations are grouped by wep type (smg, rifle, bolt action, etc),but depending
 on the wep there may be custom animations
