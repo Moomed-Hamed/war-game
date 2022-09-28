@@ -20,9 +20,10 @@ enemies-->main
 ```
 
 ### 🛠 update notes
-+ DONE : integrated bullet physics
++ updated the game
 
 ### 🗺 future work
++ finish the game
 + improve lighting system
   + add shadows
   + add dynamic lights
@@ -58,11 +59,11 @@ Gun_Meta : struct containing information about each gun(rifle reload sound, pist
 Gun : instance of a gun, stores it's type and ammo count
 
 #### Weapon Animation (WIP)
-The idea is to get high-quality animation with as few keyframes as possible and juice them up by
-cleverly interpolating between each frame. If done right, this has the potential to allow for much
-more complex player-wep interaction and animation variety.
+Goal is high-quality animation with as few keyframes as possible. Juice comes from cleverly
+interpolating between each frame. If done right, this has the potential to allow for complex
+player-wep interaction and animation variety.
 
-- ease_in_x : easing functions that are used to interpolate between animation keyframes
+- ease_in_x : these easing functions are mostly used to interpolate between animation keyframes
 - sub_anim() : takes a vec4 containing the time to transition between each sub-keyframe
 as well as the current time of the animation and returns a uint representing which sub-frame
 we are on and stores the mix value (0-1) for interpolating between this sub-keyframe and the next
@@ -71,7 +72,7 @@ in general, weapon animations are grouped by wep type (smg, rifle, bolt action, 
 on the wep there may be custom animations
 
 ### 🧙 player.h
-player is just a camera glued to a physics sphere
+player is just a camera glued to a physics capsule
 
 ### 🛢 props.h
 handles static prop behavior & rendering

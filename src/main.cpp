@@ -42,7 +42,8 @@ int main()
 
 	Gun_Meta* gun_meta = Alloc(Gun_Meta, 1);
 	init(gun_meta);
-	Gun gun = { GUN_US_RIFLE};
+	Gun gun = { GUN_US_PISTOL };// GUN_US_RIFLE
+
 	Gun_Renderer* gun_renderer = Alloc(Gun_Renderer, 1);
 	init(gun_renderer);
 

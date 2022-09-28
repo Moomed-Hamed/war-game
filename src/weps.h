@@ -83,9 +83,7 @@ void draw(Bullet_Renderer* renderer, mat4 proj_view)
 #define ACTION_SHOOT	1
 #define ACTION_RELOAD	2
 #define ACTION_INSPECT	3
-#define ACTION_SWITCH	4
-
-#define NUM_GUNS	15
+#define ACTION_SWITCH	4 // should this be ACTION_EQUIP?
 
 #define GUN_US_RIFLE	0 // M1 Garand
 #define GUN_GE_RIFLE	1 // bolt action
@@ -108,12 +106,15 @@ void draw(Bullet_Renderer* renderer, mat4 proj_view)
 #define GUN_RPG	13
 #define GUN_FLAMETHROWER	14
 
+#define NUM_GUNS	15
+
 struct Gun_Meta
 {
 	struct Gun_Info {
 		uint mag_size;
 		float reload_time;
-		float fire_time;
+		float fire_time; // 1.0 / fire_time = fire_rate
+		float inspect_time; // time taken to inspect weapon
 		float damage;
 	} info[NUM_GUNS];
 
@@ -124,29 +125,24 @@ struct Gun_Meta
 
 void init(Gun_Meta* meta)
 {
+	// info = { mag_size, reload_time, fire_rate, inspect_time, damage }
+
+	for (uint i = 0; i < NUM_GUNS; i++)
+	{
+		meta->info[i] = { 5, 1, .25, 3, 10 }; // bugs++ if all guns have the same stats!
+	}
+
+	meta->info[GUN_US_PISTOL] = { 10, 2, .25, 5 };
+	meta->audio[GUN_US_PISTOL].shoot[0] = load_audio("assets/audio/pistol_shot_1.audio");
+
 	meta->info[GUN_US_RIFLE] = { 5, 1, .25, 10 }; // M1 Garand
 	meta->audio[GUN_US_RIFLE].shoot[0] = load_audio("assets/audio/garand_shot.audio");
 	meta->audio[GUN_US_RIFLE].shoot[1] = load_audio("assets/audio/garand_ping.audio");
 
-	meta->info[GUN_UK_RIFLE] = { 5, 1, .25, 10 };
-	meta->info[GUN_RU_RIFLE] = { 5, 1, .25, 10 };
-	meta->info[GUN_GE_RIFLE] = { 5, 1, .25, 10 };
-
-	meta->info[GUN_US_SMG] = { 5, 1, .25, 10 };
-	meta->info[GUN_GE_SMG] = { 5, 1, .25, 10 };
-	meta->info[GUN_RU_SMG] = { 5, 1, .25, 10 };
-
-	meta->info[GUN_US_MG] = { 5, 1, .25, 10 };
-	meta->info[GUN_GE_MG] = { 5, 1, .25, 10 };
-
-	meta->info[GUN_US_PISTOL] = { 5, 1, .25, 10 };
-
-	meta->info[GUN_RPG] = { 5, 1, .25, 10 };
-	meta->info[GUN_MORTAR] = { 5, 1, .25, 10 };
-	meta->info[GUN_FLAMETHROWER] = { 5, 1, .25, 10 };
-
-	meta->info[GUN_US_PISTOL] = { 10, 1, .25, 5 };
-	meta->audio[GUN_US_PISTOL].shoot[0] = load_audio("assets/audio/pistol_shot_1.audio");
+	// be aware; these exist
+	// meta->info[GUN_RPG] = { 5, 1, .25, 10 };
+	// meta->info[GUN_MORTAR] = { 5, 1, .25, 10 };
+	// meta->info[GUN_FLAMETHROWER] = { 5, 1, .25, 10 };
 
 	meta->audio[GUN_GE_RIFLE].shoot[0] = load_audio("assets/audio/gewehr_shot_1.audio");
 	meta->audio[GUN_RU_RIFLE].shoot[0] = load_audio("assets/audio/gewehr_shot_2.audio");
@@ -158,28 +154,30 @@ struct Gun
 	uint type, ammo_count;
 	vec3 look_direction;
 
-	uint action;
-	float action_time;
+	uint action; // reload, shoot, etc.
+	float action_time; // time left to complete current action
+	float action_total_time;
 };
 
 void update(Gun* gun, Gun_Meta* meta, Bullet* bullets, Camera* cam, Mouse mouse, Keyboard keys, float dtime)
 {
 	uint id = gun->type;
 
-	if (gun->action_time > 0)
+	if (gun->action_time > 0) // action is not finished
 	{
 		gun->action_time -= dtime;
-		return;
-	} // else action has been completed
+		return; // this function does nothing if an action is ongoing (for now)
+	} // else { action has finished }
 
 	switch (gun->action)
 	{
 	case ACTION_RELOAD: gun->ammo_count = meta->info[id].mag_size; break;
 	}
 
-	gun->action = NULL; // idle
-	gun->action_time = -1;
+	gun->action = NULL;
+	gun->action_time = -1; // idle
 
+	// these if statements all end in gotos
 	if (mouse.left_button.is_pressed && !mouse.left_button.was_pressed) goto shoot;
 	if (keys.R.is_pressed && !keys.R.was_pressed) goto reload;
 	if (keys.N.is_pressed && !keys.R.was_pressed) goto inspect;
@@ -189,27 +187,30 @@ void update(Gun* gun, Gun_Meta* meta, Bullet* bullets, Camera* cam, Mouse mouse,
 shoot:
 	{
 		if (gun->ammo_count <= 0) goto reload;
+
+		// garand ping
 		if (gun->ammo_count == 1 && gun->type == GUN_US_RIFLE) play_audio(meta->audio[id].shoot[1]);
 		else play_audio(meta->audio[id].shoot[0]);
 
 		gun->action = ACTION_SHOOT;
-		gun->action_time = .2;
-		cam->trauma += .4;
+		gun->action_time = gun->action_total_time = meta->info[gun->type].fire_time;
+		cam->trauma += .4; // should this be adjustable
 		gun->ammo_count--;
 
 		spawn(bullets, cam->position, cam->front * 10.f);
+
 		return;
 	}
 reload:
 	{
 		gun->action = ACTION_RELOAD;
-		gun->action_time = 2;
+		gun->action_time = gun->action_total_time = meta->info[gun->type].reload_time;
 		return;
 	}
 inspect:
 	{
 		gun->action = ACTION_INSPECT;
-		gun->action_time = 3;
+		gun->action_time = gun->action_total_time = meta->info[gun->type].inspect_time;
 		return;
 	}
 }
@@ -417,24 +418,27 @@ float spring_lerp(float x)
 }
 
 // weapon animations
-uint sub_anim(vec4 t, float at, float* c) // DOCUMENT YOUR CODE DIPSHIT
+uint sub_anim(vec4 t, Gun gun, float* p) // The values of t must _add_ up to 1 (not the same as normalizing)
 {
-	float x = 0;
+	// t = normalized percentage of time taken by each sub_anim
+	float action_progress = 1 - (gun.action_time / gun.action_total_time); // WARNING : action time is broken, it starts at the top
+	float cumulative_progress = 0;
 	for (uint i = 0; i < 4; i++)
 	{
-		x += t[i];
+		cumulative_progress += t[i];
 
-		if (at < x)
+		if (cumulative_progress > action_progress)
 		{
-			// im sure you're very smart for coming up with this
-			// but even you can forget things sometimes dumbass
-			*c = (at - (x - t[i])) / t[i]; // ??????
+			float sub_action_progress = (cumulative_progress - action_progress) / t[i];
+			*p = 1 - sub_action_progress; // p = progress of current sub_anim (0-1)
+			//print("ap:%f |", action_progress);
+			//out(i << ':' << * p);
 			return i;
 		}
 	}
 
-	*c = 1;
-	return 4;
+	*p = 1;
+	return 4; // MAX_SUB_ANIMS = max keyframes per action
 }
 void update_pistol_anim(Gun gun, Animation* anim, mat4* current_pose)
 {
@@ -445,7 +449,7 @@ void update_pistol_anim(Gun gun, Animation* anim, mat4* current_pose)
 	{
 	case ACTION_SHOOT:
 	{
-		switch (sub_anim({ .05, .05, 0, 0}, .1 - gun.action_time, &c))
+		switch (sub_anim({ .5, .5, 0, 0}, gun, &c))
 		{
 		case 0: frames = { 0 , 1 }; mix = c; break; // slide back
 		case 1: frames = { 1 , 0 }; mix = c; break; // slide fwd
@@ -453,7 +457,7 @@ void update_pistol_anim(Gun gun, Animation* anim, mat4* current_pose)
 	} break;
 	case ACTION_RELOAD:
 	{
-		switch (sub_anim({ .4, .3, .1, .4 }, 2 - gun.action_time, &c))
+		switch (sub_anim({ .4, .3, .1, .4 }, gun, &c))
 		{
 		case 0: frames = { 0 , 2 }; mix = ease_inout_back(c); break;
 		case 1: frames = { 2 , 2 }; mix = c; break;
@@ -463,7 +467,7 @@ void update_pistol_anim(Gun gun, Animation* anim, mat4* current_pose)
 	} break;
 	case ACTION_INSPECT:
 	{
-		switch (sub_anim({ 1, 1, 1, 0}, 3 - gun.action_time, &c))
+		switch (sub_anim({ .33,.33,.34, 0}, gun, &c))
 		{
 		case 0: frames = { 0 , 6 }; mix = ease_inout_back(c); break; // inspect 1
 		case 1: frames = { 6 , 7 }; mix = ease_out_quint(c); break; // inspect 2
@@ -483,7 +487,7 @@ void update_bolt_action_anim(Gun gun, Animation* anim, mat4* current_pose)
 	{
 	case ACTION_SHOOT:
 	{
-		switch (sub_anim({ .05, .05, 5, 0}, .1 - gun.action_time, &c))
+		switch (sub_anim({ .05, .05, 5, 0}, gun, &c))
 		{
 		case 0: frames = {}; mix = c; break; // shoot
 		case 1: frames = {}; mix = c; break; // idle
@@ -491,7 +495,7 @@ void update_bolt_action_anim(Gun gun, Animation* anim, mat4* current_pose)
 	} break;
 	case ACTION_RELOAD:
 	{
-		switch (sub_anim({ .25, .5, .4, .2 }, 2 - gun.action_time, &c))
+		switch (sub_anim({ .25, .5, .4, .2 }, gun, &c))
 		{
 		case 0: frames = { 0 , 1 }; mix = ease_out_quint(c); break; // bolt up
 		case 1: frames = { 1 , 2 }; mix = ease_out_elastic(c); break; // bolt back
@@ -501,7 +505,7 @@ void update_bolt_action_anim(Gun gun, Animation* anim, mat4* current_pose)
 	} break;
 	case ACTION_INSPECT:
 	{
-		switch (sub_anim({ 1, 1, 1, 0}, 3 - gun.action_time, &c))
+		switch (sub_anim({ 1, 1, 1, 0}, gun, &c))
 		{
 		case 0: frames = { 0 , 6 }; mix = bounce(c); // inspect 1
 		case 1: frames = { 6 , 7 }; mix = bounce(c); // inspect 2
@@ -521,7 +525,7 @@ void update_smg_anim(Gun gun, Animation* anim, mat4* current_pose)
 	{
 	case ACTION_SHOOT:
 	{
-		switch (sub_anim({ .05, .05, 0, 0 }, .1 - gun.action_time, &c))
+		switch (sub_anim({ .05, .05, 0, 0 }, gun, &c))
 		{
 		case 0: frames = { 0 , 1 }; mix = c; break; // slide back
 		case 1: frames = { 1 , 0 }; mix = c; break; // slide fwd
@@ -529,7 +533,7 @@ void update_smg_anim(Gun gun, Animation* anim, mat4* current_pose)
 	} break;
 	case ACTION_RELOAD:
 	{
-		switch (sub_anim({ .6, .6, .5, .3 }, 2 - gun.action_time, &c))
+		switch (sub_anim({ .6, .6, .5, .3 }, gun, &c))
 		{
 		case 0: frames = { 0 , 2 }; mix = spring_lerp(c); break;
 		case 1: frames = { 2 , 3 }; mix = spring_lerp(c); break;
@@ -539,7 +543,7 @@ void update_smg_anim(Gun gun, Animation* anim, mat4* current_pose)
 	} break;
 	case ACTION_INSPECT:
 	{
-		switch (sub_anim({ 1, 1, 1, 0 }, 3 - gun.action_time, &c))
+		switch (sub_anim({ 1, 1, 1, 0 }, gun, &c))
 		{
 		case 0: frames = { 0 , 6 }; mix = ease_out_bounce(c); break;
 		case 1: frames = { 6 , 7 }; mix = ease_out_bounce(c); break;
@@ -559,7 +563,7 @@ void update_us_rifle_anim(Gun gun, Animation* anim, mat4* current_pose)
 	{
 	case ACTION_SHOOT:
 	{
-		switch (sub_anim({ .16, .04, 0, 0 }, .2 - gun.action_time, &c))
+		switch (sub_anim({ .16, .04, 0, 0 }, gun, &c))
 		{
 		case 0: frames = { 1 , 2 }; mix = c; break; // slide back
 		case 1: frames = { 2 , 1 }; mix = c; break; // slide fwd
@@ -567,7 +571,7 @@ void update_us_rifle_anim(Gun gun, Animation* anim, mat4* current_pose)
 	} break;
 	case ACTION_RELOAD:
 	{
-		switch (sub_anim({ .4, .6, .7, .3 }, 2 - gun.action_time, &c))
+		switch (sub_anim({ .4, .6, .7, .3 }, gun, &c))
 		{
 		case 0: frames = { 1 , 2 }; mix = spring_lerp(c); break;
 		case 1: frames = { 2 , 3 }; mix = ease_inout_quart(c); break;
@@ -577,7 +581,7 @@ void update_us_rifle_anim(Gun gun, Animation* anim, mat4* current_pose)
 	} break;
 	case ACTION_INSPECT:
 	{
-		switch (sub_anim({ 1, 1, 1, 0 }, 3 - gun.action_time, &c))
+		switch (sub_anim({ 1, 1, 1, 0 }, gun, &c))
 		{
 		case 0: frames = { 0 , 0 }; mix = ease_inout_quart(c); // inspect 1
 		case 1: frames = { 0 , 0 }; mix = c; // inspect 2
