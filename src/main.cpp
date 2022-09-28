@@ -3,15 +3,21 @@
 int main()
 {
 	Window   window = {};
-	Mouse    mouse  = {};
-	Keyboard keys   = {};
+	Mouse    mouse = {};
+	Keyboard keys = {};
 
+	//init_window(&window, 1280, 720, "war game");
 	init_window(&window, 1920, 1080, "war game");
 	init_keyboard(&keys);
 
+	Wireframe_Renderer* wireframe_renderer = Alloc(Wireframe_Renderer, 1);
+	init(wireframe_renderer);
+
 	Heightmap* heightmap = Alloc(Heightmap, 1);
+	init(heightmap, "assets/textures/heightmap.r32");
+
 	Heightmap_Renderer* heightmap_renderer = Alloc(Heightmap_Renderer, 1);
-	init(heightmap_renderer, heightmap, "assets/textures/heightmap.r32");
+	init(heightmap_renderer, heightmap);
 
 	Physics* phys = Alloc(Physics, 1);
 	init(phys);
@@ -24,11 +30,15 @@ int main()
 	add_phys_vehicle(phys); phys->num_vehicles = 1;
 	add_phys_ragdoll(phys, 2, Vec3(5, 5, 5));
 
-	print_phys(phys->world);
-
 	Player* player = Alloc(Player, 1); init(player, phys);
 
-	Props* props = Alloc(Props, 1); init(props, heightmap);
+	Building* building = Alloc(Building, 1);
+	init(building, phys);
+
+	Building_Renderer* building_renderer = Alloc(Building_Renderer, 1);
+	init(building_renderer);
+
+	Props* props = Alloc(Props, 1); init(props, phys, heightmap);
 	Prop_Renderer* prop_renderer = Alloc(Prop_Renderer, 1);
 	init(prop_renderer);
 
@@ -42,12 +52,20 @@ int main()
 
 	Gun_Meta* gun_meta = Alloc(Gun_Meta, 1);
 	init(gun_meta);
-	Gun gun = { GUN_US_PISTOL };// GUN_US_RIFLE
+	Gun gun = { GUN_GLOCK, 0, gun_meta->info[GUN_GLOCK].equip_time, gun_meta->info[GUN_GLOCK].equip_time };
 
 	Gun_Renderer* gun_renderer = Alloc(Gun_Renderer, 1);
 	init(gun_renderer);
 
-	Crosshair_Renderer* crosshair_renderer = Alloc(Crosshair_Renderer, 1);
+	Enemy* enemies = Alloc(Enemy, MAX_ENEMIES);
+	init(enemies, phys);
+
+	Enemy_Renderer* enemy_renderer = Alloc(Enemy_Renderer, 1);
+	init(enemy_renderer);
+
+	Audio headshot = load_audio("assets/audio/headshot.audio");
+
+	C_Renderer* crosshair_renderer = Alloc(C_Renderer, 1);
 	init(crosshair_renderer);
 
 	Light_Renderer* light_renderer = Alloc(Light_Renderer, 1);
@@ -62,8 +80,6 @@ int main()
 	int64 target_frame_milliseconds = frame_time * 1000.f; // seconds * 1000 = milliseconds
 	Timestamp frame_start = get_timestamp(), frame_end;
 
-	Audio headshot = load_audio("assets/audio/headshot.audio");
-
 	while (1)
 	{
 		update_window(window);
@@ -71,15 +87,10 @@ int main()
 		update_keyboard(&keys, window);
 
 		if (keys.ESC.is_pressed) break;
-
+		
 		if (keys.G.is_pressed && !keys.G.was_pressed) play_audio(headshot);
 		if (keys.G.is_pressed) player->eyes.trauma = 1;
 		if (keys.G.is_pressed) emit_explosion(emitter, player->eyes.position + 14.f * player->eyes.front);
-
-		if (keys.H.is_pressed)
-		{
-			phys->capsules[0].body->applyCentralImpulse(Vec3(5,5,5) * frame_time);
-		}
 
 		if (keys.M.is_pressed)
 		{
@@ -87,65 +98,58 @@ int main()
 			update_phys_terrain(phys, heightmap);
 		}
 
-		//if (keys.N.is_pressed)
-		//{
-		//	extrude(heightmap, player->eyes.position, 5);
-		//	update_phys_terrain(phys, heightmap);
-		//}
+		if (keys.V.is_pressed)
+		{
+			extrude(heightmap, player->eyes.position, 5);
+			update_phys_terrain(phys, heightmap);
+		}
 
-		if (keys.J.is_pressed) gun.type = GUN_US_PISTOL;
-		if (keys.K.is_pressed) gun.type = GUN_RU_RIFLE;
-		if (keys.L.is_pressed) gun.type = GUN_US_RIFLE;
-
-		if (keys.DOWN.is_pressed  && !keys.DOWN.was_pressed ) gun.type--;
-		if (keys.UP.is_pressed && !keys.UP.was_pressed) gun.type++;
-
-		if (keys.O.is_pressed)
-			set_vec3(lighting_shader, "light_positions[0]", player->eyes.position);
-
-		static float a = 0; a += frame_time;
-		if (a > .4) { a = 0; emit_fire(emitter, terrain(heightmap, vec2(9, 6))); }
+		if (keys.DOWN.is_pressed && !keys.DOWN.was_pressed) switch_gun(&gun, gun_meta, --gun.type);
+		if (keys.UP.is_pressed   && !keys.UP.was_pressed  ) switch_gun(&gun, gun_meta, ++gun.type);
 
 		if (keys.L.is_pressed && !keys.L.was_pressed)
 			phys->world->removeConstraint(phys->wheel_hinges[0]);
 
-		if (keys.U.is_pressed)
-			phys->ragdoll.bodies[2]->applyCentralImpulse({ 0, 2, 0 });
-
-		props->crates[0].position  = phys->cubes[0].position;
-		props->crates[0].transform = phys->cubes[0].rotation;
+		uint new_event = 0;
 
 		// game updates
-		update(phys, frame_time, keys); // physics update
+		update(phys   , frame_time, keys);
+		update(props  , phys);
 		update(player , frame_time, heightmap, keys, mouse);
-		update(emitter, heightmap, frame_time, vec3(0));
-		update(bullets, frame_time);
-		update(&gun, gun_meta, bullets, &player->eyes, mouse, keys, frame_time);
+		update(emitter, frame_time, heightmap, vec3(0));
+		update(bullets, frame_time, phys, emitter, enemies, &new_event);
+		update(enemies, frame_time, emitter, &player->eyes, phys);
+		update(&gun   , frame_time, gun_meta, bullets, &player->eyes, mouse, keys);
 
 		// renderer updates
-		update(crosshair_renderer);
+		update(physics_renderer, phys);
+		update(crosshair_renderer, window, frame_time, new_event);
 		update(particle_renderer , emitter);
+		update(building_renderer , building, phys);
 		update(prop_renderer     , props);
-		update(bullet_renderer   , bullets);
-		update(gun_renderer      , gun, frame_time, player->eyes, mouse.norm_dx * 2);
+		update(enemy_renderer    , enemies, phys);
+		update(gun_renderer      , gun, frame_time, player->eyes, mouse.norm_dx);
 		update(heightmap_renderer, heightmap);
-		update(physics_renderer  , phys);
-		update(light_renderer, lighting_shader);
+		update(wireframe_renderer);
+		update(bullet_renderer   , bullets);
+		update(light_renderer    , lighting_shader);
 
 		// geometry pass
 		glBindFramebuffer(GL_FRAMEBUFFER, g_buffer.FBO);
 		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 		mat4 proj_view = proj * lookAt(player->eyes.position, player->eyes.position + player->eyes.front, player->eyes.up);
-		draw(crosshair_renderer);
+		draw(building_renderer , proj_view);
 		draw(prop_renderer     , proj_view);
 		draw(particle_renderer , proj_view);
-		draw(bullet_renderer   , proj_view);
+		draw(enemy_renderer    , proj_view);
 		draw(gun_renderer      , proj_view);
 		draw(heightmap_renderer, proj_view);
 		draw(physics_renderer  , proj_view);
+		//draw(wireframe_renderer, proj_view);
 
 		// debug wireframes
 		glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+		draw(bullet_renderer, proj_view);
 		//draw(light_renderer , proj_view);
 
 		// lighting pass
@@ -155,6 +159,11 @@ int main()
 		bind(lighting_shader);
 		set_vec3(lighting_shader, "view_pos", player->eyes.position);
 		draw(g_buffer);
+
+		// user interface
+		glDisable(GL_DEPTH_TEST);
+		draw(crosshair_renderer);
+		glEnable(GL_DEPTH_TEST);
 
 		//frame time
 		frame_end = get_timestamp();
@@ -171,3 +180,35 @@ int main()
 
 	return 0;
 }
+
+//#define MAX_ANIMATIONS 1
+//
+//struct Animation_Skeleton
+//{
+//	uint num_bones;
+//
+//	mat4  ibm[MAX_ANIM_BONES]; // inverse-bind matrices
+//	int   parents[MAX_ANIM_BONES]; // indices of parent bones
+//
+//	Animation_Data animations[MAX_ANIMATIONS];
+//};
+//
+//struct Animation_Data
+//{
+//	float time;
+//	uint num_keyframes;
+//	mat4* keyframes[MAX_ANIM_BONES]; // LOCAL-SPACE poses
+//};
+//
+//struct Animated_Mesh
+//{
+//
+//};
+// 
+// Tatenen
+//#define NUM_LAYER_NODES 16
+//
+//struct Hidden_Layer
+//{
+//	float activations[NUM_LAYER_NODES];
+//};

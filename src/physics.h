@@ -13,9 +13,30 @@ mat3 scale(mat3 m, vec3 v) // should this be here?
 #define ERR(msg) out("[err]" << msg)
 
 #define GRAVITY -9.80665f
-#define MAX_COLLIDERS 16 // max colliders of a single type
+#define MAX_COLLIDERS 100 // max colliders of a single type
 
-#define Vec3 btVector3 // temporary
+// utilities
+#define Vec3 btVector3
+#define Quat btQuaternion
+btQuaternion Quaternion(float angle = 0, vec3 axis = vec3(1)) // angle is in radians
+{
+	float x = axis.x * sinf(angle / 2);
+	float y = axis.y * sinf(angle / 2);
+	float z = axis.z * sinf(angle / 2);
+	float w = cosf(angle / 2.f);
+
+	return btQuaternion(x, y, z, w);
+}
+quat quaternion(float angle = 0, vec3 axis = vec3(1)) // angle is in radians
+{
+	float x = axis.x * sinf(angle / 2);
+	float y = axis.y * sinf(angle / 2);
+	float z = axis.z * sinf(angle / 2);
+	float w = cosf(angle / 2.f);
+
+	return quat(x, y, z, w);
+}
+quat quaternion(Quat q) { return quat(q.x(), q.y(), q.z(), q.w()); }
 
 void get_transform(btRigidBody* obj, vec3* pos = NULL, mat3* rot = NULL, vec3* scale = NULL)
 {
@@ -181,26 +202,27 @@ void init(Physics* p)
 	p->world->setGravity(btVector3(0, GRAVITY, 0));
 }
 
-uint add_phys_cube(Physics* p, vec3 position, vec3 dimensions, float mass = 1)
+uint add_phys_cube(Physics* p, vec3 position, vec3 dimensions, float mass = 1, Quat rotation = Quat(0, 1, 0, 0))
 {
 	uint i = p->num_cubes++;
 	p->cubes[i].scale = dimensions;
 	p->cubes[i].position = position;
 
 	dimensions *= .5f; // bullet uses half extents
-	btCollisionShape* ground_shape = new btBoxShape(btVector3(dimensions.x, dimensions.y, dimensions.z));
+	btCollisionShape* box_shape = new btBoxShape(btVector3(dimensions.x, dimensions.y, dimensions.z));
 
 	btTransform groundTransform;
 	groundTransform.setIdentity();
 	groundTransform.setOrigin(Vec3(position.x, position.y, position.z));
+	groundTransform.setRotation(rotation);
 
 	btVector3 local_inertia(0, 0, 0);
 	// rigidbody is dynamic if mass is non zero, otherwise static
-	if (mass != 0.f) ground_shape->calculateLocalInertia(mass, local_inertia);
+	if (mass != 0.f) box_shape->calculateLocalInertia(mass, local_inertia);
 
 	// motionstate : optional, provides interpolation capabilities & only synchronizes 'active' objects
 	btDefaultMotionState* myMotionState = new btDefaultMotionState(groundTransform);
-	btRigidBody::btRigidBodyConstructionInfo rbInfo(mass, myMotionState, ground_shape, local_inertia);
+	btRigidBody::btRigidBodyConstructionInfo rbInfo(mass, myMotionState, box_shape, local_inertia);
 	p->cubes[i].body = new btRigidBody(rbInfo);
 
 	p->world->addRigidBody(p->cubes[i].body);
@@ -231,7 +253,7 @@ void add_phys_cone(Physics* b, vec3 position, float radius, float height, float 
 
 	b->world->addRigidBody(b->cones[i].body);
 }
-void add_phys_sphere(Physics* b, vec3 position, float radius, float mass = 1)
+btRigidBody* add_phys_sphere(Physics* b, vec3 position, float radius, float mass = 1)
 {
 	uint i = b->num_spheres++;
 	b->spheres[i].radius = radius;
@@ -253,6 +275,8 @@ void add_phys_sphere(Physics* b, vec3 position, float radius, float mass = 1)
 	b->spheres[i].body = new btRigidBody(rbInfo);
 
 	b->world->addRigidBody(b->spheres[i].body);
+
+	return b->spheres[i].body;
 }
 uint add_phys_capsule(Physics* b, vec3 position, float radius = .5, float height = 1, float mass = 1)
 {
@@ -464,17 +488,21 @@ btRigidBody* create_bodypart(btDynamicsWorld* world, float mass, const btTransfo
 }
 void add_phys_ragdoll(Physics* b, float scale, Vec3 position_offset)
 {
-	btCollisionShape* shapes[11] = {};
+	btCollisionShape* shapes[BODYPART_COUNT] = {};
 	shapes[BODYPART_PELVIS]          = new btCapsuleShape(.15 * scale, .20 * scale);
 	shapes[BODYPART_SPINE]           = new btCapsuleShape(.15 * scale, .28 * scale);
 	shapes[BODYPART_HEAD]            = new btCapsuleShape(.10 * scale, .05 * scale);
+
 	shapes[BODYPART_LEFT_UPPER_LEG]  = new btCapsuleShape(.07 * scale, .45 * scale);
-	shapes[BODYPART_LEFT_LOWER_LEG]  = new btCapsuleShape(.05 * scale, .37 * scale);
 	shapes[BODYPART_RIGHT_UPPER_LEG] = new btCapsuleShape(.07 * scale, .45 * scale);
+
+	shapes[BODYPART_LEFT_LOWER_LEG]  = new btCapsuleShape(.05 * scale, .37 * scale);
 	shapes[BODYPART_RIGHT_LOWER_LEG] = new btCapsuleShape(.05 * scale, .37 * scale);
+
 	shapes[BODYPART_LEFT_UPPER_ARM]  = new btCapsuleShape(.05 * scale, .33 * scale);
-	shapes[BODYPART_LEFT_LOWER_ARM]  = new btCapsuleShape(.04 * scale, .25 * scale);
 	shapes[BODYPART_RIGHT_UPPER_ARM] = new btCapsuleShape(.05 * scale, .33 * scale);
+
+	shapes[BODYPART_LEFT_LOWER_ARM]  = new btCapsuleShape(.04 * scale, .25 * scale);
 	shapes[BODYPART_RIGHT_LOWER_ARM] = new btCapsuleShape(.04 * scale, .25 * scale);
 
 	// Setup rigid bodies
@@ -494,8 +522,8 @@ void add_phys_ragdoll(Physics* b, float scale, Vec3 position_offset)
 	bodies[BODYPART_SPINE] = create_bodypart(b->world, 1., offset * transform, shapes[BODYPART_SPINE]);
 	
 	transform.setIdentity();
-	transform.setOrigin(scale* Vec3(0., 1.6, 0.));
-	bodies[BODYPART_HEAD] = create_bodypart(b->world, 1., offset * transform, shapes[BODYPART_HEAD]);
+	transform.setOrigin(scale* Vec3(0., .6, 0.));
+	bodies[BODYPART_HEAD] = create_bodypart(b->world, 0, offset * transform, shapes[BODYPART_HEAD]);
 	
 	transform.setIdentity();
 	transform.setOrigin(scale* Vec3(-0.18, 0.65, 0.));
@@ -746,8 +774,8 @@ void update(Physics* phys, float dtime, Keyboard keys)
 	for (uint i = 0; i < phys->num_cubes; i++)
 		get_transform(phys->cubes[i].body,
 			&phys->cubes[i].position,
-			&phys->cubes[i].rotation,
-			&phys->cubes[i].scale);
+			&phys->cubes[i].rotation);
+			// cube scale = dimentions, not local transform
 
 	for (uint i = 0; i < phys->num_cones; i++)
 		get_transform(phys->cones[i].body,
@@ -823,74 +851,62 @@ void update(Physics* phys, float dtime, Keyboard keys)
 
 // rendering
 
-struct Collider_Drawable
-{
-	vec3 position;
-	mat3 rotation;
-	vec3 scale;
-};
-
 struct Physics_Renderer
 {
-	uint num_cubes, num_cones, num_spheres, num_capsules, num_cylinders;
+	enum {
+		CUBE_MESH = 0,
+		CONE_MESH,
+		SPHERE_MESH,
+		CAPSULE_MESH,
+		CYLINDER_MESH,
 
-	Collider_Drawable cubes     [MAX_COLLIDERS]; // also stores chassis; fix it
-	Collider_Drawable cones     [MAX_COLLIDERS];
-	Collider_Drawable spheres   [MAX_COLLIDERS];
-	Collider_Drawable capsules  [MAX_COLLIDERS];
-	Collider_Drawable cylinders [MAX_COLLIDERS]; // also stores wheels; fix it
+		NUM_MESHES
+	};
 
-	Drawable_Mesh_UV cube_mesh, cone_mesh, sphere_mesh, capsule_mesh, cylinder_mesh;
-	GLuint texture, material;
+	union {
+		Mesh_Drawable colliders[MAX_COLLIDERS * NUM_MESHES];
+
+		struct {
+			Mesh_Drawable cubes    [MAX_COLLIDERS]; // also stores chassis; fix it
+			Mesh_Drawable cones    [MAX_COLLIDERS];
+			Mesh_Drawable spheres  [MAX_COLLIDERS];
+			Mesh_Drawable capsules [MAX_COLLIDERS];
+			Mesh_Drawable cylinders[MAX_COLLIDERS]; // also stores wheels; fix it
+		};
+	};
+
+	Mesh_Renderer mesh_renderer;
 	Shader shader;
 };
 
 void init(Physics_Renderer* renderer)
 {
-	uint reserved_size = sizeof(Collider_Drawable) * MAX_COLLIDERS;
+	const char* meshes[] = {
+		"assets/meshes/basic/cube.mesh"    ,
+		"assets/meshes/basic/cone.mesh"    ,
+		"assets/meshes/basic/sphere.mesh"  ,
+		"assets/meshes/basic/capsule.mesh" ,
+		"assets/meshes/basic/cylinder.mesh"
+	};
 
-	load(&renderer->cube_mesh, "assets/meshes/basic/cube.mesh_uv", reserved_size);
-	mesh_add_attrib_vec3(3, sizeof(Collider_Drawable), 0); // world pos
-	mesh_add_attrib_mat3(4, sizeof(Collider_Drawable), sizeof(vec3)); // transform
-	mesh_add_attrib_vec3(7, sizeof(Collider_Drawable), sizeof(vec3) + sizeof(mat3)); // scale
+	load(&renderer->shader, "assets/shaders/transform/mesh.vert", "assets/shaders/mesh.frag");
+	init_mesh_drawable(&renderer->mesh_renderer, meshes, sizeof(renderer->colliders), 5);
 
-	load(&renderer->cone_mesh, "assets/meshes/basic/cone.mesh_uv", reserved_size);
-	mesh_add_attrib_vec3(3, sizeof(Collider_Drawable), 0); // world pos
-	mesh_add_attrib_mat3(4, sizeof(Collider_Drawable), sizeof(vec3)); // transform
-	mesh_add_attrib_vec3(7, sizeof(Collider_Drawable), sizeof(vec3) + sizeof(mat3)); // scale
-
-	load(&renderer->sphere_mesh, "assets/meshes/basic/sphere.mesh_uv", reserved_size);
-	mesh_add_attrib_vec3(3, sizeof(Collider_Drawable), 0); // world pos
-	mesh_add_attrib_mat3(4, sizeof(Collider_Drawable), sizeof(vec3)); // transform
-	mesh_add_attrib_vec3(7, sizeof(Collider_Drawable), sizeof(vec3) + sizeof(mat3)); // scale
-
-	load(&renderer->capsule_mesh, "assets/meshes/basic/capsule.mesh_uv", reserved_size);
-	mesh_add_attrib_vec3(3, sizeof(Collider_Drawable), 0); // world pos
-	mesh_add_attrib_mat3(4, sizeof(Collider_Drawable), sizeof(vec3)); // transform
-	mesh_add_attrib_vec3(7, sizeof(Collider_Drawable), sizeof(vec3) + sizeof(mat3)); // scale
-
-	load(&renderer->cylinder_mesh, "assets/meshes/basic/cylinder.mesh_uv", reserved_size);
-	mesh_add_attrib_vec3(3, sizeof(Collider_Drawable), 0); // world pos
-	mesh_add_attrib_mat3(4, sizeof(Collider_Drawable), sizeof(vec3)); // transform
-	mesh_add_attrib_vec3(7, sizeof(Collider_Drawable), sizeof(vec3) + sizeof(mat3)); // scale
-
-	load(&renderer->shader, "assets/shaders/transform/wireframe.vert", "assets/shaders/mesh_uv.frag");
-	renderer->texture = load_texture("assets/textures/palette.bmp");
-	renderer->material = load_texture("assets/textures/materials.bmp");
+	for (uint i = 0; i < MAX_COLLIDERS * Physics_Renderer::NUM_MESHES; i++)
+		renderer->colliders[i].color = vec3(1,0,0);
 }
 void update(Physics_Renderer* renderer, Physics* phys)
 {
-	renderer->num_cubes     = 0;
-	renderer->num_cones     = 0;
-	renderer->num_spheres   = 0;
-	renderer->num_capsules  = 0;
-	renderer->num_cylinders = 0;
+	union {
+		uint offsets[Physics_Renderer::NUM_MESHES];
+		struct { uint num_cubes, num_cones, num_spheres, num_capsules, num_cylinders; };
+	};
 
 	for (uint i = 0; i < MAX_COLLIDERS; i++)
 	{
 		if (phys->cubes[i].body) // is there a better way to check?
 		{
-			renderer->num_cubes++;
+			num_cubes++;
 			renderer->cubes[i].position = phys->cubes[i].position;
 			renderer->cubes[i].rotation = phys->cubes[i].rotation;
 			renderer->cubes[i].scale    = phys->cubes[i].scale;
@@ -898,7 +914,7 @@ void update(Physics_Renderer* renderer, Physics* phys)
 
 		if (phys->cones[i].body)
 		{
-			renderer->num_cones += 1;
+			num_cones++;
 			renderer->cones[i].position = phys->cones[i].position;
 			renderer->cones[i].rotation = phys->cones[i].rotation;
 			renderer->cones[i].scale    = vec3(1);
@@ -906,7 +922,7 @@ void update(Physics_Renderer* renderer, Physics* phys)
 
 		if (phys->spheres[i].body)
 		{
-			renderer->num_spheres += 1;
+			num_spheres++;
 			renderer->spheres[i].position = phys->spheres[i].position;
 			renderer->spheres[i].rotation = phys->spheres[i].rotation;
 			renderer->spheres[i].scale    = vec3(phys->spheres[i].radius / .5);
@@ -916,7 +932,7 @@ void update(Physics_Renderer* renderer, Physics* phys)
 		{
 			float width = phys->capsules[i].radius / .5f;
 
-			renderer->num_capsules += 1;
+			num_capsules++;
 			renderer->capsules[i].position = phys->capsules[i].position;
 			renderer->capsules[i].rotation = phys->capsules[i].rotation;
 			renderer->capsules[i].scale    = vec3(1);
@@ -926,7 +942,7 @@ void update(Physics_Renderer* renderer, Physics* phys)
 		{
 			float width = phys->cylinders[i].radius / .5f;
 
-			renderer->num_cylinders += 1;
+			num_cylinders++;
 			renderer->cylinders[i].position = phys->cylinders[i].position;
 			renderer->cylinders[i].rotation = phys->cylinders[i].rotation;
 			renderer->cylinders[i].scale    = vec3(width, phys->cylinders[i].height, width);
@@ -942,10 +958,10 @@ void update(Physics_Renderer* renderer, Physics* phys)
 
 		get_transform(phys->chassis[0], &pos, &rot);
 
-		vec3 scale = vec3(1.f, 0.5f, 2.f) * 2.f;
+		vec3 scale = vec3(1.f, .75f, 2.f) * 2.f;
 
-		renderer->num_cubes++;
-		renderer->cubes[k].position = pos;
+		num_cubes++;
+		renderer->cubes[k].position = pos + vec3(0, .75, 0);
 		renderer->cubes[k].rotation = rot;
 		renderer->cubes[k].scale = scale;
 	}
@@ -963,7 +979,7 @@ void update(Physics_Renderer* renderer, Physics* phys)
 			mat3 rot;
 			get_transform(phys->wheels[i], &pos, &rot);
 
-			renderer->num_cylinders++;
+			num_cylinders++;
 			renderer->cylinders[k + i].position = pos;
 			renderer->cylinders[k + i].rotation = rotate(mat4(rot), PI / 2.f, vec3(0, 0, 1));
 			renderer->cylinders[k + i].scale = vec3(width, height, width);
@@ -984,39 +1000,130 @@ void update(Physics_Renderer* renderer, Physics* phys)
 			mat3 rot;
 			get_transform(phys->ragdoll.bodies[i], &pos, &rot);
 
-			renderer->num_capsules++;
+			num_capsules++;
 			renderer->capsules[k + i].position = pos;
 			renderer->capsules[k + i].rotation = rot;
 			renderer->capsules[k + i].scale = vec3(width, height, width);
 
 			// maybe make this tied to how 'alive' someone is
 			phys->ragdoll.bodies[i]->setAngularFactor(.1); // makes ragdolls look more realistic
-
-			//b->doll.bodies[i]->getCollisionShape()->
 		}
 	}
 
-	update(renderer->cube_mesh    , sizeof(Collider_Drawable) * renderer->num_cubes    , (byte*)(&renderer->cubes));
-	update(renderer->cone_mesh    , sizeof(Collider_Drawable) * renderer->num_cones    , (byte*)(&renderer->cones));
-	update(renderer->sphere_mesh  , sizeof(Collider_Drawable) * renderer->num_spheres  , (byte*)(&renderer->spheres));
-	update(renderer->capsule_mesh , sizeof(Collider_Drawable) * renderer->num_capsules , (byte*)(&renderer->capsules));
-	update(renderer->cylinder_mesh, sizeof(Collider_Drawable) * renderer->num_cylinders, (byte*)(&renderer->cylinders));
+	uint accumulated_offset = 0;
+	for (uint i = 0; i < Physics_Renderer::NUM_MESHES; i++)
+	{
+		renderer->mesh_renderer.meshes[i].num_instances = MAX_COLLIDERS;
+		renderer->mesh_renderer.meshes[i].instance_offset = i * MAX_COLLIDERS;
+		accumulated_offset += offsets[i];
+	}
 }
 void draw(Physics_Renderer* renderer, mat4 proj_view)
 {
 	bind(renderer->shader);
 	set_mat4(renderer->shader, "proj_view", proj_view);
 
-	glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, renderer->texture);
-	glActiveTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_2D, renderer->material);
-
 	glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
 	glDisable(GL_CULL_FACE);
-	draw(renderer->cube_mesh    , renderer->num_cubes);
-	draw(renderer->cone_mesh    , renderer->num_cones);
-	draw(renderer->sphere_mesh  , renderer->num_spheres);
-	draw(renderer->capsule_mesh , renderer->num_capsules);
-	draw(renderer->cylinder_mesh, renderer->num_cylinders);
+
+	update(renderer->mesh_renderer, sizeof(renderer->colliders), (byte*)(renderer->colliders));
+	draw(renderer->mesh_renderer);
+
 	glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
 	glEnable(GL_CULL_FACE);
+}
+
+// utility
+
+void apply_central_impulse(btRigidBody* body, vec3 impulse)
+{
+	body->setActivationState(1);
+	body->applyCentralImpulse(Vec3(impulse.x, impulse.y, impulse.z));
+}
+void set_linear_velocity(btRigidBody* body, vec3 velocity)
+{
+	body->setActivationState(1);
+	body->setLinearVelocity(Vec3(velocity.x, velocity.y, velocity.z));
+}
+
+// raycast
+
+#define ToVec3(bt_vec) vec3(bt_vec.x(), bt_vec.y(), bt_vec.z())
+
+enum {
+	PHYS_SPHERE = 1,
+	PHYS_CUBE,
+	PHYS_CONE,
+	PHYS_CAPSULE,
+	PHYS_CYLINDER,
+	PHYS_TERRAIN,
+
+	NUM_PHYS_TYPES
+};
+
+// Performs raycasting on the world and returns the point of collision// mask flags?
+
+struct Raycast_Result
+{
+	vec3 hit_position;
+	vec3 hit_normal;
+	uint hit_body_type; // cube, sphere, etc.
+	uint hit_body_index; // hit_cube = cubes[hit_body_index]
+	btRigidBody* hit_body;
+};
+
+Raycast_Result phys_raycast_closest(Physics* phys, vec3 start, vec3 dir)
+{
+	Raycast_Result result = {};
+
+	dir += start; // dir also stores the ray length
+	Vec3 ray_start(start.x, start.y, start.z);
+	Vec3 ray_end(dir.x, dir.y, dir.z);
+
+	//btCollisionWorld::AllHitsRayResultCallback
+	btCollisionWorld::ClosestRayResultCallback raytest_callback(ray_start, ray_end);
+	//RayCallback.m_collisionFilterMask = FILTER_CAMERA;
+
+	// Perform raycast
+	phys->world->rayTest(ray_start, ray_end, raytest_callback);
+
+	if (raytest_callback.hasHit())
+	{
+		result.hit_position = ToVec3(raytest_callback.m_hitPointWorld);
+		result.hit_normal   = ToVec3(raytest_callback.m_hitNormalWorld);
+		result.hit_body = btRigidBody::upcast((btCollisionObject*)raytest_callback.m_collisionObject);
+
+		// identify what was hit
+
+		if (result.hit_body == phys->terrain)
+		{
+			//out("hit the ground!");
+			result.hit_body_type = PHYS_TERRAIN;
+			return result;
+		}
+
+		for (uint i = 0; i < MAX_COLLIDERS; i++)
+		{
+			result.hit_body_index = i;
+
+			if (phys->spheres[i].body == result.hit_body)
+			{
+				//out("hit an enemy!");
+				result.hit_body_type = PHYS_SPHERE;
+				return result;
+			}
+
+			if (phys->cubes[i].body == result.hit_body)
+			{
+				//out("hit a cube!");
+				result.hit_body_type = PHYS_CUBE;
+				return result;
+			}
+
+			//out("hit something unknown");
+		}
+
+	}
+
+	return result;
 }

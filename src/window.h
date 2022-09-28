@@ -36,11 +36,11 @@ void init_window(Window* window, uint screen_width, uint screen_height, const ch
 	glClearColor(0, 0, 0, 1);
 	glEnable(GL_DEPTH_TEST);
 	glEnable(GL_CULL_FACE);
-	glEnable(GL_FRAMEBUFFER_SRGB); // gamma correction
+	//glEnable(GL_FRAMEBUFFER_SRGB); // gamma correction
 	//glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
 
 	//audio
-	ALCdevice* audio_device= alcOpenDevice(NULL);
+	ALCdevice* audio_device = alcOpenDevice(NULL);
 	if (audio_device == NULL) { out("cannot open sound card"); }
 
 	ALCcontext* audio_context = alcCreateContext(audio_device, NULL);
@@ -216,3 +216,147 @@ void update_keyboard(Keyboard* keyboard, Window window)
 		}
 	}
 }
+
+// audio
+
+struct Audio_Player
+{
+
+};
+
+// ------------------------------------------------- //
+
+/* -- how 2 play a sound --
+
+	Audio sound = load_audio("sound.audio");
+	play_sudio(sound);
+*/
+
+Audio load_audio(const char* path)
+{
+	uint format, size, sample_rate;
+	byte* audio_data = NULL;
+
+	FILE* file = fopen(path, "rb"); // rb = read binary
+	if (file == NULL) { print("ERROR : %s not found\n"); stop;  return 0; }
+
+	fread(&format     , sizeof(uint), 1, file);
+	fread(&sample_rate, sizeof(uint), 1, file);
+	fread(&size       , sizeof(uint), 1, file);
+
+	audio_data = Alloc(byte, size);
+	fread(audio_data, sizeof(byte), size, file);
+
+	fclose(file);
+
+	ALuint buffer_id = NULL;
+	alGenBuffers(1, &buffer_id);
+	alBufferData(buffer_id, format, audio_data, size, sample_rate);
+
+	ALuint source_id = NULL;
+	alGenSources(1, &source_id);
+	alSourcei(source_id, AL_BUFFER, buffer_id);
+
+	free(audio_data);
+	return source_id;
+}
+void play_audio(Audio source_id)
+{
+	alSourcePlay(source_id);
+}
+
+// move these later
+
+// reference : https://easings.net/
+float ease_out_bounce(float x)
+{
+	const float n1 = 7.5625;
+	const float d1 = 2.75;
+
+	if (x < 1 / d1)
+		return n1 * x * x;
+	else if (x < 2 / d1)
+		return n1 * (x -= 1.5 / d1) * x + 0.75;
+	else if (x < 2.5 / d1)
+		return n1 * (x -= 2.25 / d1) * x + 0.9375;
+	else
+		return n1 * (x -= 2.625 / d1) * x + 0.984375;
+}
+float ease_out_elastic(float x)
+{
+	const float c = TWOPI / 3.f;
+	const float t = x * x * x;
+	return pow(2.f, -6 * x) * sin((t * 10.f - 0.75) * c) + 1.f;
+}
+float ease_out_quint(float x)
+{
+	return 1 - pow(1 - x, 5);
+}
+float ease_in_back(float x)
+{
+	const float c1 = 1.70158;
+	const float c3 = c1 + 1;
+
+	return c3 * x * x * x - c1 * x * x;
+}
+float ease_out_circ(float x)
+{
+	return sqrt(1 - pow(x - 1, 2));
+}
+float ease_inout_quart(float x)
+{
+	return x < 0.5 ? 8 * x * x * x * x : 1 - pow(-2 * x + 2, 4) / 2;
+}
+float ease_inout_back(float x)
+{
+	const float c1 = 1.70158;
+	const float c2 = c1 * 1.525;
+
+	return x < 0.5
+		? (pow(2 * x, 2) * ((c2 + 1) * 2 * x - c2)) / 2
+		: (pow(2 * x - 2, 2) * ((c2 + 1) * (x * 2 - 2) + c2) + 2) / 2;
+}
+float spring_lerp(float x)
+{
+	const float p = -20.9, a = 10, h = .67;
+	const float k = 1.48, j = .64;
+	const float b = x - h;
+	const float s = .73, s2 = .93;
+	const float c = 1.77;
+
+	float f = pow(2, p*b) * sinf((a*b - .75f) * (TWOPI / 3.f)) + 1.f;
+	float g = j + (x * (k - j));
+
+	return x < .768 ? c * s2 * x * x : s * s2 * g * f;
+}
+float ease_inout_quint(float x)
+{
+	return x < 0.5f ? 16.f * x * x * x * x * x : 1 - pow(-2.f * x + 2, 5) / 2.f;
+}
+float Spring(float time)
+{
+	return (sin(time * PI * (.2f + 2.5f * time * time * time)) * pow(1.f - time, 2.2f) + time) * (1.f + (1.2f * (1.f - time)));
+}
+
+//// weapon animations
+//uint sub_anim(vec4 t, Gun gun, float* p) // The values of t must _add_ up to 1 (not the same as normalizing)
+//{
+//	// t = normalized percentage of time taken by each sub_anim
+//	float action_progress = 1 - (gun.action_time / gun.action_total_time); // WARNING : action time is broken, it starts at the top
+//	float cumulative_progress = 0;
+//	for (uint i = 0; i < 4; i++)
+//	{
+//		cumulative_progress += t[i];
+//
+//		if (cumulative_progress > action_progress)
+//		{
+//			float sub_action_progress = (cumulative_progress - action_progress) / t[i];
+//			*p = 1 - sub_action_progress; // p = progress of current sub_anim (0-1)
+//			//print("ap:%f |", action_progress); out(i << ':' << * p);
+//			return i;
+//		}
+//	}
+//
+//	*p = 1;
+//	return 4; // MAX_SUB_ANIMS = max keyframes per action
+//}

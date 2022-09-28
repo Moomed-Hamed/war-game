@@ -21,6 +21,10 @@ layout (binding = 6) uniform sampler2D dirt_normals;
 layout (binding = 7) uniform sampler2D dirt_albedos;
 layout (binding = 8) uniform sampler2D dirt_mat;
 
+layout (binding = 9 ) uniform sampler2D sand_normals;
+layout (binding = 10) uniform sampler2D sand_albedos;
+layout (binding = 11) uniform sampler2D sand_mat;
+
 void main()
 {
 	vec2 tex = vs_out.tex_coord.xy * texture_scale / 1.5;
@@ -29,11 +33,18 @@ void main()
 	vec3 albedo =  texture(grass_albedos, tex).rgb;
 	vec3 mat    =  texture(grass_mat    , tex).rgb;
 
-	if(vs_out.tex_coord.z < .25) // stone texture; this is a hack
+	if(vs_out.tex_coord.z < .45) // stone texture; this is a hack
 	{
-		normal = (texture(dirt_normals, tex).rbg * 2) - 1;
+		normal = (texture(dirt_normals , tex).rbg * 2) - 1;
 		albedo =  texture(dirt_albedos , tex).rgb;
 		mat    =  texture(dirt_mat     , tex).rgb;
+	}
+
+	if(vs_out.tex_coord.z < .15) // stone texture; this is a hack
+	{
+		normal = (texture(sand_normals , tex).rbg * 2) - 1;
+		albedo =  texture(sand_albedos , tex).rgb;
+		mat    =  texture(sand_mat     , tex).rgb;
 	}
 
 	frag_position = vec4(vs_out.frag_pos, mat.x); // metalness

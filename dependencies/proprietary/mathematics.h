@@ -65,7 +65,9 @@ bool random_boolean(float probability_of_returning_true = .5f)
 
 // noise
 
-uint random_uint(uint n, uint seed = 0)
+#include "noise.h"
+
+uint random_uint(uint n, uint seed = 1)
 {
 	n *= BIT_NOISE_1;
 	n *= seed; // helps avoid linearity
@@ -261,13 +263,43 @@ float perlin(float x, float y)
 }
 float perlin(float x)
 {
-	return lerp(random_normalized_float(floor(x)), random_normalized_float(ceil(x)), fract(x));
+	float n0, n1; // Noise contributions from the two "corners"
+
+	// No need to skew the input space in 1D
+
+	// Corners coordinates (nearest integer values):
+	int32 i0 = floor(x);
+	int32 i1 = i0 + 1;
+
+	// Distances to corners (between 0 and 1):
+	float x0 = x - i0;
+	float x1 = x0 - 1.0f;
+
+	// Calculate the contribution from the first corner
+	float t0 = 1.0f - x0 * x0;
+	//  if(t0 < 0.0f) t0 = 0.0f; // not possible
+	t0 *= t0;
+	n0 = t0 * t0 * grad(hash(i0), x0);
+
+	// Calculate the contribution from the second corner
+	float t1 = 1.0f - x1 * x1;
+	// if(t1 < 0.0f) t1 = 0.0f; // not possible
+	t1 *= t1;
+	n1 = t1 * t1 * grad(hash(i1), x1);
+
+	// The maximum value of this noise is 8*(3/4)^4 = 2.53125
+	// A factor of 0.395 scales to fit exactly within [-1,1]
+	return 0.395f * (n0 + n1);
 }
 
 // signed perlin
 float perlins(float x, float y)
 {
 	return (perlin(x, y) * 2) - 1;
+}
+float perlins(float x)
+{
+	return (perlin(x) * 2) - 1;
 }
 
 float worley(vec2 uv, float columns, float rows)
@@ -319,18 +351,17 @@ vec2 voronoi(vec2 uv, float columns, float rows)
 
 // misc utilities
 
-vec3 shake(float trauma) // perlin shake
+vec3 shake(float trauma, uint seed = 1) // perlin shake
 {
-	uint offset = random_uint() % 64;
-	float o1 = ((perlin((trauma + offset + 0) * 1000) * 2) - 1) * trauma;
-	float o2 = ((perlin((trauma + offset + 1) * 2000) * 2) - 1) * trauma;
-	float o3 = ((perlin((trauma + offset + 2) * 3000) * 2) - 1) * trauma;
-	return vec3(o1, o2, o3);
+	float a = perlins(100 + (trauma * 100.f));
+	float b = perlins(200 + (trauma * 100.f));
+	float c = perlins(300 + (trauma * 100.f));
+	return vec3(a, b, c) * trauma;
 }
 mat3 point_at(vec3 dir, vec3 up)
 {
 	// assumed to be normalized
-	vec3 f = dir; //front
+	vec3 f = dir * -1.f; // front (why is the -1 here?)
 	vec3 r = cross(up, f); //right
 	vec3 u = up;
 

@@ -8,22 +8,10 @@ struct Player
 	Phys_Capsule* capsule;
 };
 
-void apply_central_impulse(btRigidBody* body, vec3 impulse)
-{
-	body->setActivationState(1);
-	body->applyCentralImpulse(Vec3(impulse.x, impulse.y, impulse.z));
-}
-void set_linear_velocity(btRigidBody* body, vec3 velocity)
-{
-	body->setActivationState(1);
-	body->applyCentralImpulse(Vec3(velocity.x, velocity.y, velocity.z));
-}
-
 void init(Player* player, Physics* phys)
 {
-	uint index = add_phys_capsule(phys, { 1, 6, 1 });
+	uint index = add_phys_capsule(phys, { 1, 4, 6 });
 	player->capsule = &phys->capsules[index];
-
 	player->capsule->body->setAngularFactor(0); // disable rotation
 }
 void update(Player* player, float dtime, Heightmap* map, Keyboard keys, Mouse mouse)
@@ -34,27 +22,26 @@ void update(Player* player, float dtime, Heightmap* map, Keyboard keys, Mouse mo
 	vec3 pos; get_transform(player->capsule->body, &pos);
 	player->eyes.position = pos + vec3(0, .8, 0) + vec3(0, sin(counter) * .01f, 0);
 
-	player->capsule->body->setDamping(0,0);
-
-	if (keys.SHIFT.is_pressed) // sprint
 	{
-		if (keys.W.is_pressed) set_linear_velocity(player->capsule->body, player->eyes.front *  10.f * dtime);
-		if (keys.S.is_pressed) set_linear_velocity(player->capsule->body, player->eyes.front * -10.f * dtime);
-		if (keys.A.is_pressed) set_linear_velocity(player->capsule->body, player->eyes.right * -10.f * dtime);
-		if (keys.D.is_pressed) set_linear_velocity(player->capsule->body, player->eyes.right *  10.f * dtime);
+		bool sprint = keys.SHIFT.is_pressed;
+		vec3 player_front = normalize(vec3(1, 0, 1) * player->eyes.front);
+		vec3 player_right = normalize(vec3(1, 0, 1) * player->eyes.right);
+
+		Vec3 vel = player->capsule->body->getLinearVelocity();
+
+		vec3 v = {vel.x(), 0, vel.z()};
+		if (keys.W.is_pressed) v = player_front *  1.f * (sprint ? 8.f : 3.f);
+		if (keys.S.is_pressed) v = player_front * -1.f * (sprint ? 8.f : 3.f);
+		if (keys.A.is_pressed) v = player_right * -1.f * (sprint ? 8.f : 3.f);
+		if (keys.D.is_pressed) v = player_right *  1.f * (sprint ? 8.f : 3.f);
+
+		v.y = vel.y();
+
+		if (keys.SPACE.is_pressed && !keys.SPACE.was_pressed) // jump
+			v += vec3(0, 5, 0);
+
+		set_linear_velocity(player->capsule->body, v);
 	}
-	else if(keys.W.is_pressed || keys.A.is_pressed || keys.S.is_pressed || keys.D.is_pressed) // move
-	{
-		if (keys.W.is_pressed) set_linear_velocity(player->capsule->body, player->eyes.front *  5.f * dtime);
-		if (keys.S.is_pressed) set_linear_velocity(player->capsule->body, player->eyes.front * -5.f * dtime);
-		if (keys.A.is_pressed) set_linear_velocity(player->capsule->body, player->eyes.right * -5.f * dtime);
-		if (keys.D.is_pressed) set_linear_velocity(player->capsule->body, player->eyes.right *  5.f * dtime);
-	} // else if (keys.SPACE.is_pressed) set_linear_velocity(player->capsule->body, vec3(0, 10, 0));
-	else
-	{
-		player->capsule->body->setDamping(.8, .8);
-	}
 
-	camera_update_dir(&player->eyes, mouse.dx, mouse.dy, dtime);
-
+	camera_update_dir(&player->eyes, mouse.dx, mouse.dy, dtime); player->capsule->position = vec3(-111);
 }

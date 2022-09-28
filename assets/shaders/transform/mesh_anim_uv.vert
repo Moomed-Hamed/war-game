@@ -16,6 +16,7 @@ layout (location = 3) in ivec3 bones;
 layout (location = 4) in vec2 tex_coord;
 layout (location = 5) in vec3 world_position;
 layout (location = 6) in mat3 rotation;
+layout (location = 9) in mat3 local_rotation;
 
 layout (binding = 1, std140) uniform skeleton
 {
@@ -31,12 +32,15 @@ void main()
 	vec4 final_pos    = vec4(0, 0, 0, 0);
 	vec4 final_normal = vec4(0, 0, 0, 0);
 
+	vec3 pos = local_rotation * position;
+	vec3 nor = local_rotation * normal;
+
 	for(int i = 0; i < 3; i++) // 3 weights per vertex
 	{
 		mat4 joint_transform = joint_transforms[bones[i]];
 
-		vec4 pose_position = vec4(position, 1.0) * joint_transform;
-		vec4 pose_normal   = vec4(normal  , 0.0) * joint_transform;
+		vec4 pose_position = vec4(pos, 1.0) * joint_transform;
+		vec4 pose_normal   = vec4(nor, 0.0) * joint_transform;
 
 		final_pos    += pose_position * weight[i];
 		final_normal += pose_normal   * weight[i];

@@ -15,6 +15,10 @@ struct Heightmap
 {
 	float height[HEIGHTMAP_N * HEIGHTMAP_N];
 	vec3 normals[HEIGHTMAP_N * HEIGHTMAP_N];
+
+	float water_level;
+	float shoreline_level;
+	float stone_level, dirt_level, grass_level;
 };
 
 float height(Heightmap* map, vec3 pos)
@@ -61,20 +65,28 @@ void extrude(Heightmap* map, vec3 position, float radius = 5)
 	} }
 }
 
+void init(Heightmap* map, const char* path)
+{
+	// load the heightmap data + scale it
+	load_file_r32(path, map->height, HEIGHTMAP_N);
+	for (uint i = 0; i < HEIGHTMAP_N * HEIGHTMAP_N; i++) map->height[i] *= HEIGHTMAP_S;
+}
+
 // is this a good idea?
 struct PBR_Texture { GLuint normal, albedo, material; };
 
 struct Heightmap_Renderer
 {
-	Drawable_Mesh mesh;
+	Mesh_Renderer mesh;
 	Shader shader;
 	GLuint heights;
-	PBR_Texture grass, dirt;
+	PBR_Texture grass, dirt, sand;
 };
 
-void init(Heightmap_Renderer* renderer, Heightmap* heightmap, const char* path)
+void init(Heightmap_Renderer* renderer, Heightmap* heightmap)
 {
-	load(&renderer->mesh, "assets/meshes/env/terrain.mesh");
+	const char* meshes[] = { "assets/meshes/env/terrain.mesh" };
+	load(&renderer->mesh, meshes);
 	load(&renderer->shader, "assets/shaders/terrain.vert", "assets/shaders/terrain.frag");
 
 	renderer->grass.normal   = load_texture_png("assets/textures/ground/grass_normal.png");
@@ -82,14 +94,12 @@ void init(Heightmap_Renderer* renderer, Heightmap* heightmap, const char* path)
 	renderer->grass.material = load_texture_png("assets/textures/ground/grass_mat.png");
 
 	renderer->dirt.normal   = load_texture_png("assets/textures/ground/dirt_normal.png");
-	renderer->dirt.albedo   = load_texture_png("assets/textures/ground/unit_albedo.png");
+	renderer->dirt.albedo   = load_texture_png("assets/textures/ground/dirt_albedo.png");
 	renderer->dirt.material = load_texture_png("assets/textures/ground/dirt_mat.png");
 
-	// load the heightmap data + scale it + raise it
-	load_file_r32(path, heightmap->height, HEIGHTMAP_N);
-	for (uint i = 0; i < HEIGHTMAP_N * HEIGHTMAP_N; i++) heightmap->height[i] *= HEIGHTMAP_S;
-	//for (uint i = 0; i < HEIGHTMAP_N * HEIGHTMAP_N; i++) heightmap->height[i] += 1.f;
-	for (uint i = 0; i < HEIGHTMAP_N * HEIGHTMAP_N; i++) heightmap->height[i] += perlin((float)i / 100);
+	renderer->sand.normal   = load_texture_png("assets/textures/ground/wavy_sand_normals.png");
+	renderer->sand.albedo   = load_texture_png("assets/textures/ground/wavy_sand_albedo.png");
+	renderer->sand.material = load_texture_png("assets/textures/ground/wavy_sand_mat.png");
 
 	glGenTextures(1, &renderer->heights);
 	glBindTexture(GL_TEXTURE_2D, renderer->heights);
@@ -113,8 +123,12 @@ void draw(Heightmap_Renderer* renderer, mat4 proj_view)
 	bind_texture(renderer->dirt.normal   , 6);
 	bind_texture(renderer->dirt.albedo   , 7);
 	bind_texture(renderer->dirt.material , 8);
+	bind_texture(renderer->sand.normal   , 9);
+	bind_texture(renderer->sand.albedo   , 10);
+	bind_texture(renderer->sand.material , 11);
 
 	bind(renderer->shader);
 	set_mat4(renderer->shader, "proj_view", proj_view);
+	renderer->mesh.meshes[0].num_instances = 1;
 	draw(renderer->mesh);
 }

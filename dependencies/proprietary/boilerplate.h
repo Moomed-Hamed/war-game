@@ -115,47 +115,7 @@ void os_sleep(uint milliseconds)
 	play_sudio(sound);
 */
 
-#define MAX_SOUND_SIZE 2048 // ?
-
-struct Sound
-{
-	uint size;
-	byte data[MAX_SOUND_SIZE];
-};
-
 typedef ALuint Audio;
-
-Audio load_audio(const char* path)
-{
-	uint format, size, sample_rate;
-	byte* audio_data = NULL;
-
-	FILE* file = fopen(path, "rb"); // rb = read binary
-	if (file == NULL) { print("ERROR : %s not found\n"); stop;  return 0; }
-
-	fread(&format     , sizeof(uint), 1, file);
-	fread(&sample_rate, sizeof(uint), 1, file);
-	fread(&size       , sizeof(uint), 1, file);
-
-	audio_data = Alloc(byte, size);
-	fread(audio_data, sizeof(byte), size, file);
-	fclose(file);
-
-	ALuint buffer_id = NULL;
-	alGenBuffers(1, &buffer_id);
-	alBufferData(buffer_id, format, audio_data, size, sample_rate);
-
-	ALuint source_id = NULL;
-	alGenSources(1, &source_id);
-	alSourcei(source_id, AL_BUFFER, buffer_id);
-
-	free(audio_data);
-	return source_id;
-}
-void play_audio(Audio source_id)
-{
-	alSourcePlay(source_id);
-}
 
 // ------------------------------------------------- //
 // ----------------- Multithreading ---------------- //
@@ -291,6 +251,49 @@ void free_directory(Directory* dir)
 {
 	for (uint i = 0; i < dir->num_files; ++i) free(dir->names[i]);
 	*dir = {};
+}
+
+uint get_file_size(const char* path)
+{
+	HANDLE file_handle = CreateFile(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+	
+	if (file_handle == INVALID_HANDLE_VALUE)
+		return -1; // call GetLastError() to find out more
+
+	LARGE_INTEGER size;
+	if (!GetFileSizeEx(file_handle, &size))
+	{
+		CloseHandle(file_handle);
+		return -1; // error condition, could call GetLastError to find out more
+	}
+
+	CloseHandle(file_handle);
+	return size.QuadPart;
+}
+uint get_directory_size(Directory* dir, const char* path)
+{
+	uint directory_size = 0;
+	for (uint i = 0; i < dir->num_files; i++)
+	{
+		directory_size += get_file_size(dir->names[i]);
+	}
+
+	return directory_size;
+}
+uint get_directory_size(const char* path)
+{
+	Directory* dir = NULL;
+	parse_directory(dir, path);
+
+	uint directory_size = 0;
+	for (uint i = 0; i < dir->num_files; i++)
+	{
+		directory_size += get_file_size(dir->names[i]);
+	}
+
+	free_directory(dir);
+
+	return directory_size;
 }
 
 // TODO : helper functions to get file extentions and names seperately?

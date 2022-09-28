@@ -16,6 +16,7 @@
  ┃ ┗ 📂textures
  ┣ 📂dependencies
  ┃ ┣ 📂external
+ ┃ ┃ ┣📚BULLET
  ┃ ┃ ┣📚GLEW
  ┃ ┃ ┣📚GLFW
  ┃ ┃ ┣📚GLM
@@ -24,6 +25,7 @@
  ┃ ┃ ┗🔸stb_image_write.h
  ┃ ┗ 📂proprietary
  ┃    ┣🔸boilerplate.h
+ ┃    ┣🔸networking.h
  ┃    ┗🔸mathematics.h
  ┣ 📖README.txt
  ┗ ⚖️LICENSE.txt
