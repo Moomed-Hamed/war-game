@@ -262,7 +262,7 @@ Audio load_audio(const char* path)
 }
 void play_audio(Audio source_id)
 {
-	alSourcePlay(source_id);
+	//alSourcePlay(source_id);
 }
 
 // move these later

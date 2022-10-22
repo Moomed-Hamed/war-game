@@ -145,11 +145,11 @@ int main()
 		draw(gun_renderer      , proj_view);
 		draw(heightmap_renderer, proj_view);
 		draw(physics_renderer  , proj_view);
-		//draw(wireframe_renderer, proj_view);
 
 		// debug wireframes
 		glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-		draw(bullet_renderer, proj_view);
+		//draw(wireframe_renderer, proj_view);
+		//draw(bullet_renderer, proj_view);
 		//draw(light_renderer , proj_view);
 
 		// lighting pass

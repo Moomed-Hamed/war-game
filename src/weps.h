@@ -153,7 +153,7 @@ void init(Gun_Meta* meta)
 	meta->info[GUN_SHOTGUN].fire_time = .9f;
 
 	meta->info[GUN_M4A1].equip_time = .85;
-	meta->info[GUN_M4A1].fire_time = .05;
+	meta->info[GUN_M4A1].fire_time = 1.f / 13;
 	meta->info[GUN_M4A1].fire_trauma = .05;
 	meta->info[GUN_M4A1].mag_size = 30;
 	meta->info[GUN_M4A1].reload_time = 2.2;
@@ -486,11 +486,11 @@ void update(C_Renderer* renderer, Window window, float dtime, uint new_event)
 		renderer->mesh_renderer.meshes[i].num_instances = 0;
 
 	quat rotation = quaternion(0, vec3(0, 1, 0));
-	vec3 scale = vec3(1);
+	vec3 scale = vec3(.4);
 
-	float event_duration = .01;
-	vec3 neutral_color = vec3(.4);
-	vec3 kill_color = vec3(1, 0, 0);
+	float event_duration = .05;
+	vec3 neutral_color = vec3(.2);
+	vec3 kill_color = vec3(.7, 0, 0);
 
 	static uint current_event = 0;
 	static float event_timer = 0; event_timer -= dtime;
@@ -501,7 +501,7 @@ void update(C_Renderer* renderer, Window window, float dtime, uint new_event)
 		//play_audio(renderer->hitmarker);
 	} else if (event_timer < 0) current_event = 0;
 
-	vec3 color = neutral_color; static float a = 0; a += dtime * 180;
+	vec3 color = neutral_color;
 
 	switch (current_event)
 	{
@@ -509,12 +509,12 @@ void update(C_Renderer* renderer, Window window, float dtime, uint new_event)
 		renderer->mesh_renderer.meshes[C_Renderer::HITMARKER_MESH].num_instances = 1;
 		color = kill_color;
 	} break;
-
 	case 1: {
 		renderer->mesh_renderer.meshes[C_Renderer::HITMARKER_MESH].num_instances = 1;
-		color = neutral_color;
+		color = kill_color;
+		//scale = vec3(.6);
+		rotation = quaternion(ToRadians(randfns() * 10), vec3(1, 1, 1));
 	} break;
-
 	default: {
 		renderer->mesh_renderer.meshes[C_Renderer::DOT_MESH].num_instances = 1;
 		color = neutral_color;
@@ -529,7 +529,7 @@ void update(C_Renderer* renderer, Window window, float dtime, uint new_event)
 	Mesh_Drawable drawable = {};
 	drawable.color = color;
 	drawable.position = vec3(0);
-	drawable.scale    = vec3(.4) * vec3(horizontal_scale, vertical_scale, 1);
+	drawable.scale    = scale * vec3(horizontal_scale, vertical_scale, 1);
 	drawable.rotation = mat3(rotation);
 
 	update(renderer->mesh_renderer, sizeof(Mesh_Drawable), (byte*)&drawable);
