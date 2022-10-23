@@ -52,12 +52,12 @@ struct Prop_Renderer
 	};
 
 	Prop_Drawable props[MAX_PROPS];
-	Drawable_Mesh_UV meshes;
+	Mesh_Renderer_UV meshes;
 	GLuint texture, material;
 	Shader shader;
 };
 
-void init_prop_drawable(Drawable_Mesh_UV* mesh, const char** paths, uint size = 0, uint num_meshes = 1)
+void init_prop_drawable(Mesh_Renderer_UV* mesh, const char** paths, uint size = 0, uint num_meshes = 1)
 {
 	load(mesh, paths, size, num_meshes);
 	mesh_add_attrib_vec3(3, sizeof(Prop_Drawable), 0 * sizeof(vec3)); // position
@@ -258,7 +258,7 @@ struct Building_Renderer
 
 	Shader shader;
 	GLuint texture, material;
-	Drawable_Mesh_UV meshes;
+	Mesh_Renderer_UV meshes;
 };
 
 void init(Building_Renderer* renderer)
@@ -268,7 +268,7 @@ void init(Building_Renderer* renderer)
 	renderer->material = load_texture_bmp("assets/textures/materials.bmp");
 
 	const char* paths[] = {
-		"assets/meshes/props/wall_exterior.mesh_uv"
+		"assets/meshes/build/wall_exterior.mesh_uv"
 	};
 
 	uint size = MAX_BUILDING_WALLS * sizeof(Prop_Drawable);

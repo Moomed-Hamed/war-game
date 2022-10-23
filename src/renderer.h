@@ -512,7 +512,7 @@ struct Mesh_Renderer
 		uint instance_offset;
 	} meshes[MAX_MESHES];
 };
-struct Drawable_Mesh_UV
+struct Mesh_Renderer_UV
 {
 	GLuint VAO, VBO, EBO;
 	uint num_meshes;
@@ -612,7 +612,7 @@ void load(Mesh_Renderer* renderer, const char** paths, uint reserved_mem_size = 
 	glVertexAttribPointer(n_attrib, 3, GL_FLOAT, GL_FALSE, sizeof(vec3), (void*)normal_offset);
 	glEnableVertexAttribArray(n_attrib);
 }
-void load(Drawable_Mesh_UV* renderer, const char** paths, uint reserved_mem_size = 0, uint num_meshes = 1)
+void load(Mesh_Renderer_UV* renderer, const char** paths, uint reserved_mem_size = 0, uint num_meshes = 1)
 {
 	renderer->num_meshes = num_meshes;
 
@@ -829,7 +829,7 @@ void update(Mesh_Renderer mesh, uint vb_size, byte* vb_data)
 	glBindBuffer(GL_ARRAY_BUFFER, mesh.VBO);
 	glBufferSubData(GL_ARRAY_BUFFER, 0, vb_size, vb_data);
 }
-void update(Drawable_Mesh_UV mesh, uint vb_size, byte* vb_data)
+void update(Mesh_Renderer_UV mesh, uint vb_size, byte* vb_data)
 {
 	glBindBuffer(GL_ARRAY_BUFFER, mesh.VBO);
 	glBufferSubData(GL_ARRAY_BUFFER, 0, vb_size, vb_data);
@@ -867,7 +867,7 @@ void draw(Mesh_Renderer renderer)
 			(void*)byte_offset, num_instances, vertex_offset, instance_offset);
 	}
 }
-void draw(Drawable_Mesh_UV renderer)
+void draw(Mesh_Renderer_UV renderer)
 {
 	// consider switching to glMultiDrawElementsIndirect() for 1 draw call
 	glBindVertexArray(renderer.VAO);
