@@ -122,7 +122,7 @@ int main()
 		update(&gun   , frame_time, gun_meta, bullets, &player->eyes, mouse, keys);
 
 		// renderer updates
-		update(physics_renderer, phys);
+		update(physics_renderer  , phys);
 		update(crosshair_renderer, window, frame_time, new_event);
 		update(particle_renderer , emitter);
 		update(building_renderer , building, phys);

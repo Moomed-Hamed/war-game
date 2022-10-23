@@ -301,25 +301,3 @@ void draw(Building_Renderer* renderer, mat4 proj_view)
 	renderer->meshes.meshes[0].num_instances = MAX_BUILDING_WALLS;
 	draw(renderer->meshes);
 }
-
-//union {
-//	Drawable_Mesh_UV meshes[12];
-//
-//	struct {
-//		Drawable_Mesh_UV wall_exterior;
-//		Drawable_Mesh_UV wall_exterior_window;
-//		Drawable_Mesh_UV wall_exterior_window_huge;
-//		Drawable_Mesh_UV wall_exterior_single_door;
-//		Drawable_Mesh_UV wall_exterior_double_door;
-//
-//		Drawable_Mesh_UV wall_interior;
-//		Drawable_Mesh_UV wall_interior_window;
-//		Drawable_Mesh_UV wall_interior_single_door;
-//		Drawable_Mesh_UV wall_interior_double_door;
-//
-//		Drawable_Mesh_UV roof_edge;
-//		Drawable_Mesh_UV roof_middle;
-//		Drawable_Mesh_UV roof_corner;
-//		Drawable_Mesh_UV roof_window_huge;
-//	};
-//};

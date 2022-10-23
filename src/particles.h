@@ -110,15 +110,15 @@ void update(Particle_Emitter* emitter, float dtime, Heightmap* map, vec3 wind = 
 			} break;
 			case PARTICLE_SPARK :
 			{
-				particles[i].velocity.y += GRAVITY * .3 * dtime;
+				particles[i].velocity.y += GRAVITY * .7 * dtime;
 			} break;
 			case PARTICLE_DEBRIS:
 			{
-				particles[i].velocity.y += GRAVITY * .6 * dtime;
+				particles[i].velocity.y += GRAVITY * dtime;
 			} break;
 			case PARTICLE_BLOOD :
 			{
-				particles[i].velocity.y += GRAVITY * .1 * dtime;
+				particles[i].velocity.y += GRAVITY * .6 * dtime;
 			} break;
 			}
 

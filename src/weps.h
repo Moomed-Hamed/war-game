@@ -138,11 +138,11 @@ void init(Gun_Meta* meta)
 {
 	for (uint i = 0; i < NUM_GUNS; i++) // bugs++ if all guns have the same stats! (?)
 	{
-		meta->info[i].mag_size = 5;
-		meta->info[i].equip_time = 1;
-		meta->info[i].reload_time = 2;
-		meta->info[i].fire_time = .25;
-		meta->info[i].fire_trauma = .1;
+		meta->info[i].mag_size     = 5;
+		meta->info[i].equip_time   = 1;
+		meta->info[i].reload_time  = 2;
+		meta->info[i].fire_time    = .25;
+		meta->info[i].fire_trauma  = .1;
 		meta->info[i].inspect_time = 1.2;
 		meta->info[i].damage = 10;
 	}
@@ -152,10 +152,10 @@ void init(Gun_Meta* meta)
 
 	meta->info[GUN_SHOTGUN].fire_time = .9f;
 
-	meta->info[GUN_M4A1].equip_time = .85;
-	meta->info[GUN_M4A1].fire_time = 1.f / 13;
+	meta->info[GUN_M4A1].equip_time  = .85;
+	meta->info[GUN_M4A1].fire_time   = 1.f / 13;
 	meta->info[GUN_M4A1].fire_trauma = .05;
-	meta->info[GUN_M4A1].mag_size = 30;
+	meta->info[GUN_M4A1].mag_size    = 30;
 	meta->info[GUN_M4A1].reload_time = 2.2;
 	meta->audio[GUN_M4A1].shoot[0] = load_audio("assets/audio/pistol_shot_1.audio");
 }
@@ -490,7 +490,7 @@ void update(C_Renderer* renderer, Window window, float dtime, uint new_event)
 
 	float event_duration = .05;
 	vec3 neutral_color = vec3(.2);
-	vec3 kill_color = vec3(.7, 0, 0);
+	vec3 kill_color = vec3(.4, 0, 0);
 
 	static uint current_event = 0;
 	static float event_timer = 0; event_timer -= dtime;
