@@ -51,7 +51,7 @@ struct Prop_Renderer
 		NUM_MESHES
 	};
 
-	Prop_Drawable props[MAX_PROPS];
+	Prop_Drawable props[MAX_PROPS_TOTAL];
 	Mesh_Renderer_UV meshes;
 	GLuint texture, material;
 	Shader shader;
@@ -76,7 +76,7 @@ void init(Prop_Renderer* renderer)
 		"assets/meshes/props/campfire.mesh_uv"
 	};
 
-	init_prop_drawable(&renderer->meshes, meshes, MAX_PROPS * sizeof(Prop_Drawable), Prop_Renderer::NUM_MESHES);
+	init_prop_drawable(&renderer->meshes, meshes, MAX_PROPS_TOTAL * sizeof(Prop_Drawable), Prop_Renderer::NUM_MESHES);
 }
 void update(Prop_Renderer* renderer, Props* props)
 {

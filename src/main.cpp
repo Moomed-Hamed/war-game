@@ -87,30 +87,10 @@ int main()
 		update_keyboard(&keys, window);
 
 		if (keys.ESC.is_pressed) break;
-		
-		if (keys.G.is_pressed && !keys.G.was_pressed) play_audio(headshot);
-		if (keys.G.is_pressed) player->eyes.trauma = 1;
-		if (keys.G.is_pressed) emit_explosion(emitter, player->eyes.position + 14.f * player->eyes.front);
-
-		if (keys.M.is_pressed)
-		{
-			explode(heightmap, player->eyes.position, 5);
-			update_phys_terrain(phys, heightmap);
-		}
-
-		if (keys.V.is_pressed)
-		{
-			extrude(heightmap, player->eyes.position, 5);
-			update_phys_terrain(phys, heightmap);
-		}
-
-		if (keys.DOWN.is_pressed && !keys.DOWN.was_pressed) switch_gun(&gun, gun_meta, --gun.type);
-		if (keys.UP.is_pressed   && !keys.UP.was_pressed  ) switch_gun(&gun, gun_meta, ++gun.type);
-
-		if (keys.L.is_pressed && !keys.L.was_pressed)
-			phys->world->removeConstraint(phys->wheel_hinges[0]);
 
 		uint new_event = 0;
+		if (keys.DOWN.is_pressed && !keys.DOWN.was_pressed) switch_gun(&gun, gun_meta, --gun.type);
+		if (keys.UP.is_pressed   && !keys.UP.was_pressed  ) switch_gun(&gun, gun_meta, ++gun.type);
 
 		// game updates
 		update(phys   , frame_time, keys);
@@ -149,8 +129,8 @@ int main()
 		// debug wireframes
 		glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
 		//draw(wireframe_renderer, proj_view);
-		//draw(bullet_renderer, proj_view);
-		//draw(light_renderer , proj_view);
+		//draw(bullet_renderer   , proj_view);
+		//draw(light_renderer    , proj_view);
 
 		// lighting pass
 		glBindFramebuffer(GL_FRAMEBUFFER, 0);
