@@ -310,3 +310,11 @@ uint get_directory_size(const char* path)
 // ------------------------------------------------- //
 
 #include "networking.h"
+
+// ------------------------------------------------- //
+// ------------------- Networking ------------------ //
+// ------------------------------------------------- //
+
+#include "../external/IMGUI/imgui.h"
+#include "../external/IMGUI/backends/imgui_impl_glfw.h"
+#include "../external/IMGUI/backends/imgui_impl_opengl3.h"

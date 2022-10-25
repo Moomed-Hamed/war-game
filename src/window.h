@@ -27,7 +27,7 @@ void init_window(Window* window, uint screen_width, uint screen_height, const ch
 	glfwSwapInterval(1); // disable v-sync
 
 	//Capture the cursor
-	glfwSetInputMode(window->instance, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+	//glfwSetInputMode(window->instance, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 
 	//GLEW
 	glewExperimental = GL_TRUE;

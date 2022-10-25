@@ -9,6 +9,7 @@ int main()
 	//init_window(&window, 1280, 720, "war game");
 	init_window(&window, 1920, 1080, "war game");
 	init_keyboard(&keys);
+	init_imgui(window);
 
 	Wireframe_Renderer* wireframe_renderer = Alloc(Wireframe_Renderer, 1);
 	init(wireframe_renderer);
@@ -86,6 +87,11 @@ int main()
 		update_mouse(&mouse, window);
 		update_keyboard(&keys, window);
 
+		// Start the Dear ImGui frame
+		ImGui_ImplOpenGL3_NewFrame();
+		ImGui_ImplGlfw_NewFrame();
+		ImGui::NewFrame();
+
 		if (keys.ESC.is_pressed) break;
 
 		uint new_event = 0;
@@ -113,6 +119,7 @@ int main()
 		update(wireframe_renderer);
 		update(bullet_renderer   , bullets);
 		update(light_renderer    , lighting_shader);
+		gui_test();
 
 		// geometry pass
 		glBindFramebuffer(GL_FRAMEBUFFER, g_buffer.FBO);
@@ -131,6 +138,8 @@ int main()
 		//draw(wireframe_renderer, proj_view);
 		//draw(bullet_renderer   , proj_view);
 		//draw(light_renderer    , proj_view);
+		ImGui::Render();
+		ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 
 		// lighting pass
 		glBindFramebuffer(GL_FRAMEBUFFER, 0);
