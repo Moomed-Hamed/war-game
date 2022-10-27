@@ -102,7 +102,12 @@ also loads heightmaps from .R32 files
 - colliders : cube, cone, sphere, capsule, cylinder, heightmap
 
 ### 🎨 renderer.h
-+ TODO : try to at least document the animation stuff
+
+- Mesh_Renderer : renders multiple meshes, each with a unique instance count
+- Mesh_Renderer_UV : same but with textures (all meshes use the same shader)
+
+Animation
+consist of a mesh, vertex weights, a skeleton, some bind poses, and animation keyframes
 
 ### ⚙️ window.h
 Handles opening a window, setting up OpenGL & OpenAL, and handling keyboard/mouse input

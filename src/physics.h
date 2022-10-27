@@ -335,13 +335,13 @@ void add_phys_terrain(Physics* b, Heightmap* map)
 	float scale = HEIGHTMAP_N / (float)HEIGHTMAP_L;
 	shape->setLocalScaling(btVector3(1.f / scale, 1, 1.f / scale));
 
-	btTransform startTransform;
-	startTransform.setIdentity();
-	startTransform.setOrigin(btVector3(HEIGHTMAP_L / 2.f, 0, HEIGHTMAP_L / 2.f));
+	btTransform start_transform;
+	start_transform.setIdentity();
+	start_transform.setOrigin(btVector3(HEIGHTMAP_L / 2.f, 0, HEIGHTMAP_L / 2.f));
 
-	btVector3 localInertia(0, 0, 0);
-	btDefaultMotionState* myMotionState = new btDefaultMotionState(startTransform);
-	btRigidBody::btRigidBodyConstructionInfo rbInfo(0.f, myMotionState, shape, localInertia);
+	btVector3 local_intertia(0, 0, 0);
+	btDefaultMotionState* motion_state = new btDefaultMotionState(start_transform);
+	btRigidBody::btRigidBodyConstructionInfo rbInfo(0.f, motion_state, shape, local_intertia);
 	b->terrain = new btRigidBody(rbInfo);
 
 	b->world->addRigidBody(b->terrain);

@@ -563,37 +563,33 @@ void init_imgui(Window window)
 	ImGui_ImplGlfw_InitForOpenGL(window.instance, true);
 	ImGui_ImplOpenGL3_Init("#version 130");
 }
-
 void gui_test()
 {
-	// Create a window called "My First Tool", with a menu bar.
-	ImGui::Begin("My First Tool");
-	if (ImGui::BeginMenuBar())
-	{
-		if (ImGui::BeginMenu("File"))
-		{
-			if (ImGui::MenuItem("Open..", "Ctrl+O")) { /* Do stuff */ }
-			if (ImGui::MenuItem("Save", "Ctrl+S")) { /* Do stuff */ }
-			ImGui::EndMenu();
-		}
-		ImGui::EndMenuBar();
-	}
-
-	// Edit a color stored as 4 floats
-	vec4 color = {};
-	ImGui::ColorEdit4("Color", (float*)&color);
-
-	// Generate samples and plot them
-	float samples[100];
-	for (int n = 0; n < 100; n++)
-		samples[n] = sinf(n * 0.2f + ImGui::GetTime() * 1.5f);
-	ImGui::PlotLines("Samples", samples, 100);
-
-	// Display contents in a scrolling region
-	ImGui::TextColored(ImVec4(1, 1, 0, 1), "Important Stuff");
-	ImGui::BeginChild("Scrolling");
-	for (int n = 0; n < 50; n++)
-		ImGui::Text("%04d: Some text", n);
-	ImGui::EndChild();
-	ImGui::End();
+	//ImGui::Begin("Console");
+	//
+	////// Edit a color stored as 4 floats
+	////static vec4 color = {};
+	////ImGui::ColorEdit4("Color", (float*)&color);
+	//
+	//// Generate samples and plot them
+	//float samples[100];
+	//for (int n = 0; n < 100; n++)
+	//	samples[n] = sinf(n * 0.2f + ImGui::GetTime() * 1.5f);
+	//ImGui::PlotLines("Samples", samples, 100);
+	//
+	//char text[64] = {};
+	//ImGui::InputTextWithHint("label", "type something", text, sizeof(text));
+	//
+	//// Display contents in a scrolling region
+	//ImGui::TextColored(ImVec4(1, 1, 0, 1), "Important Stuff");
+	//ImGui::BeginChild("Scrolling");
+	//for (int n = 0; n < 50; n++)
+	//	ImGui::Text("%04d: Some text", n);
+	//ImGui::EndChild();
+	//ImGui::End();
+}
+void draw_gui()
+{
+	ImGui::Render();
+	ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 }
