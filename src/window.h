@@ -51,6 +51,10 @@ void update_window(Window window)
 {
 	glfwPollEvents();
 	glfwSwapBuffers(window.instance);
+
+	ImGui_ImplOpenGL3_NewFrame();
+	ImGui_ImplGlfw_NewFrame();
+	ImGui::NewFrame();
 }
 void shutdown_window()
 {

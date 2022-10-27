@@ -14,7 +14,7 @@ void init(Enemy* enemies, Physics* phys)
 	for (uint i = 0; i < MAX_ENEMIES; i++)
 	{
 		enemies[i] = { 1, 100 };
-		enemies[i].body = add_phys_sphere(phys, vec3(randfn() * 15.f, 3, randfn() * 15.f), .5);
+		enemies[i].body = add_phys_sphere(phys, vec3(randfn() * 15.f, 3, randfn() * 15.f), .5).body;
 	}
 }
 void update(Enemy* enemies, float dtime, Particle_Emitter* emitter, Camera* cam, Physics* phys)

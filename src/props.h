@@ -18,8 +18,10 @@ struct Props
 
 void init(Props* props, Physics* phys, Heightmap* map)
 {
-	props->props[0].body_index = add_phys_cube(phys, vec3(7,8,7), vec3(.134, .052, .334), 1);
-	props->props[1].body_index = add_phys_cube(phys, vec3(7), vec3(1), 10);
+	RigidBody r = {};
+
+	props->props[0].body_index = add_phys_cube(phys, vec3(7,8,7), vec3(.134, .052, .334), 1).index;
+	props->props[1].body_index = add_phys_cube(phys, vec3(7), vec3(1), 10).index;
 	props->props[2] = { terrain(map, vec2(9 , 6)) , mat3(1) };
 }
 void update(Props* props, Physics* phys)
@@ -218,7 +220,7 @@ void init(Building* building, Physics* phys)
 		{
 			Quat r = Quaternion(ToRadians(180), vec3(0, 1, 0));
 			vec3 p = offset + vec3(width * x, 0, width * z) + vec3(width / -2.f, 0, 0);
-			uint cube_index = add_phys_cube(phys, p, dimensions, 0, r);
+			uint cube_index = add_phys_cube(phys, p, dimensions, 0, r).index;
 
 			uint i = num_walls++;
 			building->walls[i].cube = &phys->cubes[cube_index];
@@ -229,7 +231,7 @@ void init(Building* building, Physics* phys)
 		{
 			Quat r = Quaternion(ToRadians(90), vec3(0, 1, 0));
 			vec3 p = offset + vec3(width * x, 0, width * z) + vec3(0, 0, width / -2.f);
-			uint cube_index = add_phys_cube(phys, p, dimensions, 0, r);
+			uint cube_index = add_phys_cube(phys, p, dimensions, 0, r).index;
 
 			uint i = num_walls++;
 			building->walls[i].cube = &phys->cubes[cube_index];
@@ -240,7 +242,7 @@ void init(Building* building, Physics* phys)
 		{
 			Quat r = Quaternion(ToRadians(-90), vec3(0, 1, 0));
 			vec3 p = offset + vec3(width * x, 0, width * z) + vec3(0, 0, width / 2.f);
-			uint cube_index = add_phys_cube(phys, p, dimensions, 0, r);
+			uint cube_index = add_phys_cube(phys, p, dimensions, 0, r).index;
 
 			uint i = num_walls++;
 			building->walls[i].cube = &phys->cubes[cube_index];

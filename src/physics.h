@@ -108,6 +108,17 @@ enum {
 	JOINT_COUNT
 };
 
+enum {
+	PHYS_SPHERE = 1,
+	PHYS_CUBE,
+	PHYS_CONE,
+	PHYS_CAPSULE,
+	PHYS_CYLINDER,
+	PHYS_TERRAIN,
+
+	NUM_PHYS_TYPES
+};
+
 struct Phys_Cube
 {
 	vec3 position, scale;
@@ -146,6 +157,13 @@ struct Phys_Capsule
 	float height, radius; // height = total height
 	btRigidBody* body;
 };
+
+//struct RigidBody
+//{
+//	vec3 position, scale;
+//	mat3 rotation;
+//	float height, radius;
+//};
 
 struct Phys_Vehicle
 { 
@@ -202,7 +220,12 @@ void init(Physics* p)
 	p->world->setGravity(btVector3(0, GRAVITY, 0));
 }
 
-uint add_phys_cube(Physics* p, vec3 position, vec3 dimensions, float mass = 1, Quat rotation = Quat(0, 1, 0, 0))
+struct RigidBody {
+	uint type, index;
+	btRigidBody* body;
+};
+
+RigidBody add_phys_cube(Physics* p, vec3 position, vec3 dimensions, float mass = 1, Quat rotation = Quat(0, 1, 0, 0))
 {
 	uint i = p->num_cubes++;
 	p->cubes[i].scale = dimensions;
@@ -227,7 +250,12 @@ uint add_phys_cube(Physics* p, vec3 position, vec3 dimensions, float mass = 1, Q
 
 	p->world->addRigidBody(p->cubes[i].body);
 
-	return i; // index of this cube in the phys array
+	RigidBody ret = {};
+	ret.body  = p->cubes[i].body;
+	ret.index = i; // index of this cube in the phys array
+	ret.type  = PHYS_CUBE;
+
+	return ret;
 }
 void add_phys_cone(Physics* b, vec3 position, float radius, float height, float mass = 1)
 {
@@ -253,7 +281,7 @@ void add_phys_cone(Physics* b, vec3 position, float radius, float height, float 
 
 	b->world->addRigidBody(b->cones[i].body);
 }
-btRigidBody* add_phys_sphere(Physics* b, vec3 position, float radius, float mass = 1)
+RigidBody add_phys_sphere(Physics* b, vec3 position, float radius, float mass = 1)
 {
 	uint i = b->num_spheres++;
 	b->spheres[i].radius = radius;
@@ -276,7 +304,12 @@ btRigidBody* add_phys_sphere(Physics* b, vec3 position, float radius, float mass
 
 	b->world->addRigidBody(b->spheres[i].body);
 
-	return b->spheres[i].body;
+	RigidBody ret = {};
+	ret.body = b->spheres[i].body;
+	ret.index = i;
+	ret.type = PHYS_SPHERE;
+
+	return ret;
 }
 uint add_phys_capsule(Physics* b, vec3 position, float radius = .5, float height = 1, float mass = 1)
 {
@@ -1049,17 +1082,6 @@ void set_linear_velocity(btRigidBody* body, vec3 velocity)
 // raycast
 
 #define ToVec3(bt_vec) vec3(bt_vec.x(), bt_vec.y(), bt_vec.z())
-
-enum {
-	PHYS_SPHERE = 1,
-	PHYS_CUBE,
-	PHYS_CONE,
-	PHYS_CAPSULE,
-	PHYS_CYLINDER,
-	PHYS_TERRAIN,
-
-	NUM_PHYS_TYPES
-};
 
 // Performs raycasting on the world and returns the point of collision// mask flags?
 

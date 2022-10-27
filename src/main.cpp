@@ -87,11 +87,6 @@ int main()
 		update_mouse(&mouse, window);
 		update_keyboard(&keys, window);
 
-		// Start the Dear ImGui frame
-		ImGui_ImplOpenGL3_NewFrame();
-		ImGui_ImplGlfw_NewFrame();
-		ImGui::NewFrame();
-
 		if (keys.ESC.is_pressed) break;
 
 		uint new_event = 0;
