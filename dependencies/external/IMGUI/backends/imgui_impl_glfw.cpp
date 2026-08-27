@@ -58,13 +58,6 @@
 #include "../IMGUI/imgui.h"
 #include "imgui_impl_glfw.h"
 
-// Clang warnings with -Weverything
-#if defined(__clang__)
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wold-style-cast"     // warning: use of old-style cast
-#pragma clang diagnostic ignored "-Wsign-conversion"    // warning: implicit conversion changes signedness
-#endif
-
 // GLFW
 #include <../GLFW/glfw3.h>
 #ifdef _WIN32

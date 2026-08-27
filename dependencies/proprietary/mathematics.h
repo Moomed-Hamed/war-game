@@ -89,10 +89,18 @@ int random_int(uint n, uint seed = 0)
 
 	return u.ret;
 }
-float random_normalized_float(uint n, uint seed = 0) // random float between 0 and 1
+float random_normalized_float(uint n, uint seed = 1) // random float between 0 and 1
 {
-	seed = random_uint(n, seed);
-	return (float)seed / (float)UINT_MAX; // is there a better way to do this?
+	union	{
+		uint  u;
+		float f;
+	} ret;
+
+	ret.u = random_uint(n, seed) >> 2;// 0x3fffffff; // maybe bitshift instead?
+	//out(random_uint(n, seed));
+	//out(ret.u);
+	//out(ret.f); out(' ');
+	return ret.f; // is there a better way to do this?
 }
 float random_normalized_float_signed(uint n, uint seed = 0) // random float between -1 and 1
 {
@@ -228,38 +236,53 @@ float smoothstep(float a, float b, float amount)
 
 // specialized noise
 
+vec2 random2(vec2 p) { // hack that i stole
+	return fract(sin(vec2(dot(p, vec2(127.1, 311.7)), dot(p, vec2(269.5, 183.3)))) * 43758.5453f);
+}
+
 float perlin(float x, float y)
 {
-	const auto dot_grid_gradient = [](float ix, float iy, float x, float y)
+	const auto dot_grid_gradient = [](float X, float Y, float x, float y)
 	{
-		float n = TWOPI * randfns(ix, iy);
+		float n = TWOPI * random2(vec2(X, Y)).x;// out(x << '.' << Y << ';' << randfns(X, Y));
 
 		vec2 gradient = vec2(cos(n), sin(n));
-		vec2 distance = { x - ix, y - iy };
+		vec2 distance = { x - X, y - Y };
 
 		return dot(distance, gradient);
 	};
 
 	// grid coordinates
-	int X = (int)x;
-	int Y = (int)y;
+	float X = (int)x;
+	float Y = (int)y;
 
 	// interpolation weights (could also use higher order polynomial/s-curve here)
-	float wx = x - (float)X;
-	float wy = y - (float)Y;
+	float wx = x - X;
+	float wy = y - Y;
 
 	// interpolate between grid point gradients
 	float a, b, c, d;
 
 	a  = dot_grid_gradient(X + 0, Y + 0, x, y);
 	b  = dot_grid_gradient(X + 1, Y + 0, x, y);
-	c = smoothstep(a, b, wx);
-
+	c = smoothstep(a, b, wx); // lerp or smoothstep for different results
+	
 	a  = dot_grid_gradient(X + 0, Y + 1, x, y);
 	b  = dot_grid_gradient(X + 1, Y + 1, x, y);
 	d = smoothstep(a, b, wx);
-
+	
 	return (smoothstep(c, d, wy) + 1.f) / 2.f;
+
+	//// without lerping; for testing
+	//a = dot_grid_gradient(X + 0, Y + 0, x, y);
+	//b = dot_grid_gradient(X + 1, Y + 0, x, y);
+	//c = wx > .5 ? a : b;// lerp(a, b, wx); // change lerp to smoothstep for different results
+	//
+	//a = dot_grid_gradient(X + 0, Y + 1, x, y);
+	//b = dot_grid_gradient(X + 1, Y + 1, x, y);
+	//d = wx > .5 ? a : b;
+	//float k = wy > .5 ? c : d;
+	//return (k + 1.f) / 2.f;
 }
 float perlin(float x)
 {
@@ -302,51 +325,63 @@ float perlins(float x)
 	return (perlin(x) * 2) - 1;
 }
 
-float worley(vec2 uv, float columns, float rows)
+float worley(float x, float z) // add a seed later
 {
-	vec2 index_uv = floor(vec2(uv.x * columns, uv.y * rows));
-	vec2 fract_uv = fract(vec2(uv.x * columns, uv.y * rows));
+	vec2 test_point = fract(vec2{ x, z });
+	vec2 grid_index = floor(vec2{ x, z }); //print("%f,%f | ", x, z);
 
-	float minimum_dist = 1.0;
+	float first_smallest = 2, second_smallest = 2;
 
-	for (int y = -1; y <= 1; y++) {
-	for (int x = -1; x <= 1; x++)
+	for (int u = -1; u < 2; u++) {
+	for (int v = -1; v < 2; v++)
 	{
-		vec2 neighbor = vec2(float(x), float(y));
-		vec2 point = vec2(glm::fract(sin(dot(index_uv + neighbor, vec2(12.9898, 78.233))) * 43758.5453123)); // random
+		uvec2 index = grid_index + vec2(u, v) + 3.f;
+		//vec2 point = vec2(u, v) + vec2(randfn(index.x, index.y)); // this box's random point
+		vec2 point = random2(grid_index + vec2(u,v)) + vec2(u,v); // this box's random point
 
-		vec2 diff = neighbor + point - fract_uv;
-		float dist = length(diff);
-		minimum_dist = glm::min(minimum_dist, dist);
-	} }
+		float distance = length(test_point - point);
 
-	return minimum_dist;
-}
-vec2 voronoi(vec2 uv, float columns, float rows)
-{
-	vec2 index_uv = floor(vec2(uv.x * columns, uv.y * rows));
-	vec2 fract_uv = fract(vec2(uv.x * columns, uv.y * rows));
-
-	float minimum_dist = 1.0;
-	vec2 minimum_point = {};
-
-	for (int y = -1; y <= 1; y++) {
-	for (int x = -1; x <= 1; x++)
-	{
-		vec2 neighbor = vec2(float(x), float(y));
-		vec2 point = vec2(glm::fract(sin(dot(index_uv + neighbor, vec2(12.9898, 78.233))) * 43758.5453123)); // random
-
-		vec2 diff = neighbor + point - fract_uv;
-		float dist = length(diff);
-
-		if (dist < minimum_dist)
+		if (distance <= first_smallest)
 		{
-			minimum_dist = dist;
-			minimum_point = point;
+			second_smallest = first_smallest;
+			first_smallest = distance;
 		}
-	} }
+		else if (distance < second_smallest)
+			second_smallest = distance;
+	}}
 
-	return minimum_point;
+	return first_smallest / 1.414213f; // sqrt 2
+	//return second_smallest / 2.828427f; // 2 * sqrt 2
+}
+float voronoi(float x, float z) // UNFINISHED!!!
+{
+	vec2 test_point = vec2(fract(x), fract(z));
+	vec2 grid_index = vec2(floor(x), floor(z)); //print("%f,%f | ", x, z);
+
+	float first_smallest = 2, second_smallest = 2;
+	vec2 smallest_index = {};
+
+	for (int u = -1; u < 2; u++) {
+	for (int v = -1; v < 2; v++)
+	{
+		vec2 point = random2(grid_index + vec2(u,v)) + vec2(u,v); // this box's random point
+
+		float distance = length(test_point - point);
+
+		if (distance <= first_smallest)
+		{
+			second_smallest = first_smallest;
+			first_smallest = distance;
+			smallest_index = grid_index + vec2(u, v);
+		}
+		else if (distance < second_smallest)
+			second_smallest = distance;
+	}}
+
+	//unfinished
+
+	return (first_smallest / 1.414213f) > .9 ? 0:1; // sqrt 2
+	//return second_smallest / 2.828427f; // 2 * sqrt 2
 }
 
 // misc utilities
