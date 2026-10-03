@@ -19,7 +19,7 @@ enum LOGSOURCE {
    NETW      // Networking
 };
 
-const uint MAX_LOGQUEUE_ENTRIES = 64;
+const uint MAX_LOGQUEUE_ENTRIES = 128;
 const uint MAX_LOG_MSG_LENGTH = 62;
 
 // Each log entry must be exactly 64 bytes
@@ -37,16 +37,35 @@ struct LogQueue {
 struct GameConsole {
    LogQueue logs;
 
-   void add_entry(char* text, uint8 severity = TRACE, uint8 source = WNDW)
+   // Add a message to the rolling log. Safe to call from anywhere with any
+   // string : always null-terminated, never reads past the source string.
+   void add_entry(const char* text, uint8 severity = TRACE, uint8 source = WNDW)
    {
       uint idx = logs.write_idx;
 
       // create a new entry
-      logs.entries[idx].source   = source;
-      logs.entries[idx].severity = severity;
-      memcpy(logs.entries[idx].text, text, 62);
+      Log_Entry& entry = logs.entries[idx];
+      entry.source   = source;
+      entry.severity = severity;
+      snprintf(entry.text, MAX_LOG_MSG_LENGTH, "%s", text);
 
       // increment + wrap around if needed
       logs.write_idx = (logs.write_idx + 1) % MAX_LOGQUEUE_ENTRIES;
+   }
+
+   // wipe all entries (Console tab -> Clear button)
+   void clear()
+   {
+      memset(&logs, 0, sizeof(LogQueue));
+   }
+
+   // count entries matching a severity, for the warning/error badges
+   uint count(uint8 severity)
+   {
+      uint total = 0;
+      for (uint i = 0; i < MAX_LOGQUEUE_ENTRIES; i++)
+         if (logs.entries[i].text[0] != 0 && logs.entries[i].severity == severity)
+            total++;
+      return total;
    }
 } *console;

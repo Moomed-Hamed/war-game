@@ -169,6 +169,7 @@ void update_keyboard(Keyboard* keyboard, GLFWwindow* instance)
 struct RenderTarget
 {
 	GLuint fbo;
+	bool complete; // framebuffer passed the completeness check
 
 	GLuint position_tx; // tx = texture
 	GLuint normal_tx;
@@ -216,10 +217,14 @@ struct RenderTarget
 
 		if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
 		{
-					out("FRAMEBUFFER ERROR : INCOMPLETE"); stop;
+			complete = false;
+			console->add_entry("FRAMEBUFFER ERROR : INCOMPLETE", FIXME, WNDW);
 		}
-
-		console->add_entry((char*)"Init RenderBuffer", SUCCESS, RNDR);
+		else
+		{
+			complete = true;
+			console->add_entry((char*)"Init RenderBuffer", SUCCESS, RNDR);
+		}
 	}
 	void bind()
 	{
@@ -246,7 +251,41 @@ struct GameWindow
 	// Frame Timing
 	Timer timer;
 	uint frame_milliseconds_target;
-	float dtime;
+	float dtime; // frame time in seconds (set at end of every frame)
+
+	// Diagnostics : filled at init, read by the console UI (System tab)
+	struct {
+		char vendor[64];
+		char renderer[128];
+		char version[64];
+		char glsl_version[64];
+		int  context_major, context_minor; // context actually created
+		int  max_texture_size;
+		int  max_vertex_attribs;
+		int  max_uniform_components;
+		bool glew_ok;
+	} gl;
+
+	// GL errors drained at the end of every frame (see end_frame)
+	struct {
+		uint total;            // total errors since launch
+		uint this_frame;       // errors drained from the last frame
+		uint last_code;        // most recent error code (0 = none)
+		uint last_logged_code; // so each new error type is logged once
+	} gl_errors;
+
+	// OpenAL device status (filled at init)
+	struct {
+		bool ok;
+		char device[128];
+	} audio;
+
+	// frame time history : avg/min/max + sparkline in the console
+	float frame_ms[120];
+	uint  frame_ms_count; // samples recorded so far (caps at 120)
+	uint  frame_ms_idx;   // next slot to write
+	float frame_ms_last, frame_ms_avg, frame_ms_min, frame_ms_max;
+	float spare_milliseconds; // time slept waiting for the frame target
 
 	// deferred rendering
 	struct {
@@ -264,6 +303,31 @@ struct GameWindow
 	void shutdown();
 };
 
+/* ------------------------- *
+	-     Diagnostics       -
+ * ------------------------- */
+
+// safe copy of a glGetString() result (returns NULL if there is no context)
+void copy_gl_string(char* dst, uint dst_size, GLenum name)
+{
+	const char* str = (const char*)glGetString(name);
+	snprintf(dst, dst_size, "%s", str ? str : "?");
+}
+
+// human readable name for a glGetError() code (drained in end_frame)
+const char* gl_error_name(uint code)
+{
+	switch (code)
+	{
+	case GL_INVALID_ENUM:                  return "GL_INVALID_ENUM";
+	case GL_INVALID_VALUE:                 return "GL_INVALID_VALUE";
+	case GL_INVALID_OPERATION:             return "GL_INVALID_OPERATION";
+	case GL_OUT_OF_MEMORY:                 return "GL_OUT_OF_MEMORY";
+	case GL_INVALID_FRAMEBUFFER_OPERATION: return "GL_INVALID_FRAMEBUFFER_OPERATION";
+	default:                               return "UNKNOWN";
+	}
+}
+
 void GameWindow::init(uint screen_width, uint screen_height)
 {
 	timer.init();
@@ -274,7 +338,7 @@ void GameWindow::init(uint screen_width, uint screen_height)
 
 	if (!glfwInit()) {
 		console->add_entry((char*)"Init GLFW", SEVERITY::FIXME, LOGSOURCE::WNDW);
-		stop; return;
+		return; // fatal : instance stays NULL, main loop never starts
 	} console->add_entry((char*)"Init GLFW", SEVERITY::SUCCESS, LOGSOURCE::WNDW);
 
 	// OpenGL Window Hints (This is not renderer code!)
@@ -289,16 +353,29 @@ void GameWindow::init(uint screen_width, uint screen_height)
 	if (!this->instance) {
 		glfwTerminate();
 		console->add_entry((char*)"no window instance", SEVERITY::FIXME);
-		stop; return;
+		return; // fatal : main loop never starts
 	}
 
 	glfwMakeContextCurrent(this->instance);
-	glfwSwapInterval(1); // Disable v-sync
+	glfwSwapInterval(1); // vsync : 1 = swap on every monitor refresh, 0 = off
 
 	// There needs to already be a glfw context *before* you call glew
 	glewExperimental = GL_TRUE;
-	glewInit(); // TODO : CHECK FOR ERRORS
-	console->add_entry((char*)"Init GLEW", SEVERITY::SUCCESS, LOGSOURCE::WNDW);
+	GLenum glew_result = glewInit();
+	gl.glew_ok = (glew_result == GLEW_OK);
+	glGetError(); // GLEW generates a spurious GL_INVALID_ENUM on core profiles; drain it
+	console->add_entry(gl.glew_ok ? "Init GLEW" : "glewInit FAILED", gl.glew_ok ? SUCCESS : FIXME, WNDW);
+
+	// Gather GPU / context info for the console (System tab)
+	copy_gl_string(gl.vendor      ,  sizeof(gl.vendor)  ,      GL_VENDOR);
+	copy_gl_string(gl.renderer    ,  sizeof(gl.renderer),      GL_RENDERER);
+	copy_gl_string(gl.version     ,  sizeof(gl.version) ,      GL_VERSION);
+	copy_gl_string(gl.glsl_version,  sizeof(gl.glsl_version),  GL_SHADING_LANGUAGE_VERSION);
+	gl.context_major = glfwGetWindowAttrib(instance, GLFW_CONTEXT_VERSION_MAJOR);
+	gl.context_minor = glfwGetWindowAttrib(instance, GLFW_CONTEXT_VERSION_MINOR);
+	glGetIntegerv(GL_MAX_TEXTURE_SIZE  ,            &gl.max_texture_size);
+	glGetIntegerv(GL_MAX_VERTEX_ATTRIBS,            &gl.max_vertex_attribs);
+	glGetIntegerv(GL_MAX_VERTEX_UNIFORM_COMPONENTS, &gl.max_uniform_components);
 
 	glClearColor(.1, .2, .3, 1);
 	glEnable(GL_DEPTH_TEST);
@@ -309,17 +386,33 @@ void GameWindow::init(uint screen_width, uint screen_height)
 	// Capture cursor
 	glfwSetInputMode(this->instance, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 
-	// Audio Code | Todo : This should be moved to it's own place
+	// Audio Code | TODO : This should be moved to it's own place
+	// status is recorded honestly so the console (System tab) can show it
+
+	audio.ok = false;
+	audio.device[0] = 0;
 
 	ALCdevice* audio_device = alcOpenDevice(NULL);
 	if (audio_device == NULL)
-		console->add_entry((char*)"cannot open sound card", FIXME);
-
-	ALCcontext* audio_context = alcCreateContext(audio_device, NULL);
-	if (audio_context == NULL) { out("cannot open context"); }
-	alcMakeContextCurrent(audio_context);
-
-	console->add_entry((char*)"Init OpenAL", SUCCESS, WNDW);
+	{
+		console->add_entry((char*)"cannot open sound card", FIXME, WNDW);
+	}
+	else
+	{
+		ALCcontext* audio_context = alcCreateContext(audio_device, NULL);
+		if (audio_context == NULL)
+		{
+			console->add_entry((char*)"cannot create OpenAL context", FIXME, WNDW);
+		}
+		else
+		{
+			alcMakeContextCurrent(audio_context);
+			audio.ok = true;
+			snprintf(audio.device, sizeof(audio.device), "%s",
+				(const char*)alcGetString(audio_device, ALC_DEVICE_SPECIFIER));
+			console->add_entry((char*)"Init OpenAL", SUCCESS, WNDW);
+		}
+	}
 	console->add_entry((char*)"Init Window", SUCCESS, WNDW);
 
 	// Setup ImGUI Context
@@ -417,27 +510,59 @@ uint GameWindow::begin_frame()
 }
 void GameWindow::end_frame()
 {
-	//console->add_entry((char*)"Calculate frame time...");
-	
-	//calculate frame time
+	// ---- frame timing
 	int64 microseconds_elapsed = timer.microseconds_elapsed();
 	int64 milliseconds_elapsed = microseconds_elapsed / 1000;
 
-	//print("frame time: %d microseconds | fps: %06f\n", microseconds_elapsed, 1000.f / milliseconds_elapsed);
-	
-	frame_milliseconds_target = 1000.f / 120;
+	dtime = milliseconds_elapsed / 1000.f;
+	frame_ms_last = (float)milliseconds_elapsed;
 
-	string32 msg = {};
-	snprintf(msg, 32, "Frame : [%dms][%dfps]", milliseconds_elapsed, (int)(1000.f / milliseconds_elapsed));
-	//out(msg);
-	//console->add_entry(msg);
+	// record history for avg/min/max + the console's sparkline
+	frame_ms[frame_ms_idx] = frame_ms_last;
+	frame_ms_idx = (frame_ms_idx + 1) % 120;
+	if (frame_ms_count < 120) frame_ms_count++;
+
+	float ms_total = 0;
+	frame_ms_min = 1000000.f;
+	frame_ms_max = 0.f;
+	for (uint i = 0; i < frame_ms_count; i++)
+	{
+		ms_total += frame_ms[i];
+		if (frame_ms[i] < frame_ms_min) frame_ms_min = frame_ms[i];
+		if (frame_ms[i] > frame_ms_max) frame_ms_max = frame_ms[i];
+	}
+	frame_ms_avg = frame_ms_count ? (ms_total / frame_ms_count) : 0.f;
+
+	frame_milliseconds_target = 1000.f / 120;
+	spare_milliseconds = 0;
 
 	// if frame finished early, wait
 	if (milliseconds_elapsed < frame_milliseconds_target)
 	{
-		out("Frame done; spare ms: [" << frame_milliseconds_target - milliseconds_elapsed << ']');
+		spare_milliseconds = (float)(frame_milliseconds_target - milliseconds_elapsed);
 		os_sleep(frame_milliseconds_target - milliseconds_elapsed);
 	}
+
+	// ---- drain GL errors so the console sees them instead of them vanishing
+	gl_errors.this_frame = 0;
+	uint code;
+	while ((code = glGetError()) != (uint)GL_NO_ERROR)
+	{
+		gl_errors.total++;
+		gl_errors.this_frame++;
+		gl_errors.last_code = code;
+
+		// log each error type once, not 120 times a second
+		if (code != gl_errors.last_logged_code)
+		{
+			char msg[MAX_LOG_MSG_LENGTH];
+			snprintf(msg, MAX_LOG_MSG_LENGTH, "GL error 0x%04X (%s)", code, gl_error_name(code));
+			console->add_entry(msg, FIXME, RNDR);
+			gl_errors.last_logged_code = code;
+		}
+	}
+	if (gl_errors.this_frame == 0)
+		gl_errors.last_logged_code = 0; // clean frame -> log it again if it comes back
 
 	timer.start(); // begin timing next frame
 }
@@ -482,7 +607,13 @@ Audio load_audio(const char* path)
 	byte* audio_data = NULL;
 
 	FILE* file = fopen(path, "rb"); // rb = read binary
-	if (file == NULL) { print("ERROR : %s not found\n"); stop;  return 0; }
+	if (file == NULL)
+	{
+		char msg[MAX_LOG_MSG_LENGTH];
+		snprintf(msg, MAX_LOG_MSG_LENGTH, "audio not found : %s", path);
+		console->add_entry(msg, FIXME, WNDW);
+		return 0;
+	}
 
 	fread(&format     , sizeof(uint), 1, file);
 	fread(&sample_rate, sizeof(uint), 1, file);

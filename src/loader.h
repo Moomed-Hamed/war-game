@@ -20,7 +20,13 @@ struct Mesh_Data
 	void load(const char* path)
 	{
 		FILE* mesh_file = fopen(path, "rb"); // rb = read binary
-		if (!mesh_file) { print("could not open model file: %s\n", path); stop; return; }
+		if (!mesh_file)
+		{
+			char msg[MAX_LOG_MSG_LENGTH];
+			snprintf(msg, MAX_LOG_MSG_LENGTH, "could not open model file : %s", path);
+			console->add_entry(msg, FIXME, RNDR);
+			return;
+		}
 
 		fread(&num_vertices, sizeof(uint), 1, mesh_file);
 		fread(&num_indices , sizeof(uint), 1, mesh_file);
@@ -72,7 +78,13 @@ struct MeshLoader
 
 		// if not already cached, then load from disk & add to cache
 		FILE* mesh_file = fopen(filepath, "rb");
-		if (!mesh_file) { print("could not open model file: %s\n", filepath); stop; }
+		if (!mesh_file)
+		{
+			char msg[MAX_LOG_MSG_LENGTH];
+			snprintf(msg, MAX_LOG_MSG_LENGTH, "could not open model file : %s", filepath);
+			console->add_entry(msg, FIXME, RNDR);
+			return; // *id is left untouched (0) : caller checks for this
+		}
 
 		uint num_vertices = 0, num_indices = 0;
 		fread(&num_vertices, sizeof(uint), 1, mesh_file);
@@ -86,19 +98,20 @@ struct MeshLoader
 			if (meshes[i].id == 0)
 			{
 				uint filepath_length = strlen(filepath);
-				if (filepath_length < MAX_FILEPATH_LENGTH)
+				if (filepath_length >= MAX_FILEPATH_LENGTH)
 				{
-					strcpy(meshes[i].filepath, filepath);
+					char msg[MAX_LOG_MSG_LENGTH];
+					snprintf(msg, MAX_LOG_MSG_LENGTH, "mesh filepath too long (%d > %d) : %s",
+						filepath_length, MAX_FILEPATH_LENGTH, filepath);
+					console->add_entry(msg, FIXME, RNDR);
+					return;
 				}
-				else
-				{
-					out("ERROR : MeshLoader : max filepath length exceeded!\n FILENAME : " << filepath);
-					out("\n SIZE : " << filepath_length << " | MAX : " << MAX_FILEPATH_LENGTH);
-					stop;
-				}
+
+				strcpy(meshes[i].filepath, filepath);
 
 				meshes[i].id = num_loaded + 1; // avoid NULL value
 				meshes[i].is_cached = true; // TODO : is this redundant if we use the filepath to check for caching?
+				meshes[i].size = get_file_size(filepath); // disk bytes, shown in the console
 
 				// update meta-data
 				num_cached++;
@@ -109,10 +122,12 @@ struct MeshLoader
 			}
 		}
 
-		out("ERROR : Cannot Cache : [" << filepath << "]!");
+		console->add_entry("mesh cache full (MAX_MESHES)", FIXME, RNDR);
 	}
 	void load_mesh_data(uint mesh_id, Mesh_Data* data)
 	{
+		if (mesh_id == 0) { console->add_entry("load_mesh_data : invalid mesh id 0", FIXME, RNDR); return; }
+
 		for (uint i = 0; i < MAX_MESHES; i++)
 		{
 			if (meshes[i].id == mesh_id && data) // data cannot be nullptr
@@ -122,7 +137,9 @@ struct MeshLoader
 			}
 		}
 
-		out("ERROR : load_mesh_data() : mesh not found!"); stop;
+		char msg[MAX_LOG_MSG_LENGTH];
+		snprintf(msg, MAX_LOG_MSG_LENGTH, "load_mesh_data : mesh id [%d] not found", mesh_id);
+		console->add_entry(msg, FIXME, RNDR);
 	}
 };
 
@@ -130,6 +147,7 @@ struct Texture_Data // alignas(64)
 {
 	uint id;
 	GLuint handle;
+	int width, height; // filled by TextureLoader::load, shown in the console
 	char path[56];
 };
 
@@ -142,7 +160,8 @@ struct TextureLoader // TODO : support caching & unloading textures (like MeshLo
 	{
 		if (num_textures >= MAX_TEXTURES)
 		{
-			out("ERROR : TextureLoader : MAX_TEXTURE limit reached!"); stop;
+			console->add_entry("TextureLoader : MAX_TEXTURE limit reached", FIXME, RNDR);
+			return;
 		}
 
 		uint i = num_textures; // for convenience
@@ -162,12 +181,24 @@ struct TextureLoader // TODO : support caching & unloading textures (like MeshLo
 		{
 			glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, data);
 			glGenerateMipmap(GL_TEXTURE_2D);
-		} else { out("ERROR : Failed to load texture"); stop; }
+		}
+		else
+		{
+			char msg[MAX_LOG_MSG_LENGTH];
+			snprintf(msg, MAX_LOG_MSG_LENGTH, "failed to load texture : %s", path);
+			console->add_entry(msg, FIXME, RNDR);
+			stbi_image_free(data);
+			glDeleteTextures(1, &textures[i].handle);
+			return; // don't register a texture that never loaded
+		}
 
 		stbi_image_free(data);
 
-		// update texture count
+		// update texture metadata
 		textures[i].id = num_textures;
+		textures[i].width  = width;
+		textures[i].height = height;
+		snprintf(textures[i].path, sizeof(textures[i].path), "%s", path);
 		num_textures   = num_textures + 1;
 
 		// log
@@ -187,7 +218,15 @@ struct TextureLoader // TODO : support caching & unloading textures (like MeshLo
 			}
 		}
 
-		out("ERROR : TextureLoader : Texture with id [" << id << "] not found!"); stop;
+		// not found : log once (this runs every frame, don't spam the ring buffer)
+		static uint last_missing_id = (uint)-1;
+		if (id != last_missing_id)
+		{
+			char msg[MAX_LOG_MSG_LENGTH];
+			snprintf(msg, MAX_LOG_MSG_LENGTH, "Texture with id [%d] not found!", id);
+			console->add_entry(msg, FIXME, RNDR);
+			last_missing_id = id;
+		}
 	}
 	void init(const char* default_texture_path = "assets/textures/default.jpg")
 	{
@@ -198,6 +237,11 @@ struct TextureLoader // TODO : support caching & unloading textures (like MeshLo
 struct ShaderProgram
 {
 	GLuint id;
+
+	// query results, filled by create() and shown in the console (Assets tab)
+	GLint link_status;
+	GLint num_uniforms;
+	GLint num_attributes;
 
 	void create(const char* vert_path, const char* frag_path)
 	{
@@ -215,26 +259,17 @@ struct ShaderProgram
 		free(vert_source);
 		free(frag_source);
 
+		// verify successful shader compilation
 		{
-			GLint log_size = 0;
-			glGetShaderiv(vert_shader, GL_INFO_LOG_LENGTH, &log_size);
-			if (log_size)
-			{
-				char* error_log = (char*)calloc(log_size, sizeof(char));
-				glGetShaderInfoLog(vert_shader, log_size, NULL, error_log);
-				out("VERTEX SHADER ERROR:\n" << error_log);
-				free(error_log);
-			}
+			GLint compiled = 0;
+			glGetShaderiv(vert_shader, GL_COMPILE_STATUS, &compiled);
+			if (!compiled)
+				log_shader_error(vert_shader, "VERTEX SHADER", vert_path);
 
-			log_size = 0;
-			glGetShaderiv(frag_shader, GL_INFO_LOG_LENGTH, &log_size);
-			if (log_size)
-			{
-				char* error_log = (char*)calloc(log_size, sizeof(char));
-				glGetShaderInfoLog(frag_shader, log_size, NULL, error_log);
-				out("FRAGMENT SHADER ERROR:\n" << error_log);
-				free(error_log);
-			}
+			compiled = 0;
+			glGetShaderiv(frag_shader, GL_COMPILE_STATUS, &compiled);
+			if (!compiled)
+				log_shader_error(frag_shader, "FRAGMENT SHADER", frag_path);
 		}
 
 		id = glCreateProgram();
@@ -242,13 +277,50 @@ struct ShaderProgram
 		glAttachShader(id, frag_shader);
 		glLinkProgram(id);
 
-		GLsizei length = 0;
-		char error[256] = {};
-		glGetProgramInfoLog(id, 256, &length, error);
-		if (length > 0) { out("SHADER PROGRAM ERROR:\n" << error); }
+		glGetProgramiv(id, GL_LINK_STATUS, &link_status);
+		glGetProgramiv(id, GL_ACTIVE_UNIFORMS,  &num_uniforms);
+		glGetProgramiv(id, GL_ACTIVE_ATTRIBUTES, &num_attributes);
+
+		if (!link_status)
+		{
+			GLsizei length = 0;
+			char error[256] = {};
+			glGetProgramInfoLog(id, 256, &length, error);
+
+			char msg[MAX_LOG_MSG_LENGTH];
+			snprintf(msg, MAX_LOG_MSG_LENGTH, "LINK FAILED [%s]: %.40s", vert_path, error);
+			console->add_entry(msg, FIXME, RNDR);
+		}
 
 		glDeleteShader(vert_shader);
 		glDeleteShader(frag_shader);
+	}
+
+	// pull the compiler log for a failed shader into the in-app console
+	static void log_shader_error(GLuint shader, const char* label, const char* path)
+	{
+		GLint log_size = 0;
+		glGetShaderiv(shader, GL_INFO_LOG_LENGTH, &log_size);
+
+		char msg[MAX_LOG_MSG_LENGTH] = {};
+		if (log_size > 0)
+		{
+			char* error_log = (char*)calloc(log_size + 1, sizeof(char));
+			glGetShaderInfoLog(shader, log_size, NULL, error_log);
+
+			// first line only : the console entry is 62 chars
+			for (int i = 0; error_log[i]; i++)
+				if (error_log[i] == '\n') { error_log[i] = 0; break; }
+
+			snprintf(msg, MAX_LOG_MSG_LENGTH, "%.8s FAILED [%.20s]: %.28s", label, path, error_log);
+			free(error_log);
+		}
+		else
+		{
+			snprintf(msg, MAX_LOG_MSG_LENGTH, "%.8s FAILED [%.40s]", label, path);
+		}
+
+		console->add_entry(msg, FIXME, RNDR);
 	}
 	void bind() { glUseProgram(id); }
 	void destroy() { glDeleteProgram(id); }

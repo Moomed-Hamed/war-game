@@ -17,6 +17,13 @@
 // update_mesh(mesh_id, instances) a max of once per frame
 // TODO : should we check this & throw an error if called twice?
 
+// Vertex data as it lives in the gpu buffer : position, normal, uv.
+// MUST match the glVertexAttribPointer layout set up in DrawBuffer::init()
+struct MeshVertexData {
+	vec3 position, normal;
+	vec2 uv;
+};
+
 // Meshes share instance-date format
 // When instances of a mesh are to be drawn, we need a base_instance
 // which is an offset into the master instance to where this mesh's
@@ -26,6 +33,7 @@ struct DrawBuffer
 	struct {
 		uint mesh_id;
 
+		uint num_vertices;
 		uint num_indices;
 		uint num_instances; // can change every frame
 
@@ -81,12 +89,6 @@ struct DrawBuffer
 		glBufferData(GL_ARRAY_BUFFER, max_buffer_size, NULL, GL_STATIC_DRAW);
 
 		// define mesh vertex data layout : vec3 position, vec3 normal, vec2 uv
-		struct MeshVertexData {
-			vec3 p, n;
-			vec2 uv;
-		};
-
-		// give opengl the layout of mesh vertex data
 		uint stride = sizeof(MeshVertexData);
 		glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride, (void*)0); // vec3 position
 		glEnableVertexAttribArray(0);
@@ -137,14 +139,8 @@ struct DrawBuffer
 	}
 
 	// Check for available space, append geometry & index data from mesh data
-	void append_geometry(uint mesh_id, Mesh_Data mesh_data) {
-
-		// for storing vertex data in the correct format
-		// so it can go into a gpu buffer to be drawn
-		struct MeshVertexData {
-			vec3 position, normal;
-			vec2 uv;
-		};
+	// returns false (after logging) if the gpu buffers don't have room
+	bool append_geometry(uint mesh_id, Mesh_Data mesh_data) {
 
 		uint num_vertices = mesh_data.num_vertices;
 		uint num_indices  = mesh_data.num_indices;
@@ -155,13 +151,19 @@ struct DrawBuffer
 		// Ensure new mesh data will fit in gpu buffers!
 
 		if (geom_size + vert_data_size > max_buffer_size) {
-			out("Geometry buffer size exceeded! - " << geom_size + vert_data_size);
-			stop;
+			char msg[MAX_LOG_MSG_LENGTH];
+			snprintf(msg, MAX_LOG_MSG_LENGTH, "Geometry buffer full! [%d + %d > %d bytes]",
+				geom_size, vert_data_size, max_buffer_size);
+			console->add_entry(msg, FIXME, RNDR);
+			return false; // don't write past the gpu buffer
 		}
 
 		if (indx_size + index_data_size > max_buffer_size) {
-			out("Index buffer size exceeded! - " << indx_size + index_data_size);
-			stop;
+			char msg[MAX_LOG_MSG_LENGTH];
+			snprintf(msg, MAX_LOG_MSG_LENGTH, "Index buffer full! [%d + %d > %d bytes]",
+				indx_size, index_data_size, max_buffer_size);
+			console->add_entry(msg, FIXME, RNDR);
+			return false; // don't write past the gpu buffer
 		}
 
 		// update geometry buffer
@@ -184,14 +186,17 @@ struct DrawBuffer
 
 		// update mesh info
 		uint mesh_index = num_meshes++;
-		mesh_info[mesh_index].mesh_id     = mesh_id;
-		mesh_info[mesh_index].base_vertex = geom_size / sizeof(MeshVertexData);
-		mesh_info[mesh_index].num_indices = num_indices;
-		mesh_info[mesh_index].base_index  = indx_size;
+		mesh_info[mesh_index].mesh_id       = mesh_id;
+		mesh_info[mesh_index].num_vertices  = num_vertices;
+		mesh_info[mesh_index].base_vertex   = geom_size / sizeof(MeshVertexData);
+		mesh_info[mesh_index].num_indices   = num_indices;
+		mesh_info[mesh_index].base_index    = indx_size;
 
 		// update buffer sizes, these are used later as offsets into these buffers
 		geom_size += vert_data_size;
 		indx_size += index_data_size;
+
+		return true;
 	}
 
 	// Append instance data for one mesh
@@ -220,8 +225,15 @@ struct DrawBuffer
 			}
 		}
 
-		out("DRAWBUFFER ERROR : Instances do not match a stored mesh!");
-		stop;
+		// unknown mesh id : log once, don't spam (this can run every frame)
+		static uint last_unknown_id = (uint)-1;
+		if (mesh_id != last_unknown_id)
+		{
+			char msg[MAX_LOG_MSG_LENGTH];
+			snprintf(msg, MAX_LOG_MSG_LENGTH, "Instances for unknown mesh id [%d]!", mesh_id);
+			console->add_entry(msg, FIXME, RNDR);
+			last_unknown_id = mesh_id;
+		}
 	}
 
 	// Does not free memory, just resets counts
@@ -270,6 +282,15 @@ struct GameRenderer
 {
 	Camera camera; // 3d camera
 
+	// per-frame draw statistics, filled by draw() and shown in the console (Render tab)
+	struct {
+		uint draw_calls;
+		uint meshes_drawn;
+		uint instances;
+		uint triangles;
+		uint vertices;
+	} stats;
+
 	// Asset Loading
 	MeshLoader meshloader;
 	TextureLoader txloader;
@@ -293,11 +314,15 @@ struct GameRenderer
 		uint mesh_id = {};
 		Mesh_Data mesh_data = {};
 		meshloader.load_mesh(filepath, &mesh_id);
+		if (mesh_id == 0) return; // load failed, error already logged
+
 		meshloader.load_mesh_data(mesh_id, &mesh_data);
+		if (mesh_data.num_vertices == 0) return; // no data, error already logged
 
-		drawbuffer.append_geometry(mesh_id, mesh_data);
-
+		bool appended = drawbuffer.append_geometry(mesh_id, mesh_data);
 		mesh_data.release(); // no longer needed since it's now in the gpu buffer
+
+		if (!appended) return; // buffer full, error already logged
 
 		// log
 		char msg[MAX_LOG_MSG_LENGTH] = {};
@@ -336,6 +361,8 @@ struct GameRenderer
 
 		drawlist.update(&drawbuffer); // generate opengl draw params
 
+		stats = {}; // reset per-frame draw statistics (read by the console)
+
 		for (uint i = 0; i < MAX_MESHES; i++) // draw instanced meshes from draw params
 		{
 			if (drawlist.meshlist[i] == 0)
@@ -349,6 +376,13 @@ struct GameRenderer
 
 			glDrawElementsInstancedBaseVertexBaseInstance(GL_TRIANGLES, num_indices, GL_UNSIGNED_INT,
 				(void*)index_offset, num_instances, vertex_offset, instance_offset);
+
+			// record what we just submitted (mesh_info shares this index with mesh_params)
+			stats.draw_calls++;
+			stats.meshes_drawn++;
+			stats.instances  += num_instances;
+			stats.triangles  += (num_indices / 3) * num_instances;
+			stats.vertices   += drawbuffer.mesh_info[i].num_vertices * num_instances;
 		}
 	}
 };

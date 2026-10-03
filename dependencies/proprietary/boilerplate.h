@@ -240,6 +240,13 @@ byte* read_text_file_into_memory(const char* path)
 	DWORD BytesRead;
 	HANDLE os_file = CreateFileA(path, GENERIC_READ | GENERIC_WRITE, NULL, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
 
+	if (os_file == INVALID_HANDLE_VALUE)
+	{
+		// return an empty string instead of an uninitialized size :
+		// callers (shaders) fail gracefully and the error shows in the console
+		return (byte*)calloc(1, 1);
+	}
+
 	LARGE_INTEGER size;
 	GetFileSizeEx(os_file, &size);
 
