@@ -143,6 +143,192 @@ struct MeshLoader
 	}
 };
 
+// Animated Meshes
+
+struct Mesh_Data_Anim
+{
+	uint num_vertices, num_indices;
+
+	vec3*  positions, *normals, *weights;
+	ivec3* bones;
+	vec2*  uvs;
+	uint*  indices;
+
+	void load(const char* path)
+	{
+		FILE* mesh_file = fopen(path, "rb"); // rb = read binary
+		if (!mesh_file)
+		{
+			char msg[MAX_LOG_MSG_LENGTH];
+			snprintf(msg, MAX_LOG_MSG_LENGTH, "could not open animated model file : %s", path);
+			console->add_entry(msg, FIXME, RNDR);
+			return;
+		}
+
+		fread(&num_vertices, sizeof(uint), 1, mesh_file);
+		fread(&num_indices , sizeof(uint), 1, mesh_file);
+
+		positions = (vec3*) calloc(num_vertices, sizeof(vec3) );
+		normals   = (vec3*) calloc(num_vertices, sizeof(vec3) );
+		weights   = (vec3*) calloc(num_vertices, sizeof(vec3) );
+		bones     = (ivec3*)calloc(num_vertices, sizeof(ivec3));
+		uvs       = (vec2*) calloc(num_vertices, sizeof(vec2) );
+		indices   = (uint*) calloc(num_indices , sizeof(uint) );
+
+		fread(positions, sizeof(vec3) , num_vertices, mesh_file);
+		fread(normals  , sizeof(vec3) , num_vertices, mesh_file);
+		fread(weights  , sizeof(vec3) , num_vertices, mesh_file);
+		fread(bones    , sizeof(ivec3), num_vertices, mesh_file);
+		fread(uvs      , sizeof(vec2) , num_vertices, mesh_file);
+		fread(indices  , sizeof(uint) , num_indices , mesh_file);
+
+		fclose(mesh_file);
+	}
+	void release()
+	{
+		free(positions);
+		free(normals);
+		free(weights); // hehe
+		free(bones);
+		free(uvs);
+		free(indices);
+	}
+};
+
+struct MeshLoaderAnim
+{
+	uint num_cached; // number of meshes currently stored in MeshLoader
+	uint num_loaded; // total number of meshes loaded since program was launched; used for id generation
+
+	struct MeshInfo
+	{
+		uint id, size, is_cached;
+		char filepath[MAX_FILEPATH_LENGTH];
+	} meshes[MAX_MESHES];
+
+	void load_mesh(const char* filepath, uint* id) // returns mesh_id
+	{
+		// check if previously cached
+		for (uint i = 0; i < MAX_MESHES; i++)
+		{
+			if (strcmp(meshes[i].filepath, filepath) == 0) // 0 = strings match!
+			{
+				out(filepath << " already cached!");
+				if (id) *id = meshes[i].id;
+				return;
+			}
+		}
+
+		// if not already cached, then load from disk & add to cache
+		FILE* mesh_file = fopen(filepath, "rb");
+		if (!mesh_file)
+		{
+			char msg[MAX_LOG_MSG_LENGTH];
+			snprintf(msg, MAX_LOG_MSG_LENGTH, "could not open animated model file : %s", filepath);
+			console->add_entry(msg, FIXME, RNDR);
+			return; // *id is left untouched (0) : caller checks for this
+		}
+
+		uint num_vertices = 0, num_indices = 0;
+		fread(&num_vertices, sizeof(uint), 1, mesh_file);
+		fread(&num_indices , sizeof(uint), 1, mesh_file);
+
+		fclose(mesh_file);
+
+		// look for empty spot
+		for (uint i = 0; i < MAX_MESHES; i++)
+		{
+			if (meshes[i].id == 0)
+			{
+				uint filepath_length = strlen(filepath);
+				if (filepath_length >= MAX_FILEPATH_LENGTH)
+				{
+					char msg[MAX_LOG_MSG_LENGTH];
+					snprintf(msg, MAX_LOG_MSG_LENGTH, "mesh filepath too long (%d > %d) : %s",
+						filepath_length, MAX_FILEPATH_LENGTH, filepath);
+					console->add_entry(msg, FIXME, RNDR);
+					return;
+				}
+
+				strcpy(meshes[i].filepath, filepath);
+
+				meshes[i].id = num_loaded + 1; // avoid NULL value
+				meshes[i].is_cached = true; // TODO : is this redundant if we use the filepath to check for caching?
+				meshes[i].size = get_file_size(filepath); // disk bytes, shown in the console
+
+				// update meta-data
+				num_cached++;
+				num_loaded++;
+
+				if (id) *id = meshes[i].id;
+				return;
+			}
+		}
+
+		console->add_entry("animated mesh cache full (MAX_MESHES)", FIXME, RNDR);
+	}
+	void load_mesh_data(uint mesh_id, Mesh_Data_Anim* data)
+	{
+		if (mesh_id == 0) { console->add_entry("[ANIM] load_mesh_data : invalid mesh id 0", FIXME, RNDR); return; }
+
+		for (uint i = 0; i < MAX_MESHES; i++)
+		{
+			if (meshes[i].id == mesh_id && data) // data cannot be nullptr
+			{
+				data->load(meshes[i].filepath);
+				return;
+			}
+		}
+
+		char msg[MAX_LOG_MSG_LENGTH];
+		snprintf(msg, MAX_LOG_MSG_LENGTH, "[ANIM] load_mesh_data : mesh id [%d] not found", mesh_id);
+		console->add_entry(msg, FIXME, RNDR);
+	}
+};
+
+// Animation Keyframes & Skeleton
+
+#define MAX_ANIM_BONES 16
+
+struct Animation
+{
+	uint num_bones, num_frames;
+
+	mat4  ibm[MAX_ANIM_BONES]; // inverse-bind matrices
+	mat4* keyframes[MAX_ANIM_BONES]; // animation keyframes
+	int   parents[MAX_ANIM_BONES]; // indices of parent bones
+};
+
+struct AnimLoader
+{
+	Animation animations[1] = {};
+
+	void load_animation(Animation* anim, const char* path)
+	{
+		*anim = {};
+
+		FILE* read = fopen(path, "rb");
+		if (!read) { print("could not open animation file: %s\n", path); stop; return; }
+
+		// skeleton
+		fread(&anim->num_bones, sizeof(uint), 1, read);
+		fread(anim->parents   , sizeof(uint), anim->num_bones, read);
+		fread(anim->ibm       , sizeof(mat4), anim->num_bones, read);
+
+		// animation keyframes
+		fread(&anim->num_frames, sizeof(uint), 1, read);
+		for (int i = 0; i < anim->num_bones; i++)
+		{
+			anim->keyframes[i] = Alloc(mat4, anim->num_frames);
+			fread(anim->keyframes[i], sizeof(mat4), anim->num_frames, read);
+		}
+
+		fclose(read);
+	}
+};
+
+// Textures
+
 struct Texture_Data // alignas(64)
 {
 	uint id;
@@ -233,6 +419,8 @@ struct TextureLoader // TODO : support caching & unloading textures (like MeshLo
 		load(default_texture_path); // load default texture so we always have one to revert to
 	}
 };
+
+// Shaders
 
 struct ShaderProgram
 {

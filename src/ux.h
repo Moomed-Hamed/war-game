@@ -1,4 +1,4 @@
-#include "drawer.h"
+#include "anim.h"
 
 /* ------------------------- *
    ---  User Xperience   ---
@@ -418,7 +418,69 @@ void draw_ASST_console(GameConsole* console, GameWindow* window, GameRenderer* r
    }
 }
 
-// ---------------- tab 4 : Console ----------------
+// ---------------- tab 4 : Anim ----------------
+void draw_ANIM_console(GameConsole* console)
+{
+   using namespace CNSL;
+
+   if (ImGui::BeginTabItem("Anim"))
+   {
+      section("Playback");
+
+      if (anim_state.num_bones == 0)
+      {
+         ImGui::TextColored(severity_colors[FIXME], "no clip loaded");
+      }
+      else
+      {
+         // timeline + scrub : drag to inspect any moment
+         if (!anim_control.scrubbing)
+            anim_control.scrub_t = (anim_state.duration > 0) ? anim_state.elapsed / anim_state.duration : 0.f;
+         ImGui::SliderFloat("##scrub", &anim_control.scrub_t, 0.f, 1.f, "%.3f");
+         anim_control.scrubbing = ImGui::IsItemActive();
+
+         // green bands = rotation holds found at load
+         ImDrawList* draw_list = ImGui::GetWindowDrawList();
+         ImVec2 r0 = ImGui::GetItemRectMin(), r1 = ImGui::GetItemRectMax();
+         for (uint h = 0; h < anim_state.num_holds; h++)
+         {
+            float x0 = r0.x + (anim_state.holds[h].first / (float)anim_state.num_frames) * (r1.x - r0.x);
+            float x1 = r0.x + ((anim_state.holds[h].last + 1) / (float)anim_state.num_frames) * (r1.x - r0.x);
+            draw_list->AddRectFilled(ImVec2(x0, r0.y), ImVec2(x1, r1.y), IM_COL32(90, 170, 100, 90));
+            draw_list->AddLine(ImVec2(x0, r0.y), ImVec2(x0, r1.y), IM_COL32(130, 230, 140, 200));
+         }
+
+         // transport
+         if (ImGui::Button(anim_control.paused ? ">" : "||"))
+            anim_control.paused = !anim_control.paused;
+         ImGui::SameLine();
+         if (ImGui::Button("restart"))
+            anim_control.restart = true;
+         ImGui::SameLine();
+         const char* state = anim_control.paused ? "paused"
+            : anim_state.playing ? "playing"
+            : (anim_state.duration > 0 ? "finished" : "static frame 0");
+         ImGui::Text("%s | %.2f / %.2f s | frame %.2f / %u",
+            state, anim_state.elapsed, anim_state.duration, anim_state.frame_f, anim_state.num_frames);
+
+         section("Feel");
+         static const char* eases[] = { "linear", "smooth", "in-out cubic", "out cubic", "in-out quint" };
+         ImGui::Combo("time ease", &anim_control.time_ease, eases, 5);
+         ImGui::SliderFloat("juice", &anim_control.weight, 0.f, 1.f, "%.2f");
+         ImGui::SliderFloat("speed", &anim_control.speed, 0.1f, 2.f, "%.2fx");
+         ImGui::Checkbox("loop", &anim_control.loop);
+
+         section("Clip");
+         ImGui::Text("bones : %u | frames : %u | holds : %u",
+            anim_state.num_bones, anim_state.num_frames, anim_state.num_holds);
+         ImGui::Text("length: %.2fs (set by play(), scaled by speed)", anim_state.duration);
+      }
+
+      ImGui::EndTabItem();
+   }
+}
+
+// ---------------- tab 5 : Console ----------------
 void draw_MAIN_console(GameConsole* console)
 {
    using namespace CNSL;
@@ -513,6 +575,7 @@ void draw_console(GameConsole* console, GameRenderer* rndr, GameWindow* window)
 
    // draw tabs
    ImGui::BeginTabBar("Console Tabs", ImGuiTabBarFlags_None);
+   draw_ANIM_console(console);
    draw_SYSTEM_console(console, window);
    draw_RENDER_console(console, rndr, window);
    draw_ASST_console(console, window, rndr);

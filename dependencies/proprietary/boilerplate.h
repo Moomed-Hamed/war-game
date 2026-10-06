@@ -66,6 +66,20 @@ struct bvec3 { union { struct { byte x, y, z; }; struct { byte r, g, b; }; }; };
 
 #include "mathematics.h" // this is pretty much GLM for now
 
+// .anim files stores row-major matrices - swap the
+// symmetric pairs once at load so glm sees intended transforms
+static void transpose_in_place(mat4& m)
+{
+	float* e = (float*)&m;
+	for (int r = 0; r < 4; r++)
+		for (int c = r + 1; c < 4; c++)
+		{
+			float t = e[r * 4 + c];
+			e[r * 4 + c] = e[c * 4 + r];
+			e[c * 4 + r] = t;
+		}
+}
+
 // ------------------------------------------------- //
 // --------------------- Timers -------------------- // // might be broken idk
 // ------------------------------------------------- //

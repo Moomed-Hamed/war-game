@@ -1,9 +1,9 @@
 # simple-game-project (WIP)
 
-work-in-progress C/C++ game/engine project. The goal is to build a foundation for
-rewriting (+ hopefully finishing!) the rest of the projects I've started. The larger
-motivation is creating software that is as simple & efficient as possible
-for release into the public domain for collective good and enjoyment of everyone.
+building a foundation for rewriting & hopefully finishing the rest of my projects.
+
+The larger motivation is creating simple & efficient public-domain software
+for the good & enjoyment of everyone.
 
 ## project summary + objectives
 
@@ -13,4 +13,3 @@ for release into the public domain for collective good and enjoyment of everyone
 ## documentation
 
 - [`docs/architecture.md`](docs/architecture.md)
-- [`docs/roadmap.md`](docs/roadmap.md)

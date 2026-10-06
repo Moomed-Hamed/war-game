@@ -27,6 +27,16 @@ int main()
 	renderer->add_mesh("assets/meshes/SM/UV/cube.mesh_uv");
 	renderer->add_mesh("assets/meshes/SM/UV/ammo.mesh_uv");
 
+	// animated renderer : draws into the SAME gbuf, right after the static pass
+	GameRendererAnim* anim_renderer = Alloc(GameRendererAnim, 1);
+	anim_renderer->init();
+	anim_renderer->add_mesh("assets/anim/pistol_colt.mesh_anim");
+	anim_renderer->add_anim("assets/anim/pistol_colt.anim");
+	anim_renderer->play(3.57f); // seconds per loop (47 frames ~ 30fps, tune by eye) ; comment out = static frame 0
+
+	mat4 pistol_model = glm::translate(mat4(1), vec3(1, 0, 1));
+	anim_renderer->drawbuffer.append_instances(1, 1, &pistol_model);
+
 	window->timer.start();
 	while (window->instance)
 	{
@@ -51,7 +61,8 @@ int main()
 		renderer->drawbuffer.append_instances(3, 1, &model[2]);
 
 		// geometry
-		renderer->draw(window);
+		renderer->draw(window);              // static meshes, clears the gbuf
+		anim_renderer->draw(window, false); // pistol joins that frame, depth-tested against it
 
 		// gbuffer (direct lighting)
 		window->draw_gbuf(renderer->camera.position);
