@@ -1,4 +1,4 @@
-﻿#include "../dependencies/proprietary/boilerplate.h"
+#include "../dependencies/proprietary/boilerplate.h"
 
 /* ------------------------- *
    -    Simple Console     -

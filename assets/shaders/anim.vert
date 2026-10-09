@@ -2,7 +2,7 @@
 
 // the animated twin of geom.vert : identical output (feeds the same geom.frag),
 // but vertices are skinned through the skeleton UBO before the instance transform.
-// inputs MUST match DrawBufferAnim::init() in src/anim.h
+// inputs MUST match DrawBufferAnim::init() in src/drawer.h
 
 struct VS_OUT
 {

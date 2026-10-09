@@ -95,7 +95,7 @@ struct Timer
 	void start();
 	int64 microseconds_elapsed();
 	void print_microseconds(const char* label) { out(label << microseconds_elapsed() << " us"); };
-	void print_milliseconds(const char* label) { out(label << microseconds_elapsed() << " ms"); };
+	void print_milliseconds(const char* label) { out(label << microseconds_elapsed() / 1000.f << " ms"); };
 };
 
 void Timer::start()
@@ -125,10 +125,7 @@ int64 Timer::microseconds_elapsed()
 
 void os_sleep(uint milliseconds)
 {
-#define DESIRED_SCHEDULER_GRANULARITY 1 // milliseconds
-	HRESULT SchedulerResult = timeBeginPeriod(DESIRED_SCHEDULER_GRANULARITY);
-#undef DESIRED_SCHEDULER_GRANULARITY
-
+	// 1ms scheduler granularity is raised once in GameWindow::init
 	Sleep(milliseconds);
 }
 

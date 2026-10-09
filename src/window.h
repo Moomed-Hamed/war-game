@@ -24,11 +24,19 @@ struct Mouse
 void update_mouse(Mouse* mouse, GLFWwindow* instance, uint screen_x, uint screen_y)
 {
 	static Mouse prev_mouse = {};
+	static bool seeded = false; // first frame has no previous position to diff against
 
 	glfwGetCursorPos(instance, &mouse->raw_x, &mouse->raw_y);
 
-	mouse->dx = mouse->raw_x - prev_mouse.raw_x; // what do these mean again?
-	mouse->dy = prev_mouse.raw_y - mouse->raw_y;
+	if (!seeded)
+	{
+		prev_mouse.raw_x = mouse->raw_x;
+		prev_mouse.raw_y = mouse->raw_y;
+		seeded = true; // no phantom swing from the launch cursor position
+	}
+
+	mouse->dx = mouse->raw_x - prev_mouse.raw_x;
+	mouse->dy = prev_mouse.raw_y - mouse->raw_y; // flipped : screen y grows downward, world y grows up
 
 	mouse->norm_dx = mouse->dx / screen_x;
 	mouse->norm_dy = mouse->dy / screen_y;
@@ -43,42 +51,22 @@ void update_mouse(Mouse* mouse, GLFWwindow* instance, uint screen_x, uint screen
 	mouse->norm_x = (mouse->norm_x * 2) - 1;
 	mouse->norm_y = (mouse->norm_y * 2) - 1;
 
-	bool key_down = (glfwGetMouseButton(instance, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS);
+	// shift each button's edge state, then store the new one
+	mouse->right_button.was_pressed = mouse->right_button.is_pressed;
+	mouse->right_button.is_pressed  = glfwGetMouseButton(instance, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS;
 
-	if (key_down)
-	{
-		mouse->right_button.was_pressed = (mouse->right_button.is_pressed == true);
-		mouse->right_button.is_pressed = true;
-	}
-	else
-	{
-		mouse->right_button.was_pressed = (mouse->right_button.is_pressed == true);
-		mouse->right_button.is_pressed = false;
-	}
-
-	key_down = (glfwGetMouseButton(instance, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS);
-
-	if (key_down)
-	{
-		mouse->left_button.was_pressed = (mouse->left_button.is_pressed == true);
-		mouse->left_button.is_pressed = true;
-	}
-	else
-	{
-		mouse->left_button.was_pressed = (mouse->left_button.is_pressed == true);
-		mouse->left_button.is_pressed = false;
-	}
+	mouse->left_button.was_pressed = mouse->left_button.is_pressed;
+	mouse->left_button.is_pressed  = glfwGetMouseButton(instance, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
 }
 
-// for selecting game objecs
+// for selecting game objects
 vec3 get_mouse_world_dir(Mouse mouse, mat4 proj_view)
 {
-	proj_view = glm::inverse(proj_view); // what is an unproject matrix?
+	proj_view = glm::inverse(proj_view); // unproject : maps screen space back to world space
 
 	vec4 ray_near = vec4(mouse.norm_x, mouse.norm_y, -1, 1); // near plane is z = -1
 	vec4 ray_far  = vec4(mouse.norm_x, mouse.norm_y,  0, 1);
 
-	// these are actually using inverse(proj_view)
 	ray_near = proj_view * ray_near; ray_near /= ray_near.w;
 	ray_far  = proj_view * ray_far;  ray_far /= ray_far.w;
 
@@ -108,32 +96,9 @@ struct Keyboard
 
 void init_keyboard(Keyboard* keyboard)
 {
-	keyboard->A = { false, false, GLFW_KEY_A };
-	keyboard->B = { false, false, GLFW_KEY_B };
-	keyboard->C = { false, false, GLFW_KEY_C };
-	keyboard->D = { false, false, GLFW_KEY_D };
-	keyboard->E = { false, false, GLFW_KEY_E };
-	keyboard->F = { false, false, GLFW_KEY_F };
-	keyboard->G = { false, false, GLFW_KEY_G };
-	keyboard->H = { false, false, GLFW_KEY_H };
-	keyboard->I = { false, false, GLFW_KEY_I };
-	keyboard->J = { false, false, GLFW_KEY_J };
-	keyboard->K = { false, false, GLFW_KEY_K };
-	keyboard->L = { false, false, GLFW_KEY_L };
-	keyboard->M = { false, false, GLFW_KEY_M };
-	keyboard->N = { false, false, GLFW_KEY_N };
-	keyboard->O = { false, false, GLFW_KEY_O };
-	keyboard->P = { false, false, GLFW_KEY_P };
-	keyboard->Q = { false, false, GLFW_KEY_Q };
-	keyboard->R = { false, false, GLFW_KEY_R };
-	keyboard->S = { false, false, GLFW_KEY_S };
-	keyboard->T = { false, false, GLFW_KEY_T };
-	keyboard->U = { false, false, GLFW_KEY_U };
-	keyboard->V = { false, false, GLFW_KEY_V };
-	keyboard->W = { false, false, GLFW_KEY_W };
-	keyboard->X = { false, false, GLFW_KEY_X };
-	keyboard->Y = { false, false, GLFW_KEY_Y };
-	keyboard->Z = { false, false, GLFW_KEY_Z };
+	// A..Z sit contiguous in glfw : GLFW_KEY_A + i
+	for (uint i = 0; i < 26; i++)
+		keyboard->buttons[i] = { false, false, (u16)(GLFW_KEY_A + i) };
 
 	keyboard->ESC   = { false, false, GLFW_KEY_ESCAPE       };
 	keyboard->SPACE = { false, false, GLFW_KEY_SPACE        };
@@ -149,18 +114,9 @@ void update_keyboard(Keyboard* keyboard, GLFWwindow* instance)
 {
 	for (uint i = 0; i < NUM_KEYBOARD_BUTTONS; ++i)
 	{
-		bool key_down = (glfwGetKey(instance, keyboard->buttons[i].id) == GLFW_PRESS);
-
-		if (key_down)
-		{
-			keyboard->buttons[i].was_pressed = (keyboard->buttons[i].is_pressed == true);
-			keyboard->buttons[i].is_pressed = true;
-		}
-		else
-		{
-			keyboard->buttons[i].was_pressed = (keyboard->buttons[i].is_pressed == true);
-			keyboard->buttons[i].is_pressed = false;
-		}
+		Button& b = keyboard->buttons[i];
+		b.was_pressed = b.is_pressed;
+		b.is_pressed  = glfwGetKey(instance, b.id) == GLFW_PRESS;
 	}
 }
 
@@ -250,7 +206,7 @@ struct GameWindow
 
 	// Frame Timing
 	Timer timer;
-	uint frame_milliseconds_target;
+	float frame_milliseconds_target; // ms per frame at the software cap (1000/120)
 	float dtime; // frame time in seconds (set at end of every frame)
 
 	// Diagnostics : filled at init, read by the console UI (System tab)
@@ -285,7 +241,8 @@ struct GameWindow
 	uint  frame_ms_count; // samples recorded so far (caps at 120)
 	uint  frame_ms_idx;   // next slot to write
 	float frame_ms_last, frame_ms_avg, frame_ms_min, frame_ms_max;
-	float spare_milliseconds; // time slept waiting for the frame target
+	float frame_ms_work; // cpu/gpu cost of this frame, display waits excluded
+	float swap_wait_ms;  // how long glfwSwapBuffers blocked this frame (vsync)
 
 	// deferred rendering
 	struct {
@@ -295,13 +252,34 @@ struct GameWindow
 	} gbuf; // G-Buffer
 
 	void init(uint, uint);
-	uint begin_frame();
+	void begin_frame();
 	void end_frame();
 
 	void draw_gbuf(vec3 view_position);
 
 	void shutdown();
 };
+
+// fly camera : WASD + mouse look. only moves while the game has focus, and
+// imgui capture wins outright - navigating the menus never touches the camera
+void update_fly_camera(Camera* cam, GameWindow* window, float dt)
+{
+	if (window->focus_status != GAME) return; // menus own the input (T frees the cursor)
+
+	ImGuiIO& io = ImGui::GetIO();
+
+	if (!io.WantCaptureMouse) // hovering a widget : don't spin the view
+		cam->update_dir((float)window->mouse.dx, (float)window->mouse.dy, dt);
+
+	if (!io.WantCaptureKeyboard) // typing into a widget : don't fly
+	{
+		float speed = (window->keys.SHIFT.is_pressed ? 18.f : 6.f) * dt; // m/s
+		if (window->keys.W.is_pressed) cam->position += cam->front * speed;
+		if (window->keys.S.is_pressed) cam->position -= cam->front * speed;
+		if (window->keys.D.is_pressed) cam->position += cam->right * speed;
+		if (window->keys.A.is_pressed) cam->position -= cam->right * speed;
+	}
+}
 
 /* ------------------------- *
 	-     Diagnostics       -
@@ -331,6 +309,8 @@ const char* gl_error_name(uint code)
 void GameWindow::init(uint screen_width, uint screen_height)
 {
 	timer.init();
+	frame_milliseconds_target = 1000.f / 120.f; // software cap : ms per frame
+	timeBeginPeriod(1); // 1ms scheduler granularity so the cap sleep is accurate
 	init_keyboard(&keys);
 
 	this->screen_width  = screen_width;
@@ -341,7 +321,7 @@ void GameWindow::init(uint screen_width, uint screen_height)
 		return; // fatal : instance stays NULL, main loop never starts
 	} console->add_entry((char*)"Init GLFW", SEVERITY::SUCCESS, LOGSOURCE::WNDW);
 
-	// OpenGL Window Hints (This is not renderer code!)
+	// OpenGL window hints
 	glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
 	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 2);
 	glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
@@ -380,13 +360,13 @@ void GameWindow::init(uint screen_width, uint screen_height)
 	glClearColor(.1, .2, .3, 1);
 	glEnable(GL_DEPTH_TEST);
 	glEnable(GL_CULL_FACE);
-	//glEnable(GL_FRAMEBUFFER_SRGB); // gamma correction
-	//glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+	//glPolygonMode(GL_FRONT_AND_BACK, GL_LINE); // wireframe
 
-	// Capture cursor
+	// Capture cursor : start in game focus (Y recaptures after T frees it)
+	focus_status = GAME;
 	glfwSetInputMode(this->instance, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 
-	// Audio Code | TODO : This should be moved to it's own place
+	// audio init : TODO : move out of the window into its own place
 	// status is recorded honestly so the console (System tab) can show it
 
 	audio.ok = false;
@@ -418,9 +398,7 @@ void GameWindow::init(uint screen_width, uint screen_height)
 	// Setup ImGUI Context
 	IMGUI_CHECKVERSION();
 	ImGui::CreateContext();
-	ImGuiIO& io = ImGui::GetIO(); (void)io;
-	//io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard; // Enable Keyboard Controls
-	//io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;  // Enable Gamepad Controls
+	ImGuiIO& io = ImGui::GetIO();
 
 	// Colors & Style
 	apply_imgui_style(io);
@@ -473,36 +451,38 @@ void GameWindow::init(uint screen_width, uint screen_height)
 	console->add_entry((char*)"Init ImGUI", SEVERITY::SUCCESS);
 }
 
-// Updates frame timestamp
-// Polls for glfw events
-// Swaps OpenGL buffers
-// Sets window focus
-// Updates ImGui stuff
-uint GameWindow::begin_frame()
+// poll input & events, swap buffers (the vsync block is measured as wait), imgui frame
+void GameWindow::begin_frame()
 {
 	update_keyboard(&keys, instance);
 	update_mouse(&mouse, instance, screen_width, screen_height);
-	
-	//console->add_entry((char*)"Beginning new frame...");
-	//console->add_entry((char*)"Poll glfw events & swap buffers...");
 
 	glfwPollEvents();
+	int64 swap_start = timer.microseconds_elapsed();
 	glfwSwapBuffers(instance);
-
-	//console->add_entry((char*)"Handle key input...");
+	swap_wait_ms = (timer.microseconds_elapsed() - swap_start) / 1000.f; // display wait, not cost
 
 	if (keys.ESC.is_pressed)
 	{
 		this->shutdown();
-		return 1;
+		return;
 	}
 
-	if (keys.T.is_pressed)
-		glfwSetInputMode(instance, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
-	if (keys.Y.is_pressed)
-		glfwSetInputMode(instance, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
-
-	//console->add_entry((char*)"Update ImGui");
+	// T hands input to the menus (free cursor), Y gives it back to the game.
+	// typing into a widget? the menus keep it (same rule as the camera)
+	if (!ImGui::GetIO().WantCaptureKeyboard)
+	{
+		if (keys.T.is_pressed)
+		{
+			focus_status = GUI;
+			glfwSetInputMode(instance, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+		}
+		if (keys.Y.is_pressed)
+		{
+			focus_status = GAME;
+			glfwSetInputMode(instance, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+		}
+	}
 
 	ImGui_ImplOpenGL3_NewFrame();
 	ImGui_ImplGlfw_NewFrame();
@@ -510,38 +490,12 @@ uint GameWindow::begin_frame()
 }
 void GameWindow::end_frame()
 {
-	// ---- frame timing
-	int64 microseconds_elapsed = timer.microseconds_elapsed();
-	int64 milliseconds_elapsed = microseconds_elapsed / 1000;
+	// ---- pacing : the cap sleep runs on total frame time (vsync composes with it)
+	int64 work_us = timer.microseconds_elapsed();
+	frame_ms_work = (work_us / 1000.f) - swap_wait_ms; // swap block split out as wait
 
-	dtime = milliseconds_elapsed / 1000.f;
-	frame_ms_last = (float)milliseconds_elapsed;
-
-	// record history for avg/min/max + the console's sparkline
-	frame_ms[frame_ms_idx] = frame_ms_last;
-	frame_ms_idx = (frame_ms_idx + 1) % 120;
-	if (frame_ms_count < 120) frame_ms_count++;
-
-	float ms_total = 0;
-	frame_ms_min = 1000000.f;
-	frame_ms_max = 0.f;
-	for (uint i = 0; i < frame_ms_count; i++)
-	{
-		ms_total += frame_ms[i];
-		if (frame_ms[i] < frame_ms_min) frame_ms_min = frame_ms[i];
-		if (frame_ms[i] > frame_ms_max) frame_ms_max = frame_ms[i];
-	}
-	frame_ms_avg = frame_ms_count ? (ms_total / frame_ms_count) : 0.f;
-
-	frame_milliseconds_target = 1000.f / 120;
-	spare_milliseconds = 0;
-
-	// if frame finished early, wait
-	if (milliseconds_elapsed < frame_milliseconds_target)
-	{
-		spare_milliseconds = (float)(frame_milliseconds_target - milliseconds_elapsed);
-		os_sleep(frame_milliseconds_target - milliseconds_elapsed);
-	}
+	if (work_us / 1000.f < frame_milliseconds_target)
+		os_sleep((uint)glm::ceil(frame_milliseconds_target - work_us / 1000.f));
 
 	// ---- drain GL errors so the console sees them instead of them vanishing
 	gl_errors.this_frame = 0;
@@ -564,11 +518,32 @@ void GameWindow::end_frame()
 	if (gl_errors.this_frame == 0)
 		gl_errors.last_logged_code = 0; // clean frame -> log it again if it comes back
 
+	// ---- frame timing : work + sleep + drain since the last frame = one true period
+	int64 period_us = timer.microseconds_elapsed();
+
+	dtime = period_us / 1000000.f;
+	frame_ms_last = period_us / 1000.f;
+
+	// record history for avg/min/max + the console's sparkline
+	frame_ms[frame_ms_idx] = frame_ms_last;
+	frame_ms_idx = (frame_ms_idx + 1) % 120;
+	if (frame_ms_count < 120) frame_ms_count++;
+
+	float ms_total = 0;
+	frame_ms_min = 1000000.f;
+	frame_ms_max = 0.f;
+	for (uint i = 0; i < frame_ms_count; i++)
+	{
+		ms_total += frame_ms[i];
+		if (frame_ms[i] < frame_ms_min) frame_ms_min = frame_ms[i];
+		if (frame_ms[i] > frame_ms_max) frame_ms_max = frame_ms[i];
+	}
+	frame_ms_avg = frame_ms_count ? (ms_total / frame_ms_count) : 0.f;
+
 	timer.start(); // begin timing next frame
 }
 void GameWindow::draw_gbuf(vec3 view_position)
 {
-	// G Buffer
 	glBindFramebuffer(GL_FRAMEBUFFER, 0); // Framebuffer 0 = the screen
 	glBindVertexArray(gbuf.VAO);
 	glClearColor(0.1f, 0.2f, 0.3f, 1.0f);
@@ -590,16 +565,9 @@ void GameWindow::draw_gbuf(vec3 view_position)
 void GameWindow::shutdown()
 {
 	glfwTerminate();
+	timeEndPeriod(1); // pairs the timeBeginPeriod from init
 	this->instance = NULL;
 }
-
-// audio
-
-/* -- how 2 play a sound --
-
-	Audio sound = load_audio("sound.audio");
-	play_sudio(sound);
-*/
 
 Audio load_audio(const char* path)
 {
