@@ -18,13 +18,14 @@ int main()
 	while (window->instance)
 	{
 		window->begin_frame(); // poll input, swap GL buffers
-		if (window->instance == NULL) break; // ESC during begin_frame : out of samsara
+		if (window->instance == NULL) break; // out of samsara
 
 		scene->update(window, renderer);           // input -> camera -> instances
 		renderer->draw(window, scene->proj_view);  // static + skinned pass into the gbuf
 		window->draw_gbuf(scene->camera.position); // lighting
+		scene->phys.draw_debug(scene->proj_view);  // collider wireframes, toggled in the Phys tab
 
-		draw_console(console, renderer, window, &scene->camera);
+		draw_console(console, renderer, window, scene);
 		ImGui::Render();
 		ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 

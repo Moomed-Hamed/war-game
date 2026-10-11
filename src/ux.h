@@ -313,6 +313,65 @@ void draw_RENDER_console(GameRenderer* rndr, GameWindow* window, Camera* camera)
    }
 }
 
+// ---------------- tab : Phys ----------------
+void draw_PHYS_console(Physics* phys)
+{
+   using namespace CNSL;
+
+   if (ImGui::BeginTabItem("Phys"))
+   {
+      section("Bodies");
+      ImGui::Text("in world : %u / %u slots", phys->num_bodies - 1, MAX_BODIES);
+      ImGui::Checkbox("collider wireframes", &phys->debug.enabled);
+
+      static const char* shape_names[] = { "none", "box", "sphere", "capsule", "cylinder" };
+
+      if (ImGui::BeginTable("physbodies", 9,
+         ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_RowBg | ImGuiTableFlags_Borders))
+      {
+         ImGui::TableSetupColumn("id"   , ImGuiTableColumnFlags_WidthFixed, 30);
+         ImGui::TableSetupColumn("shape", ImGuiTableColumnFlags_WidthFixed, 52);
+         ImGui::TableSetupColumn("pos x", ImGuiTableColumnFlags_WidthFixed, 50);
+         ImGui::TableSetupColumn("pos y", ImGuiTableColumnFlags_WidthFixed, 50);
+         ImGui::TableSetupColumn("pos z", ImGuiTableColumnFlags_WidthFixed, 50);
+         ImGui::TableSetupColumn("vel x", ImGuiTableColumnFlags_WidthFixed, 50);
+         ImGui::TableSetupColumn("vel y", ImGuiTableColumnFlags_WidthFixed, 50);
+         ImGui::TableSetupColumn("vel z", ImGuiTableColumnFlags_WidthFixed, 50);
+         ImGui::TableSetupColumn("state", ImGuiTableColumnFlags_WidthFixed, 54);
+         ImGui::TableHeadersRow();
+
+         for (uint i = 1; i < phys->num_bodies; i++)
+         {
+            Phys_Body& b = phys->bodies[i];
+            if (!b.body) continue;
+
+            vec3 pos = phys->get_position(i);
+            vec3 vel = phys->get_velocity(i);
+
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn(); ImGui::Text("%u", i);
+            ImGui::TableNextColumn(); ImGui::Text("%s", shape_names[b.shape]);
+            ImGui::TableNextColumn(); ImGui::Text("%.2f", pos.x);
+            ImGui::TableNextColumn(); ImGui::Text("%.2f", pos.y);
+            ImGui::TableNextColumn(); ImGui::Text("%.2f", pos.z);
+            ImGui::TableNextColumn(); ImGui::Text("%.2f", vel.x);
+            ImGui::TableNextColumn(); ImGui::Text("%.2f", vel.y);
+            ImGui::TableNextColumn(); ImGui::Text("%.2f", vel.z);
+            ImGui::TableNextColumn();
+            if (b.mass == 0)
+               ImGui::Text("static");
+            else if (phys->is_awake(i))
+               ImGui::TextColored(severity_colors[WARNING], "awake");
+            else
+               ImGui::TextColored(severity_colors[TRACE], "sleep");
+         }
+         ImGui::EndTable();
+      }
+
+      ImGui::EndTabItem();
+   }
+}
+
 // ---------------- tab 3 : Assets ----------------
 void draw_ASST_console(GameWindow* window, GameRenderer* rndr)
 {
@@ -801,7 +860,7 @@ void draw_MAIN_console(GameConsole* console)
    }
 }
 
-void draw_console(GameConsole* console, GameRenderer* rndr, GameWindow* window, Camera* camera)
+void draw_console(GameConsole* console, GameRenderer* rndr, GameWindow* window, GameScene* scene)
 {
    using namespace CNSL;
 
@@ -824,7 +883,8 @@ void draw_console(GameConsole* console, GameRenderer* rndr, GameWindow* window, 
    ImGui::BeginTabBar("Console Tabs", ImGuiTabBarFlags_None);
    draw_ANIM_console(&rndr->animloader);
    draw_SYSTEM_console(window);
-   draw_RENDER_console(rndr, window, camera);
+   draw_RENDER_console(rndr, window, &scene->camera);
+   draw_PHYS_console(&scene->phys);
    draw_ASST_console(window, rndr);
    draw_MAIN_console(console);
    ImGui::EndTabBar();

@@ -20,6 +20,7 @@ struct GameScene
 		uint mesh_id;
 		uint phys_id; // 0 = static decoration
 		vec3 pos;
+		vec3 spawn; // start pose : dynamic props reset here once they settle
 		mat3 rot;
 		float scale;
 	} props[16];
@@ -32,6 +33,7 @@ struct GameScene
 		p.mesh_id = mesh_id;
 		p.phys_id = 0;
 		p.pos     = pos;
+		p.spawn   = pos;
 		p.rot     = mat3(glm::rotate(mat4(1), yaw, vec3(0, 1, 0)));
 		p.scale   = scale;
 		return p;
@@ -58,39 +60,58 @@ struct GameScene
 		uint floor_mesh = renderer->add_mesh(
 			MeshFactory::generate_plane(60.f, 60, MeshFactory::PLANE_XZ), "assets/textures/grid.bmp");
 
-		uint sphere_mesh = renderer->add_mesh("assets/meshes/sphere.mesh_uv");
-		uint cube_mesh   = renderer->add_mesh("assets/meshes/cube.mesh_uv", "assets/textures/checker.bmp");
-		uint ammo_mesh   = renderer->add_mesh("assets/meshes/ammo.mesh_uv");
-		uint palm_mesh   = renderer->add_mesh("assets/meshes/palm_tree.mesh_uv");
-
 		// world content : every body starts at its authored spot
 		phys.init();
 
 		// floor : ground slab under it, top face exactly at y 0
 		add_prop(floor_mesh, vec3(0), 0, 1.f).phys_id = phys.add_ground(30.f);
 
-		// sphere : dynamic, radius 1.5 at this scale
-		Prop& sphere = add_prop(sphere_mesh, vec3(-11, 1.5f, 3), 0, 1.5f);
-		sphere.phys_id = phys.add_sphere(sphere.pos, 1.5f, 1.f);
+		// props section (left) : file-loaded art, static scenery
+		uint palm_mesh = renderer->add_mesh("assets/meshes/palm_tree.mesh_uv");
 
-		// cube : drops in from above and lands back on its spot
-		Prop& cube = add_prop(cube_mesh, vec3(11, 4.f, 3), 0, 1.f);
-		cube.phys_id = phys.add_box(cube.pos, vec3(.5f), 1.f);
-
-		// ammo diagonal : three small dynamic boxes
-		vec3 ammo_spots[3] = { vec3(7.8f, 0.1f, 1.6f), vec3(8.6f, 0.1f, 2.3f), vec3(9.4f, 0.1f, 1.6f) };
-		for (uint i = 0; i < 3; i++)
-		{
-			Prop& ammo = add_prop(ammo_mesh, ammo_spots[i], 0.7f * i, 2.f);
-			ammo.phys_id = phys.add_box(ammo.pos, vec3(.15f, .1f, .15f), .5f);
-		}
-
-		// palms : static scenery, a thin trunk slab so nothing shoves them
-		vec3 palm_spots[2] = { vec3(-13, 0, -4), vec3(13, 0, -4) };
+		// palms : a thin trunk slab so nothing shoves them
+		vec3 palm_spots[2] = { vec3(-13, 0, -2), vec3(-10, 0, -5) };
 		for (uint i = 0; i < 2; i++)
 		{
 			Prop& palm = add_prop(palm_mesh, palm_spots[i], (float)i * 2.1f, 1.6f);
 			palm.phys_id = phys.add_box(palm.pos + vec3(0, 3, 0), vec3(.2f, 3.f, .2f), 0);
+		}
+
+		// physics primitives section (right) : generated meshes, mostly dynamic
+		uint sphere_mesh   = renderer->add_mesh(MeshFactory::generate_uv_sphere(1.f, 24, 16));
+		uint cube_mesh     = renderer->add_mesh(MeshFactory::generate_cube(1.f), "assets/textures/checker.bmp");
+		uint cylinder_mesh = renderer->add_mesh(MeshFactory::generate_cylinder(0.75f, 2.5f, 24));
+		uint capsule_mesh  = renderer->add_mesh(MeshFactory::generate_capsule(0.6f, 1.2f, 20, 10));
+		uint ammo_mesh     = renderer->add_mesh("assets/meshes/ammo.mesh_uv");
+
+		// cylinder : stands on its base, y = where the centered mesh rests on the floor
+		Prop& cylinder = add_prop(cylinder_mesh, vec3(8, 1.25f, 2), 0, 1.f);
+		cylinder.phys_id = phys.add_cylinder(cylinder.pos, vec3(0.75f, 1.25f, 0.75f), 1.f);
+
+		// sphere : drops in from above and lands back on its spot
+		Prop& sphere = add_prop(sphere_mesh, vec3(1.5f, 4.5f, 14.5f), 0, 1.5f);
+		sphere.phys_id = phys.add_sphere(sphere.pos, 1.5f, 1.f);
+
+		// capsule : leans toward the pyramid, so its topple sweeps the base row
+		// and the stack comes down. radius + height match the mesh exactly
+		Prop& capsule = add_prop(capsule_mesh, vec3(12, 4.5f, 3.2f), 0, 1.f);
+		capsule.phys_id = phys.add_capsule(capsule.pos, 0.6f, 1.2f, 15.f, vec3(-0.65f, 0, 0.18f));
+
+		// ammo : one little box dropping in beside the rest
+		Prop& ammo = add_prop(ammo_mesh, vec3(8.5f, 2.5f, 6.5f), 0.3f, 2.f);
+		ammo.phys_id = phys.add_box(ammo.pos, vec3(.15f, .1f, .15f), .5f);
+
+		// cube pyramid : 3-2-1, each row resting on the one below. the capsule's
+		// topple knocks it flat, then the sleep-respawn loop builds it back up
+		vec3 pyramid_spots[6] = {
+			vec3(11, .5f, 2.5f), vec3(12, .5f, 2.5f), vec3(13, .5f, 2.5f),
+			vec3(11.5f, 1.5f, 2.5f), vec3(12.5f, 1.5f, 2.5f),
+			vec3(12, 2.5f, 2.5f),
+		};
+		for (uint i = 0; i < 6; i++)
+		{
+			Prop& box = add_prop(cube_mesh, pyramid_spots[i], 0, 1.f);
+			box.phys_id = phys.add_box(box.pos, vec3(.5f), 1.f);
 		}
 
 		// weapons row : same files the old game shipped, sliced the way it played them
@@ -150,8 +171,9 @@ struct GameScene
 			w.player = renderer->animloader.play(w.clip, setup[i].seg, setup[i].dur);
 			if (w.mesh) renderer->bind_player(w.mesh, w.player);
 
-			// row layout : even spacing, a slight alternating turn for depth
-			w.pos = vec3(i * 3.2f - 6.4f, 1.2f, 0);
+			// row layout : animations section (center back), raised near eye level
+			// and spaced wide so each one reads on its own
+			w.pos = vec3(i * 4.f - 8.f, 1.6f, -3);
 			w.scale = 4.f;
 			w.yaw = (i % 2) ? 0.17f : -0.17f; // +-10 degrees
 		}
@@ -172,11 +194,18 @@ struct GameScene
 		renderer->drawbuffer.clear_instances();
 		renderer->drawbuffer_anim.clear_instances();
 
-		// props : the body owns the pose of anything dynamic
+		// props : the body owns the pose of anything dynamic. settled dynamic
+		// bodies go back up to their spawn : the scene keeps dropping itself
 		for (uint i = 0; i < num_props; i++)
 		{
 			Prop& p = props[i];
-			if (p.phys_id) phys.get_transform(p.phys_id, &p.pos, &p.rot);
+			if (p.phys_id)
+			{
+				if (phys.is_dynamic(p.phys_id) && !phys.is_awake(p.phys_id))
+					phys.reset(p.phys_id, p.spawn);
+
+				phys.get_transform(p.phys_id, &p.pos, &p.rot);
+			}
 
 			mat4 model = glm::translate(mat4(1), p.pos)
 			           * mat4(p.rot)

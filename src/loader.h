@@ -937,120 +937,55 @@ struct ShaderProgram
 
 namespace MeshFactory {
 
-	enum MESH_GEN {
-		CUBE, QUAD
-	};
-
-	Mesh_Data generate_cube(vec3 scale = vec3(1))
+	// cube : 24 verts (per-face normals + uvs), edge length = size, centered
+	Mesh_Data generate_cube(float size)
 	{
-		float positions[] = {
-			// front face
-			-0.5f, -0.5f,  0.5f, // 0
-			 0.5f, -0.5f,  0.5f, // 1
-			 0.5f,  0.5f,  0.5f, // 2
-			-0.5f,  0.5f,  0.5f, // 3
+		Mesh_Data data = {};
+		data.num_vertices = 24;
+		data.num_indices  = 36;
 
-			// back face
-			 0.5f, -0.5f, -0.5f, // 4
-			-0.5f, -0.5f, -0.5f, // 5
-			-0.5f,  0.5f, -0.5f, // 6
-			 0.5f,  0.5f, -0.5f, // 7
+		data.positions = Alloc(vec3, 24);
+		data.normals   = Alloc(vec3, 24);
+		data.uvs       = Alloc(vec2, 24);
+		data.indices   = Alloc(uint, 36);
 
-			// left face
-			-0.5f, -0.5f, -0.5f, // 8
-			-0.5f, -0.5f,  0.5f, // 9
-			-0.5f,  0.5f,  0.5f, //10
-			-0.5f,  0.5f, -0.5f, //11
+		uint v = 0, idx = 0;
+		for (uint face = 0; face < 6; face++)
+		{
+			uint axis = face / 2;                       // 0 = x, 1 = y, 2 = z
+			float sign = (face & 1) ? -1.f : 1.f;
+			uint  b = (axis + 1) % 3, c = (axis + 2) % 3; // cyclic in-plane axes
 
-			// right face
-			 0.5f, -0.5f,  0.5f, //12
-			 0.5f, -0.5f, -0.5f, //13
-			 0.5f,  0.5f, -0.5f, //14
-			 0.5f,  0.5f,  0.5f, //15
+			vec3 n = vec3(0);
+			n[axis] = sign;
 
-			// top face
-			-0.5f,  0.5f,  0.5f, //16
-			 0.5f,  0.5f,  0.5f, //17
-			 0.5f,  0.5f, -0.5f, //18
-			-0.5f,  0.5f, -0.5f, //19
+			// quad corners, ccw seen from outside : (-b,-c) (+b,-c) (+b,+c) (-b,+c)
+			for (uint k = 0; k < 4; k++)
+			{
+				vec3 p = vec3(0);
+				p[axis] = sign;
+				p[b] = (k == 0 || k == 3) ? -1.f : 1.f;
+				p[c] = (k < 2) ? -1.f : 1.f;
 
-			// bottom face
-			-0.5f, -0.5f, -0.5f, //20
-			 0.5f, -0.5f, -0.5f, //21
-			 0.5f, -0.5f,  0.5f, //22
-			-0.5f, -0.5f,  0.5f  //23
-		};
+				data.positions[v + k] = p * (size * 0.5f);
+				data.normals[v + k]   = n;
+				data.uvs[v + k]       = vec2((k == 0 || k == 3) ? 0.f : 1.f, (k < 2) ? 0.f : 1.f);
+			}
 
-		float normals[] = {
-			// front (z+)
-			0.0f,  0.0f,  1.0f,
-			0.0f,  0.0f,  1.0f,
-			0.0f,  0.0f,  1.0f,
-			0.0f,  0.0f,  1.0f,
+			// negative faces flip the quad, so flip the triangles back to ccw-outward
+			uint tri[6] = { 0, 1, 2, 0, 2, 3 };
+			if (sign < 0) { tri[1] = 2; tri[2] = 1; tri[4] = 3; tri[5] = 2; }
 
-			// back (z-)
-			0.0f,  0.0f, -1.0f,
-			0.0f,  0.0f, -1.0f,
-			0.0f,  0.0f, -1.0f,
-			0.0f,  0.0f, -1.0f,
+			for (uint k = 0; k < 6; k++)
+				data.indices[idx++] = v + tri[k];
 
-			// left (x-)
-		  -1.0f,  0.0f,  0.0f,
-		  -1.0f,  0.0f,  0.0f,
-		  -1.0f,  0.0f,  0.0f,
-		  -1.0f,  0.0f,  0.0f,
+			v += 4;
+		}
 
-		  // right (x+)
-		  1.0f,  0.0f,  0.0f,
-		  1.0f,  0.0f,  0.0f,
-		  1.0f,  0.0f,  0.0f,
-		  1.0f,  0.0f,  0.0f,
-
-		  // top (y+)
-		  0.0f,  1.0f,  0.0f,
-		  0.0f,  1.0f,  0.0f,
-		  0.0f,  1.0f,  0.0f,
-		  0.0f,  1.0f,  0.0f,
-
-		  // bottom (y-)
-		  0.0f, -1.0f,  0.0f,
-		  0.0f, -1.0f,  0.0f,
-		  0.0f, -1.0f,  0.0f,
-		  0.0f, -1.0f,  0.0f
-		};
-
-		float uvs[] = {
-			// front
-			0, 0,  1, 0,  1, 1,  0, 1,
-			// back
-			0, 0,  1, 0,  1, 1,  0, 1,
-			// left
-			0, 0,  1, 0,  1, 1,  0, 1,
-			// right
-			0, 0,  1, 0,  1, 1,  0, 1,
-			// top
-			0, 0,  1, 0,  1, 1,  0, 1,
-			// bottom
-			0, 0,  1, 0,  1, 1,  0, 1
-		};
-
-		uint indices[] = {
-			// front
-			0, 1, 2,  2, 3, 0,
-			// back
-			4, 5, 6,  6, 7, 4,
-			// left
-			8, 9,10, 10,11, 8,
-			// right
-			12,13,14, 14,15,12,
-			// top
-			16,17,18, 18,19,16,
-			// bottom
-			20,21,22, 22,23,20
-		};
-
-		return Mesh_Data{}; // TODO : finish this function
+		return data;
 	}
+
+	// unit quad for full-screen passes (gbuf lighting), lying in the xz plane
 	Mesh_Data generate_screenquad()
 	{
 		Mesh_Data data = {};
@@ -1071,7 +1006,7 @@ namespace MeshFactory {
 			{ 0.f, 0.f, 1.f }
 		};
 	
-		vec2 uvs[]
+		vec2 uvs[] =
 		{
 			{ 0.f, 0.f }, // 0  1-------3
 			{ 0.f, 1.f }, // 1  |       |
@@ -1100,11 +1035,9 @@ namespace MeshFactory {
 	
 		return data;
 	}
-	// flat grid plane : resolution = quads per side, ccw winding facing the normal.
-	// corner_at_origin : corner sits at the origin and the grid extends size in
-	// both in-plane axes (positive quadrant) ; otherwise it's centered on the origin
+	// flat grid plane, centered : resolution = quads per side, ccw winding facing the normal
 	enum { PLANE_XZ, PLANE_XY, PLANE_YZ }; // which world plane it lies in
-	Mesh_Data generate_plane_grid(float size, uint resolution, uint orientation, bool corner_at_origin)
+	Mesh_Data generate_plane(float size, uint resolution, uint orientation)
 	{
 		Mesh_Data data = {};
 		if (resolution < 1) resolution = 1;
@@ -1128,7 +1061,7 @@ namespace MeshFactory {
 		}
 
 		float step  = size / resolution;
-		float from  = corner_at_origin ? 0.f : -size * 0.5f; // first vertex offset
+		float from  = -size * 0.5f; // first vertex offset : centered on the origin
 		uint v = 0;
 		for (uint z = 0; z <= resolution; z++)
 		{
@@ -1158,14 +1091,222 @@ namespace MeshFactory {
 
 		return data;
 	}
-	// corner at the origin, grid extends into the positive quadrant
-	Mesh_Data generate_plane_positive(float size, uint resolution, uint orientation)
+
+	// uv sphere : rings around y, seam column duplicated for clean uvs. unit
+	// sized (radius 1) so the scene derives world size from its scale alone
+	Mesh_Data generate_uv_sphere(float radius, uint slices, uint stacks)
 	{
-		return generate_plane_grid(size, resolution, orientation, true);
+		Mesh_Data data = {};
+		if (slices < 3) slices = 3;
+		if (stacks < 2) stacks = 2;
+
+		uint vert_count = (stacks + 1) * (slices + 1);
+		data.num_vertices = vert_count;
+		data.num_indices  = stacks * slices * 6;
+
+		data.positions = Alloc(vec3, vert_count);
+		data.normals   = Alloc(vec3, vert_count);
+		data.uvs       = Alloc(vec2, vert_count);
+		data.indices   = Alloc(uint, data.num_indices);
+
+		// rings from the top pole down, columns wrap around y
+		uint v = 0;
+		for (uint i = 0; i <= stacks; i++)
+		{
+			float phi    = PI * i / stacks;
+			float ring   = sinf(phi);
+			float height = cosf(phi);
+
+			for (uint j = 0; j <= slices; j++)
+			{
+				float theta = 2.f * PI * j / slices;
+
+				vec3 normal = vec3(ring * cosf(theta), height, ring * sinf(theta));
+				data.positions[v] = normal * radius;
+				data.normals[v]   = normal;
+				data.uvs[v]       = vec2(j / (float)slices, 1.f - i / (float)stacks);
+				v++;
+			}
+		}
+
+		// two ccw triangles per quad, wound to face outward
+		uint idx = 0;
+		for (uint i = 0; i < stacks; i++)
+		{
+			for (uint j = 0; j < slices; j++)
+			{
+				uint upper = i * (slices + 1) + j;
+				uint lower = upper + slices + 1;
+
+				data.indices[idx++] = upper;
+				data.indices[idx++] = upper + 1;
+				data.indices[idx++] = lower;
+
+				data.indices[idx++] = upper + 1;
+				data.indices[idx++] = lower + 1;
+				data.indices[idx++] = lower;
+			}
+		}
+
+		return data;
 	}
-	// grid centered on the origin
-	Mesh_Data generate_plane(float size, uint resolution, uint orientation)
+
+	// capsule : uv sphere caps on a cylinder. height = the cylinder part only,
+	// same convention as bullet's capsule shape, so colliders match by construction.
+	// rings run top to bottom, seam column duplicated like the sphere
+	Mesh_Data generate_capsule(float radius, float height, uint slices, uint stacks)
 	{
-		return generate_plane_grid(size, resolution, orientation, false);
+		Mesh_Data data = {};
+		if (slices < 3) slices = 3;
+		if (stacks < 1) stacks = 1;
+		if (height < 0) height = 0; // degenerate height = a sphere
+
+		uint rings = stacks * 2 + 2; // top cap + cylinder + bottom cap
+		uint verts = rings * (slices + 1);
+		data.num_vertices = verts;
+		data.num_indices  = (rings - 1) * slices * 6;
+
+		data.positions = Alloc(vec3, verts);
+		data.normals   = Alloc(vec3, verts);
+		data.uvs       = Alloc(vec2, verts);
+		data.indices   = Alloc(uint, data.num_indices);
+
+		float half = height * 0.5f;
+		uint v = 0;
+		for (uint ring = 0; ring < rings; ring++)
+		{
+			// profile latitude + the cap center it swings around : 0..stacks is the
+			// top cap (phi 0..90 deg), stacks+1 is the cylinder, the rest the bottom cap
+			float phi    = (PI * 0.5f) * (ring / (float)stacks);
+			float center = half;
+
+			if (ring == stacks + 1)
+			{
+				phi    = PI * 0.5f;
+				center = -half;
+			}
+			else if (ring > stacks + 1)
+			{
+				phi    = (PI * 0.5f) * (1.f + (ring - stacks - 1) / (float)stacks);
+				center = -half;
+			}
+
+			float cap_r = sinf(phi) * radius;          // this ring's radius
+			float y     = center + cosf(phi) * radius; // and its height
+
+			for (uint j = 0; j <= slices; j++)
+			{
+				float theta = 2.f * PI * j / slices;
+
+				data.positions[v] = vec3(cap_r * cosf(theta), y, cap_r * sinf(theta));
+				data.normals[v]   = vec3(sinf(phi) * cosf(theta), cosf(phi), sinf(phi) * sinf(theta));
+				data.uvs[v]       = vec2(j / (float)slices, ring / (float)(rings - 1));
+				v++;
+			}
+		}
+
+		// two ccw triangles per quad, same outward winding as the sphere
+		uint idx = 0;
+		for (uint ring = 0; ring < rings - 1; ring++)
+		{
+			for (uint j = 0; j < slices; j++)
+			{
+				uint upper = ring * (slices + 1) + j;
+				uint lower = upper + slices + 1;
+
+				data.indices[idx++] = upper;
+				data.indices[idx++] = upper + 1;
+				data.indices[idx++] = lower;
+
+				data.indices[idx++] = upper + 1;
+				data.indices[idx++] = lower + 1;
+				data.indices[idx++] = lower;
+			}
+		}
+
+		return data;
+	}
+
+	// cylinder : smooth-walled, flat disc caps. height is the full height, centered
+	Mesh_Data generate_cylinder(float radius, float height, uint slices)
+	{
+		Mesh_Data data = {};
+		if (slices < 3) slices = 3;
+
+		uint verts = 2 * (slices + 1)   // wall, seam column duplicated
+		           + 2 * (slices + 2); // both caps : rim + one center vert
+		data.num_vertices = verts;
+		data.num_indices  = slices * 12; // wall quads + two cap fans
+
+		data.positions = Alloc(vec3, verts);
+		data.normals   = Alloc(vec3, verts);
+		data.uvs       = Alloc(vec2, verts);
+		data.indices   = Alloc(uint, data.num_indices);
+
+		float half = height * 0.5f;
+		uint v = 0, idx = 0;
+
+		// wall : two rings, top then bottom (same winding as the sphere's quads)
+		for (uint ring = 0; ring < 2; ring++)
+		{
+			float y = ring ? -half : half;
+
+			for (uint j = 0; j <= slices; j++)
+			{
+				float theta = 2.f * PI * j / slices;
+				vec2 dir = vec2(cosf(theta), sinf(theta)); // radial direction
+
+				data.positions[v] = vec3(dir.x * radius, y, dir.y * radius);
+				data.normals[v]   = vec3(dir.x, 0, dir.y);
+				data.uvs[v]       = vec2(j / (float)slices, (float)ring);
+				v++;
+			}
+		}
+
+		for (uint j = 0; j < slices; j++)
+		{
+			uint upper = j, lower = slices + 1 + j;
+
+			data.indices[idx++] = upper;
+			data.indices[idx++] = upper + 1;
+			data.indices[idx++] = lower;
+
+			data.indices[idx++] = upper + 1;
+			data.indices[idx++] = lower + 1;
+			data.indices[idx++] = lower;
+		}
+
+		// caps : a center fan each, wound to face away from the cylinder
+		for (uint cap = 0; cap < 2; cap++)
+		{
+			float  y     = cap ? -half : half;
+			float  sign  = cap ? -1.f : 1.f; // outward along y
+			uint   center = v++;
+
+			data.positions[center] = vec3(0, y, 0);
+			data.normals[center]   = vec3(0, sign, 0);
+			data.uvs[center]       = vec2(0.5f, 0.5f);
+
+			uint rim = v;
+			for (uint j = 0; j <= slices; j++)
+			{
+				float theta = 2.f * PI * j / slices;
+
+				data.positions[v] = vec3(cosf(theta) * radius, y, sinf(theta) * radius);
+				data.normals[v]   = vec3(0, sign, 0);
+				data.uvs[v]       = vec2(0.5f + 0.5f * cosf(theta), 0.5f + 0.5f * sinf(theta));
+				v++;
+			}
+
+			// top fan winds rim j+1 first (ccw from above) ; the bottom flips
+			for (uint j = 0; j < slices; j++)
+			{
+				data.indices[idx++] = center;
+				data.indices[idx++] = cap ? rim + j : rim + j + 1;
+				data.indices[idx++] = cap ? rim + j + 1 : rim + j;
+			}
+		}
+
+		return data;
 	}
 }

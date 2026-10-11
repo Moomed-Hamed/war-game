@@ -128,6 +128,9 @@ struct DrawBuffer
 		glBufferSubData(GL_ARRAY_BUFFER, geom_size, vert_data_size, mesh_verts);
 		free(mesh_verts);
 
+		// the element-array binding is vao state : bind ours first, or the upload
+		// re-points whichever vao happens to be bound (silent cross-buffer theft)
+		glBindVertexArray(vao);
 		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, indx_buffer);
 		glBufferSubData(GL_ELEMENT_ARRAY_BUFFER, indx_size, index_data_size, mesh_data.indices);
 
@@ -160,8 +163,10 @@ struct DrawBuffer
 		{
 			if (mesh_info[i].mesh_id == mesh_id)
 			{
-				mesh_info[i].num_instances = num_instances;
-				mesh_info[i].base_instance = total_instances;
+				if (mesh_info[i].num_instances == 0)
+					mesh_info[i].base_instance = total_instances;
+
+				mesh_info[i].num_instances += num_instances;
 
 				total_instances += num_instances;
 				inst_size += instance_data_size;
@@ -185,6 +190,10 @@ struct DrawBuffer
 	{
 		total_instances = 0;
 		inst_size = 0;
+
+		// appends build up over the frame : zero every count so they start clean
+		for (uint i = 0; i < MAX_MESHES; i++)
+			mesh_info[i].num_instances = 0;
 	}
 };
 
@@ -375,6 +384,8 @@ struct DrawBufferAnim
 		glBufferSubData(GL_ARRAY_BUFFER, geom_size, vert_data_size, mesh_verts);
 		free(mesh_verts);
 
+		// same vao trap as the static buffer : bind ours before the element bind
+		glBindVertexArray(vao);
 		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, indx_buffer);
 		glBufferSubData(GL_ELEMENT_ARRAY_BUFFER, indx_size, index_data_size, mesh_data.indices);
 
@@ -408,8 +419,10 @@ struct DrawBufferAnim
 		{
 			if (mesh_info[i].mesh_id == mesh_id)
 			{
-				mesh_info[i].num_instances = num_instances;
-				mesh_info[i].base_instance = total_instances;
+				if (mesh_info[i].num_instances == 0)
+					mesh_info[i].base_instance = total_instances;
+
+				mesh_info[i].num_instances += num_instances;
 
 				total_instances += num_instances;
 				inst_size += instance_data_size;
@@ -433,6 +446,10 @@ struct DrawBufferAnim
 	{
 		total_instances = 0;
 		inst_size = 0;
+
+		// appends build up over the frame : zero every count so they start clean
+		for (uint i = 0; i < MAX_MESHES; i++)
+			mesh_info[i].num_instances = 0;
 	}
 };
 
@@ -687,4 +704,5 @@ struct GameRenderer
 			stats.vertices   += drawbuffer_anim.mesh_info[i].num_vertices * mp.num_instances;
 		}
 	}
+
 };
