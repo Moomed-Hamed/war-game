@@ -5,7 +5,7 @@
  * ------------------------- */
 
 const uint MAX_FILEPATH_LENGTH = 64;
-const uint MAX_MESHES   = 16;
+const uint MAX_MESHES   = 32;
 const uint MAX_SHADERS  = 16;
 const uint MAX_TEXTURES = 16;
 
@@ -48,6 +48,48 @@ struct Mesh_Data
 		free(positions);
 		free(normals);
 		free(uvs);
+		free(indices);
+	}
+};
+
+// the same mesh without uvs : the vertex layout the no-uv draw mode takes, for a mesh
+// that has no texture coordinates
+struct Mesh_Data_NoUV
+{
+	uint num_vertices, num_indices;
+
+	vec3* positions;
+	vec3* normals;
+	uint* indices;
+
+	void load(const char* path)
+	{
+		FILE* mesh_file = fopen(path, "rb");
+		if (!mesh_file)
+		{
+			char msg[MAX_LOG_MSG_LENGTH];
+			snprintf(msg, MAX_LOG_MSG_LENGTH, "could not open model file : %s", path);
+			console->add_entry(msg, FIXME, RNDR);
+			return;
+		}
+
+		fread(&num_vertices, sizeof(uint), 1, mesh_file);
+		fread(&num_indices , sizeof(uint), 1, mesh_file);
+
+		positions = (vec3*)calloc(num_vertices, sizeof(vec3));
+		normals   = (vec3*)calloc(num_vertices, sizeof(vec3));
+		indices   = (uint*)calloc(num_indices , sizeof(uint));
+
+		fread(positions, sizeof(vec3), num_vertices, mesh_file);
+		fread(normals  , sizeof(vec3), num_vertices, mesh_file);
+		fread(indices  , sizeof(uint), num_indices , mesh_file);
+
+		fclose(mesh_file);
+	}
+	void release()
+	{
+		free(positions);
+		free(normals);
 		free(indices);
 	}
 };
@@ -135,6 +177,23 @@ struct MeshLoader
 		snprintf(msg, MAX_LOG_MSG_LENGTH, "load_mesh_data : mesh id [%d] not found", mesh_id);
 		console->add_entry(msg, FIXME, RNDR);
 	}
+	void load_mesh_data_no_uv(uint mesh_id, Mesh_Data_NoUV* data)
+	{
+		if (mesh_id == 0) { console->add_entry("load_mesh_data_no_uv : invalid mesh id 0", FIXME, RNDR); return; }
+
+		for (uint i = 0; i < MAX_MESHES; i++)
+		{
+			if (meshes[i].id == mesh_id && data)
+			{
+				data->load(meshes[i].filepath);
+				return;
+			}
+		}
+
+		char msg[MAX_LOG_MSG_LENGTH];
+		snprintf(msg, MAX_LOG_MSG_LENGTH, "load_mesh_data_no_uv : mesh id [%d] not found", mesh_id);
+		console->add_entry(msg, FIXME, RNDR);
+	}
 };
 
 // Animated Meshes
@@ -185,6 +244,54 @@ struct Mesh_Data_Anim
 		free(weights); // hehe
 		free(bones);
 		free(uvs);
+		free(indices);
+	}
+};
+
+// skinned, no uvs : positions, normals, the three weights and their bone ids, for a rig
+// with no texture coordinates
+struct Mesh_Data_Anim_NoUV
+{
+	uint num_vertices, num_indices;
+
+	vec3*  positions, *normals, *weights;
+	ivec3* bones;
+	uint*  indices;
+
+	void load(const char* path)
+	{
+		FILE* mesh_file = fopen(path, "rb");
+		if (!mesh_file)
+		{
+			char msg[MAX_LOG_MSG_LENGTH];
+			snprintf(msg, MAX_LOG_MSG_LENGTH, "could not open animated model file : %s", path);
+			console->add_entry(msg, FIXME, RNDR);
+			return;
+		}
+
+		fread(&num_vertices, sizeof(uint), 1, mesh_file);
+		fread(&num_indices , sizeof(uint), 1, mesh_file);
+
+		positions = (vec3*) calloc(num_vertices, sizeof(vec3) );
+		normals   = (vec3*) calloc(num_vertices, sizeof(vec3) );
+		weights   = (vec3*) calloc(num_vertices, sizeof(vec3) );
+		bones     = (ivec3*)calloc(num_vertices, sizeof(ivec3));
+		indices   = (uint*) calloc(num_indices , sizeof(uint) );
+
+		fread(positions, sizeof(vec3) , num_vertices, mesh_file);
+		fread(normals  , sizeof(vec3) , num_vertices, mesh_file);
+		fread(weights  , sizeof(vec3) , num_vertices, mesh_file);
+		fread(bones    , sizeof(ivec3), num_vertices, mesh_file);
+		fread(indices  , sizeof(uint) , num_indices , mesh_file);
+
+		fclose(mesh_file);
+	}
+	void release()
+	{
+		free(positions);
+		free(normals);
+		free(weights);
+		free(bones);
 		free(indices);
 	}
 };
@@ -270,6 +377,23 @@ struct MeshLoaderAnim
 
 		char msg[MAX_LOG_MSG_LENGTH];
 		snprintf(msg, MAX_LOG_MSG_LENGTH, "[ANIM] load_mesh_data : mesh id [%d] not found", mesh_id);
+		console->add_entry(msg, FIXME, RNDR);
+	}
+	void load_mesh_data_no_uv(uint mesh_id, Mesh_Data_Anim_NoUV* data)
+	{
+		if (mesh_id == 0) { console->add_entry("[ANIM] load_mesh_data_no_uv : invalid mesh id 0", FIXME, RNDR); return; }
+
+		for (uint i = 0; i < MAX_MESHES; i++)
+		{
+			if (meshes[i].id == mesh_id && data)
+			{
+				data->load(meshes[i].filepath);
+				return;
+			}
+		}
+
+		char msg[MAX_LOG_MSG_LENGTH];
+		snprintf(msg, MAX_LOG_MSG_LENGTH, "[ANIM] load_mesh_data_no_uv : mesh id [%d] not found", mesh_id);
 		console->add_entry(msg, FIXME, RNDR);
 	}
 };
@@ -360,7 +484,6 @@ struct AnimLoader
 	// one player per clip in flight (play() hands out the slots)
 	Anim_Player players[MAX_ANIM_PLAYERS];
 	uint num_players; // slots handed out so far
-	uint focus;       // which player the Anim tab edits
 
 	float seam_duration; // loop crossfade seconds, shared by every player
 
@@ -483,6 +606,14 @@ struct AnimLoader
 		console->add_entry("animation clip cache full (MAX_ANIMATIONS)", FIXME, RNDR);
 	}
 
+	// how long this player's loop seam blends for, capped to a fraction of the loop : a
+	// fixed 0.15s is most of a short clip, which turns the whole loop into crossfade
+	float seam_of(Anim_Player* pl)
+	{
+		float cap = pl->duration * 0.1f;
+		return (seam_duration < cap) ? seam_duration : cap;
+	}
+
 	// start (or restart) a clip's segment : loop_duration in seconds.
 	// reuses the player already on that clip, otherwise takes a free slot.
 	// returns the player id ((uint)-1 = failed, error already logged)
@@ -520,7 +651,7 @@ struct AnimLoader
 		pl.seg          = seg_id;
 		pl.duration     = loop_duration;
 		pl.elapsed      = 0;
-		pl.seam_t       = seam_duration; // no phantom blend on a fresh start
+		pl.seam_t       = seam_of(&pl); // no phantom blend on a fresh start
 		pl.spring_armed = false;
 
 		char msg[MAX_LOG_MSG_LENGTH];
@@ -528,6 +659,21 @@ struct AnimLoader
 			p, seg_id, loop_duration);
 		console->add_entry(msg, SUCCESS, RNDR);
 		return p;
+	}
+
+	// restart a clip's segment, crossfading from the pose currently on screen :
+	// action cuts (shoot/reload/inspect) glue together instead of popping
+	void blend_to(uint p, uint seg_id, float loop_duration)
+	{
+		if (p >= num_players) return;
+
+		Anim_Player& pl = players[p];
+		Animation* clip = &clips[pl.clip_id];
+		for (uint i = 0; i < clip->num_bones; i++)
+			pl.seam_pose[i] = pl.pose[i]; // freeze what is on screen
+
+		play(pl.clip_id, seg_id, loop_duration);
+		pl.seam_t = 0; // ... and blend into the new segment
 	}
 
 	// per-frame playback for every player : time -> warp -> sample -> seam -> spring.
@@ -566,9 +712,10 @@ struct AnimLoader
 
 		sample_pose(clip, pl, head);
 
-		if (pl->seam_t < seam_duration)
+		float seam = seam_of(pl);
+		if (pl->seam_t < seam)
 		{
-			float k = 1.f - pl->seam_t / seam_duration; // 1 = frozen old pose, 0 = fresh clip
+			float k = 1.f - pl->seam_t / seam; // 1 = frozen old pose, 0 = fresh clip
 			for (uint i = 0; i < clip->num_bones; i++)
 				pl->pose[i] = pl->pose[i] * (1.f - k) + pl->seam_pose[i] * k;
 			pl->seam_t += dt;
@@ -653,14 +800,14 @@ struct AnimLoader
 		{
 			pl->control.restart = false;
 			pl->elapsed = 0;
-			pl->seam_t = seam_duration; // no seam on a manual jump
+			pl->seam_t = seam_of(pl); // no seam on a manual jump
 			pl->spring_armed = false;   // snap instead of swinging from the old spot
 			return;
 		}
 		if (pl->control.scrubbing)
 		{
 			pl->elapsed = pl->control.scrub_t * pl->duration;
-			pl->seam_t = seam_duration;
+			pl->seam_t = seam_of(pl);
 			pl->spring_armed = false;   // follow the dragged pose exactly, no jelly
 			return;
 		}
@@ -938,6 +1085,21 @@ struct ShaderProgram
 namespace MeshFactory {
 
 	// cube : 24 verts (per-face normals + uvs), edge length = size, centered
+	// the same geometry with the uv column dropped : for a primitive that is only wanted
+	// for its shape (mode 3). consumes the source - it takes the arrays it needs and frees
+	// the uv block - so hand it a temporary, or forget the mesh you passed in
+	Mesh_Data_NoUV without_uv(Mesh_Data src)
+	{
+		Mesh_Data_NoUV out = {};
+		out.num_vertices = src.num_vertices;
+		out.num_indices  = src.num_indices;
+		out.positions    = src.positions; // ownership moves over
+		out.normals      = src.normals;
+		out.indices      = src.indices;
+		free(src.uvs);
+		return out;
+	}
+
 	Mesh_Data generate_cube(float size)
 	{
 		Mesh_Data data = {};
@@ -1092,8 +1254,8 @@ namespace MeshFactory {
 		return data;
 	}
 
-	// uv sphere : rings around y, seam column duplicated for clean uvs. unit
-	// sized (radius 1) so the scene derives world size from its scale alone
+	// uv sphere : rings around y, seam column duplicated for clean uvs. radius
+	// sets the size, so the caller scales what it needs
 	Mesh_Data generate_uv_sphere(float radius, uint slices, uint stacks)
 	{
 		Mesh_Data data = {};
@@ -1151,9 +1313,8 @@ namespace MeshFactory {
 		return data;
 	}
 
-	// capsule : uv sphere caps on a cylinder. height = the cylinder part only,
-	// same convention as bullet's capsule shape, so colliders match by construction.
-	// rings run top to bottom, seam column duplicated like the sphere
+	// capsule : sphere caps on a cylinder, rings top to bottom, seam duplicated.
+	// height = the cylinder part only : bullet's convention, colliders match
 	Mesh_Data generate_capsule(float radius, float height, uint slices, uint stacks)
 	{
 		Mesh_Data data = {};
@@ -1175,8 +1336,8 @@ namespace MeshFactory {
 		uint v = 0;
 		for (uint ring = 0; ring < rings; ring++)
 		{
-			// profile latitude + the cap center it swings around : 0..stacks is the
-			// top cap (phi 0..90 deg), stacks+1 is the cylinder, the rest the bottom cap
+			// profile latitude + cap center : 0..stacks = top cap, stacks+1 =
+			// cylinder, the rest = bottom cap
 			float phi    = (PI * 0.5f) * (ring / (float)stacks);
 			float center = half;
 
@@ -1222,6 +1383,74 @@ namespace MeshFactory {
 				data.indices[idx++] = lower + 1;
 				data.indices[idx++] = lower;
 			}
+		}
+
+		return data;
+	}
+
+	// cone : radius + full height, y aligned, centered like bullet's btConeShape
+	Mesh_Data generate_cone(float radius, float height, uint slices)
+	{
+		Mesh_Data data = {};
+		if (slices < 3) slices = 3;
+
+		float half = height * 0.5f;
+		data.num_vertices = 2 * (slices + 2); // side : ring + apex | base : center + rim
+		data.num_indices  = slices * 6;
+
+		data.positions = Alloc(vec3, data.num_vertices);
+		data.normals   = Alloc(vec3, data.num_vertices);
+		data.uvs       = Alloc(vec2, data.num_vertices);
+		data.indices   = Alloc(uint, data.num_indices);
+
+		uint v = 0, idx = 0;
+
+		// side : base ring (seam column duplicated) then the apex
+		for (uint j = 0; j <= slices; j++)
+		{
+			float theta = 2.f * PI * j / slices;
+			vec2 dir = vec2(cosf(theta), sinf(theta));
+
+			data.positions[v] = vec3(dir.x * radius, -half, dir.y * radius);
+			// slanted normal : radial by height, vertical by radius
+			data.normals[v]   = normalize(vec3(dir.x * height, radius, dir.y * height));
+			data.uvs[v]       = vec2(j / (float)slices, 1.f);
+			v++;
+		}
+		uint apex = v++;
+		data.positions[apex] = vec3(0, half, 0);
+		data.normals[apex]   = vec3(0, 1, 0);
+		data.uvs[apex]       = vec2(0.5f, 0.f);
+
+		for (uint j = 0; j < slices; j++) // apex first, ring winds back (ccw out)
+		{
+			data.indices[idx++] = apex;
+			data.indices[idx++] = j + 1;
+			data.indices[idx++] = j;
+		}
+
+		// base : center fan, wound to face down like the cylinder's bottom cap
+		uint center = v++;
+		data.positions[center] = vec3(0, -half, 0);
+		data.normals[center]   = vec3(0, -1, 0);
+		data.uvs[center]       = vec2(0.5f, 0.5f);
+
+		uint rim = v;
+		for (uint j = 0; j <= slices; j++)
+		{
+			float theta = 2.f * PI * j / slices;
+
+			data.positions[v] = vec3(cosf(theta) * radius, -half, sinf(theta) * radius);
+			data.normals[v]   = vec3(0, -1, 0);
+			data.uvs[v]       = vec2(0.5f + 0.5f * cosf(theta), 0.5f + 0.5f * sinf(theta));
+			v++;
+		}
+
+		for (uint j = 0; j < slices; j++)
+		{
+			data.indices[idx++] = center;
+			data.indices[idx++] = rim + j;
+			data.indices[idx++] = rim + j + 1;
 		}
 
 		return data;

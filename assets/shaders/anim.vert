@@ -2,7 +2,7 @@
 
 // the animated twin of geom.vert : identical output (feeds the same geom.frag),
 // but vertices are skinned through the skeleton UBO before the instance transform.
-// inputs MUST match DrawBufferAnim::init() in src/drawer.h
+// inputs MUST match the layout DrawBuffer::init() records
 
 struct VS_OUT
 {
@@ -19,6 +19,8 @@ layout (location = 2) in vec2 vertex_uv;
 layout (location = 3) in vec3 vertex_weights;
 layout (location = 4) in ivec3 vertex_bones;
 layout (location = 5) in mat4 instance_model; // model matrix for this instance
+layout (location = 9)  in vec4 instance_mat_a; // albedo rgb + metallic
+layout (location = 10) in vec4 instance_mat_b; // roughness, ao, texture-albedo flag
 
 layout (binding = 1, std140) uniform skeleton
 {
@@ -28,6 +30,10 @@ layout (binding = 1, std140) uniform skeleton
 uniform mat4 proj_view;
 
 out VS_OUT vs_out;
+
+// material : flat, the same for every vertex of the instance
+flat out vec4 mat_a;
+flat out vec4 mat_b;
 
 void main()
 {
@@ -47,8 +53,12 @@ void main()
 	vec4 world_pos = instance_model * skinned_pos;
 
 	vs_out.world_position = world_pos.xyz;
-	vs_out.normal         = (instance_model * skinned_normal).xyz;
+	// inverse transpose, as in geom.vert : the instance scale is not always uniform
+	vs_out.normal         = transpose(inverse(mat3(instance_model))) * skinned_normal.xyz;
 	vs_out.uv             = vertex_uv;
+
+	mat_a = instance_mat_a;
+	mat_b = instance_mat_b;
 
 	gl_Position = proj_view * world_pos;
 }

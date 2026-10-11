@@ -1,4 +1,4 @@
-#include "loader.h"
+#include "audio.h"
 
 /* ------------------------- *
 	-   Window & Input      -
@@ -73,7 +73,7 @@ vec3 get_mouse_world_dir(Mouse mouse, mat4 proj_view)
 	return glm::normalize(ray_far - ray_near);
 }
 
-#define NUM_KEYBOARD_BUTTONS 34 // update when adding keyboard buttons
+#define NUM_KEYBOARD_BUTTONS 35 // update when adding keyboard buttons
 struct Keyboard
 {
 	union
@@ -90,6 +90,8 @@ struct Keyboard
 			Button ESC, SPACE;
 			Button SHIFT, CTRL;
 			Button UP, DOWN, LEFT, RIGHT;
+
+			Button F1;
 		};
 	};
 };
@@ -109,6 +111,8 @@ void init_keyboard(Keyboard* keyboard)
 	keyboard->DOWN  = { false, false, GLFW_KEY_DOWN  };
 	keyboard->LEFT  = { false, false, GLFW_KEY_LEFT  };
 	keyboard->RIGHT = { false, false, GLFW_KEY_RIGHT };
+
+	keyboard->F1    = { false, false, GLFW_KEY_F1    };
 }
 void update_keyboard(Keyboard* keyboard, GLFWwindow* instance)
 {
@@ -255,7 +259,7 @@ struct GameWindow
 	void begin_frame();
 	void end_frame();
 
-	void draw_gbuf(vec3 view_position);
+	void draw_gbuf(vec3 view_position, mat4 proj_view);
 
 	void shutdown();
 };
@@ -310,6 +314,7 @@ void GameWindow::init(uint screen_width, uint screen_height)
 {
 	timer.init();
 	frame_milliseconds_target = 1000.f / 120.f; // software cap : ms per frame
+
 	timeBeginPeriod(1); // 1ms scheduler granularity so the cap sleep is accurate
 	init_keyboard(&keys);
 
@@ -402,6 +407,11 @@ void GameWindow::init(uint screen_width, uint screen_height)
 
 	// Colors & Style
 	apply_imgui_style(io);
+
+	// scale fonts + style sizes to the window : hand-placed pixels assume a 1080p design base
+	float ui_scale = screen_height / 1080.f;
+	io.FontGlobalScale = ui_scale;
+	ImGui::GetStyle().ScaleAllSizes(ui_scale);
 
 	// Setup Platform/Renderer backends
 	ImGui_ImplGlfw_InitForOpenGL(instance, true);
@@ -542,7 +552,7 @@ void GameWindow::end_frame()
 
 	timer.start(); // begin timing next frame
 }
-void GameWindow::draw_gbuf(vec3 view_position)
+void GameWindow::draw_gbuf(vec3 view_position, mat4 proj_view)
 {
 	glBindFramebuffer(GL_FRAMEBUFFER, 0); // Framebuffer 0 = the screen
 	glBindVertexArray(gbuf.VAO);
@@ -552,6 +562,9 @@ void GameWindow::draw_gbuf(vec3 view_position)
 	gbuf.shader.bind();
 	uint vp = glGetUniformLocation(gbuf.shader.id, "view_pos");
 	glUniform3f(vp, view_position.x, view_position.y, view_position.z);
+
+	// the occlusion taps project world points back onto this screen
+	glUniformMatrix4fv(glGetUniformLocation(gbuf.shader.id, "proj_view"), 1, GL_FALSE, (float*)&proj_view);
 
 	glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, gbuf.rendertarget.position_tx);
 	glActiveTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_2D, gbuf.rendertarget.normal_tx  );
@@ -567,43 +580,4 @@ void GameWindow::shutdown()
 	glfwTerminate();
 	timeEndPeriod(1); // pairs the timeBeginPeriod from init
 	this->instance = NULL;
-}
-
-Audio load_audio(const char* path)
-{
-	uint format, size, sample_rate;
-	byte* audio_data = NULL;
-
-	FILE* file = fopen(path, "rb"); // rb = read binary
-	if (file == NULL)
-	{
-		char msg[MAX_LOG_MSG_LENGTH];
-		snprintf(msg, MAX_LOG_MSG_LENGTH, "audio not found : %s", path);
-		console->add_entry(msg, FIXME, WNDW);
-		return 0;
-	}
-
-	fread(&format     , sizeof(uint), 1, file);
-	fread(&sample_rate, sizeof(uint), 1, file);
-	fread(&size       , sizeof(uint), 1, file);
-
-	audio_data = Alloc(byte, size);
-	fread(audio_data, sizeof(byte), size, file);
-
-	fclose(file);
-
-	ALuint buffer_id = NULL;
-	alGenBuffers(1, &buffer_id);
-	alBufferData(buffer_id, format, audio_data, size, sample_rate);
-
-	ALuint source_id = NULL;
-	alGenSources(1, &source_id);
-	alSourcei(source_id, AL_BUFFER, buffer_id);
-
-	free(audio_data);
-	return source_id;
-}
-void play_audio(Audio source_id)
-{
-	//alSourcePlay(source_id);
 }

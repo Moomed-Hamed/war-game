@@ -14,48 +14,81 @@ namespace CNSL { // console
     "S"  // success
    };
 
-   const char* source_messages[4] = {
+   const char* source_messages[5] = {
        "WNDW", // Window
        "RNDR", // Renderer
        "PHYS", // Physics
-       "NETW"  // Networking
+       "NETW", // Networking
+       "AUDI"  // Audio
    };
 
-   // Source colors  modern, balanced, and consistent brightness
-   const ImVec4 source_colors[4] = {
-       ImVec4(0.45f, 0.65f, 1.00f, 1.0f), // WNDW : Azure Blue
-       ImVec4(0.75f, 0.60f, 1.00f, 1.0f), // RNDR : Vivid Violet
-       ImVec4(1.00f, 0.55f, 0.45f, 1.0f), // PHYS : Coral Rust
-       ImVec4(1.00f, 0.80f, 0.55f, 1.0f)  // NETW : Signal Amber
+   // Source colors : one hue per subsystem, earthy pastels
+   const ImVec4 source_colors[5] = {
+       ImVec4(0.60f, 0.70f, 0.82f, 1.0f), // WNDW : Dusty Blue
+       ImVec4(0.72f, 0.65f, 0.82f, 1.0f), // RNDR : Muted Mauve
+       ImVec4(0.85f, 0.60f, 0.50f, 1.0f), // PHYS : Terracotta
+       ImVec4(0.88f, 0.76f, 0.55f, 1.0f), // NETW : Sandy Tan
+       ImVec4(0.72f, 0.78f, 0.56f, 1.0f)  // AUDI : Olive
    };
 
-   // Severity levels  distinct, modern color language
+   // Severity levels : the badge dot - red/green keep their meaning, tuned earthy
    const ImVec4 severity_colors[5] = {
-       ImVec4(0.75f, 0.55f, 1.00f, 1.0f), // TRACE   : Purple (Insight)
-       ImVec4(1.00f, 0.90f, 0.45f, 1.0f), // WARNING : Yellow (Caution)
-       ImVec4(1.00f, 0.55f, 0.20f, 1.0f), // FIXME   : Orange (Problem)
-       ImVec4(0.45f, 0.70f, 1.00f, 1.0f), // DEBUG   : Blue (Info)
-       ImVec4(0.45f, 1.00f, 0.55f, 1.0f)  // SUCCESS : Green (OK)
+       ImVec4(0.70f, 0.62f, 0.80f, 1.0f), // TRACE   : Mauve (Insight)
+       ImVec4(0.92f, 0.78f, 0.42f, 1.0f), // WARNING : Ochre (Caution)
+       ImVec4(0.90f, 0.52f, 0.42f, 1.0f), // FIXME   : Terracotta Red (Problem)
+       ImVec4(0.55f, 0.70f, 0.85f, 1.0f), // DEBUG   : Slate Blue (Info)
+       ImVec4(0.55f, 0.80f, 0.55f, 1.0f)  // SUCCESS : Sage Green (OK)
    };
 
-   // Message text  softened tints of above for legibility on dark backgrounds
+   // Message text : gentle pastels on the obsidian base
    const ImVec4 message_colors[5] = {
-       ImVec4(0.85f, 0.70f, 1.00f, 1.0f), // TRACE   : Soft Lavender
-       ImVec4(1.00f, 0.95f, 0.70f, 1.0f), // WARNING : Pale Yellow
-       ImVec4(1.00f, 0.75f, 0.50f, 1.0f), // FIXME   : Soft Orange
-       ImVec4(0.70f, 0.85f, 1.00f, 1.0f), // DEBUG   : Light Blue
-       ImVec4(0.70f, 1.00f, 0.75f, 1.0f)  // SUCCESS : Soft Green
+       ImVec4(0.82f, 0.76f, 0.88f, 1.0f), // TRACE   : Lavender Gray
+       ImVec4(0.95f, 0.88f, 0.70f, 1.0f), // WARNING : Soft Ochre
+       ImVec4(0.93f, 0.72f, 0.64f, 1.0f), // FIXME   : Clay
+       ImVec4(0.72f, 0.82f, 0.90f, 1.0f), // DEBUG   : Dusty Blue
+       ImVec4(0.72f, 0.88f, 0.74f, 1.0f)  // SUCCESS : Sage Mint
    };
+
+   // data : neutral highlighted values (kv grid lines, table totals)
+   const ImVec4 data_color = ImVec4(0.64f, 0.78f, 0.85f, 1.00f); // dusty blue
 }
 
 // ---------------- shared helpers ----------------
 
-// orange section header (matches the accent color in apply_imgui_style)
+// design pixels -> screen pixels : fonts + style sizes scale once at startup
+// (1080p design base); every hand-placed number goes through here
+static float ui(float design_px)
+{
+   return design_px * ImGui::GetIO().FontGlobalScale;
+}
+
+// one table convention : fixed columns, row banding, borders. every table in the console
+// is set up this way, so widths and flags do not have to be re-decided per tab
+const ImGuiTableFlags TABLE_FLAGS = ImGuiTableFlags_SizingFixedFit
+                                  | ImGuiTableFlags_RowBg
+                                  | ImGuiTableFlags_Borders;
+
+// title over a hairline separator
 static void section(const char* title)
 {
    ImGui::Spacing();
-   ImGui::TextColored(ImVec4(0.98f, 0.66f, 0.2f, 1.0f), "%s", title);
+   ImGui::TextColored(ImVec4(0.90f, 0.72f, 0.44f, 1.f), "%s", title);
    ImGui::Separator();
+}
+
+// key/value grid line : dim key, data-colored value on a fixed column
+static void kv(const char* key, const char* fmt, ...)
+{
+   ImGui::TextDisabled("%s", key);
+   ImGui::SameLine(ui(90));
+
+   char buf[128];
+   va_list args;
+   va_start(args, fmt);
+   vsnprintf(buf, sizeof(buf), fmt, args);
+   va_end(args);
+
+   ImGui::TextColored(CNSL::data_color, "%s", buf);
 }
 
 // case-insensitive substring search for the Console tab filter
@@ -88,7 +121,7 @@ static void draw_log_entry(const Log_Entry& entry)
    uint severity = entry.severity;
    uint source   = entry.source;
    if (severity > 4) severity = 4; // defensive : never index past the color arrays
-   if (source > 3)   source   = 3;
+   if (source > 4)   source   = 4;
 
    ImGui::TextColored(source_colors[source], "[%-4s]", source_messages[source]);
    ImGui::SameLine();
@@ -104,210 +137,359 @@ void draw_SYSTEM_console(GameWindow* window)
 
    if (ImGui::BeginTabItem("System"))
    {
-      section("GPU / Context");
-      ImGui::Text("Renderer : %s", window->gl.renderer);
-      ImGui::Text("Vendor   : %s", window->gl.vendor);
-      ImGui::Text("Version  : %s", window->gl.version);
-      ImGui::Text("GLSL     : %s", window->gl.glsl_version);
-      ImGui::Text("Context  : OpenGL %d.%d core profile",
-         window->gl.context_major, window->gl.context_minor);
-      ImGui::Text("Window   : %d x %d (not resizable)", window->screen_width, window->screen_height);
-      ImGui::Text("Frame cap: 120 fps software cap, vsync ON (swap interval 1)");
-
-      ImGui::Text("GLEW     : ");
-      ImGui::SameLine();
-      if (window->gl.glew_ok)
-         ImGui::TextColored(severity_colors[SUCCESS], "OK");
+      // only failures speak : a healthy launch is one line, not three badges
+      section("Status");
+      if (window->gl.glew_ok && window->audio.ok && window->gl_errors.total == 0)
+         ImGui::TextColored(severity_colors[SUCCESS], "all good");
       else
-         ImGui::TextColored(severity_colors[FIXME], "FAILED - extensions unavailable");
-
-      section("GL Limits");
-      ImGui::Text("Max texture size       : %d", window->gl.max_texture_size);
-      ImGui::Text("Max vertex attributes  : %d", window->gl.max_vertex_attribs);
-      ImGui::Text("Max uniform floats     : %d", window->gl.max_uniform_components);
-
-      section("GL Errors");
-      if (window->gl_errors.total == 0)
       {
-         ImGui::TextColored(severity_colors[SUCCESS], "none - GL is happy");
+         if (!window->gl.glew_ok)
+            ImGui::TextColored(severity_colors[FIXME], "glew failed - extensions unavailable");
+         if (!window->audio.ok)
+            ImGui::TextColored(severity_colors[FIXME], "no audio device - sounds will not play");
+         if (window->gl_errors.total)
+            ImGui::TextColored(window->gl_errors.this_frame ? severity_colors[WARNING] : severity_colors[FIXME],
+               "%u gl errors (%u last frame)", window->gl_errors.total, window->gl_errors.this_frame);
       }
-      else
-      {
-         ImGui::TextColored(severity_colors[FIXME], "%u total since launch", window->gl_errors.total);
-         ImGui::SameLine();
-         ImGui::TextColored(severity_colors[window->gl_errors.this_frame ? WARNING : TRACE],
-            "(%u last frame)", window->gl_errors.this_frame);
-         ImGui::Text("Last : 0x%04X (%s)", window->gl_errors.last_code,
+
+      if (window->gl_errors.total) // only worth naming when there is one
+         kv("last error", "0x%04X (%s)", window->gl_errors.last_code,
             gl_error_name(window->gl_errors.last_code));
-      }
 
-      section("Audio");
-      if (window->audio.ok)
-         ImGui::Text("Device : %s", window->audio.device);
-      else
-         ImGui::TextColored(severity_colors[FIXME], "no audio device - sounds will not play");
+      section("Context");
+      kv("renderer", "%s", window->gl.renderer);
+      kv("vendor", "%s", window->gl.vendor);
+      kv("version", "%s (GLSL %s)", window->gl.version, window->gl.glsl_version);
+      kv("window", "%d x %d, not resizable", window->screen_width, window->screen_height);
+      kv("frame cap", "120 fps, vsync on");
+      kv("audio", "%s", window->audio.ok ? window->audio.device : "none");
+
+      section("Limits");
+      kv("texture size", "%d", window->gl.max_texture_size);
+      kv("attribs", "%d", window->gl.max_vertex_attribs);
+      kv("uniform floats", "%d", window->gl.max_uniform_components);
 
       ImGui::EndTabItem();
    }
 }
 
 // ---------------- tab 2 : Render ----------------
-void draw_RENDER_console(GameRenderer* rndr, GameWindow* window, Camera* camera)
+// the g-buffer inspector : deferred pipeline targets, one at a time, picked from a
+// dropdown. given its own function so render concerns stay separable
+static void draw_gbuffer_panel(GameWindow* window)
 {
    using namespace CNSL;
 
-   if (ImGui::BeginTabItem("Render"))
+   section("G-Buffer");
+
+   if (window->gbuf.rendertarget.complete)
+      ImGui::TextColored(severity_colors[SUCCESS], "framebuffer : COMPLETE");
+   else
+      ImGui::TextColored(severity_colors[FIXME], "framebuffer : INCOMPLETE - nothing will render");
+   ImGui::SameLine();
+   ImGui::Text("| %u x %u", window->screen_width, window->screen_height);
+
+   static const char* gbuf_labels[4] = {
+      "position [RGBA32F]  pos+metallic",
+      "normal   [RGBA16F]  nrm+roughness",
+      "albedo   [RGBA8]    color+AO",
+      "depth    [DEPTH24]",
+   };
+   GLuint gbuf_tex[4] = {
+      window->gbuf.rendertarget.position_tx,
+      window->gbuf.rendertarget.normal_tx,
+      window->gbuf.rendertarget.albedo_tx,
+      window->gbuf.rendertarget.depth_tx,
+   };
+
+   static int gbuf_pick = 0;
+   ImGui::SetNextItemWidth(ui(300));
+   ImGui::Combo("target", &gbuf_pick, gbuf_labels, 4);
+
+   // one image at full panel width, true window aspect. uv flipped because
+   // render-to-texture is upside down versus imgui
+   float img_w = ImGui::GetContentRegionAvail().x;
+   ImGui::Image((ImTextureID)(intptr_t)gbuf_tex[gbuf_pick],
+      ImVec2(img_w, img_w * window->screen_height / (float)window->screen_width),
+      ImVec2(0, 1), ImVec2(1, 0));
+}
+
+// the texture loader's contents : one texture, picked from a dropdown, with its size
+static void draw_texture_panel(GameRenderer* rndr)
+{
+   using namespace CNSL;
+
+   section("Textures");
+
+   if (rndr->txloader.num_textures == 0)
    {
-      // ---- frame timing
-      section("Frame");
+      ImGui::TextColored(severity_colors[WARNING], "no textures loaded");
+      return;
+   }
 
-      if (window->frame_ms_count > 0) // not very first frame
+   static int tx_pick = 0;
+   if (tx_pick >= (int)rndr->txloader.num_textures) tx_pick = 0;
+
+   ImGui::SetNextItemWidth(ui(300));
+   if (ImGui::BeginCombo("texture", rndr->txloader.textures[tx_pick].path))
+   {
+      for (uint i = 0; i < rndr->txloader.num_textures; i++)
       {
-         float fps = (window->frame_ms_last > 0) ? (1000.f / window->frame_ms_last) : 0;
-         ImVec4 fps_color = (fps >= 60) ? severity_colors[SUCCESS]
-            : (fps >= 30) ? severity_colors[WARNING]
-            : severity_colors[FIXME];
-         ImGui::TextColored(fps_color, "%.0f FPS", fps);
-         ImGui::SameLine();
-         ImGui::Text("| %.1f ms", window->frame_ms_last);
-         ImGui::SameLine();
-         ImGui::TextColored(severity_colors[TRACE], "(target 8.3 ms / 120 fps)");
+         char label[80];
+         snprintf(label, sizeof(label), "%u : %s##tx%u", i, rndr->txloader.textures[i].path, i);
+         if (ImGui::Selectable(label, (int)i == tx_pick)) tx_pick = (int)i;
+         if ((int)i == tx_pick) ImGui::SetItemDefaultFocus();
+      }
+      ImGui::EndCombo();
+   }
 
-         if (window->frame_ms_count > 1)
-            ImGui::PlotLines("##framems", window->frame_ms, (int)window->frame_ms_count, 0,
-               NULL, 0.f, 33.f, ImVec2(600, 60)); // hardcoded pixel size (window is fixed-size)
+   Texture_Data* tx = &rndr->txloader.textures[tx_pick];
+   kv("size", "%d x %d  |  handle %u", tx->width, tx->height, tx->handle);
 
-         ImGui::Text("avg %.1f ms  |  min %.1f  |  max %.1f",
-            window->frame_ms_avg, window->frame_ms_min, window->frame_ms_max);
+   // 128 square, uv flipped : same convention as the g-buffer
+   ImGui::Image((ImTextureID)(intptr_t)tx->handle, ImVec2(ui(128), ui(128)), ImVec2(0, 1), ImVec2(1, 0));
+}
 
-         // how much of the work budget this frame used (clamped: ImGui asserts fraction <= 1)
-         float target = window->frame_milliseconds_target;
-         float used = (target > 0) ? (window->frame_ms_work / target) : 0;
-         if (used > 1.f) used = 1.f;
-         char budget[48];
-         snprintf(budget, 48, "budget : %.1f / %.1f ms", window->frame_ms_work, target);
-         ImGui::PushStyleColor(ImGuiCol_PlotHistogram,
-            (used >= 1.f) ? ImVec4(1.f, 0.4f, 0.3f, 1.f) : ImVec4(0.4f, 0.75f, 1.f, 1.f));
-         ImGui::ProgressBar(used, ImVec2(-1, 0), budget);
-         ImGui::PopStyleColor();
-         ImGui::Text("work %.1f ms  |  wait %.1f ms",
-            window->frame_ms_work, window->frame_ms_last - window->frame_ms_work);
-      } // end of frame-stats block (needs at least 1 recorded frame)
+// ---- render tab panels : one function per concern, so the tab reads as a list --------
 
-      // ---- draw statistics (filled by GameRenderer::draw)
-      section("Draw Stats (this frame)");
+// frame timing : the headline number, the history plot and the work budget
+static void draw_frame_panel(GameWindow* window)
+{
+   using namespace CNSL;
 
-      ImGui::Text("draw calls : %u total", rndr->stats.draw_calls + 1); // +1 = lighting fullscreen quad
-      ImGui::SameLine();
-      ImGui::Text("(%u geometry + 1 lighting quad)", rndr->stats.draw_calls);
+   section("Frame");
 
-      ImGui::Text("meshes     : %u / %d", rndr->stats.meshes_drawn, MAX_MESHES);
-      ImGui::SameLine();
-      ImGui::Text("| instances : %u", rndr->stats.instances);
+   if (window->frame_ms_count == 0) return; // not very first frame
 
-      ImGui::Text("triangles  : %u", rndr->stats.triangles);
-      ImGui::SameLine();
-      ImGui::Text("| vertices : %u", rndr->stats.vertices);
+   float fps = (window->frame_ms_last > 0) ? (1000.f / window->frame_ms_last) : 0;
+   ImVec4 fps_color = (fps >= 60) ? severity_colors[SUCCESS]
+      : (fps >= 30) ? severity_colors[WARNING]
+      : severity_colors[FIXME];
 
-      // ---- per-mesh draw list, both passes : proof each append_instances() worked
-      section("Mesh Draw List");
-      if (ImGui::BeginTable("meshdraw", 7,
-         ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_RowBg | ImGuiTableFlags_Borders))
+   // the headline number, detail beside it
+   ImGui::SetWindowFontScale(1.7f);
+   ImGui::TextColored(fps_color, "%.0f fps", fps);
+   ImGui::SetWindowFontScale(1.0f);
+   ImGui::SameLine(0, ui(12));
+   ImGui::Text("| %.2f ms   target 8.33 ms", window->frame_ms_last);
+
+   if (window->frame_ms_count > 1)
+      ImGui::PlotLines("##framems", window->frame_ms, (int)window->frame_ms_count, 0,
+         NULL, 0.f, 33.f, ImVec2(ImGui::GetContentRegionAvail().x, ui(64)));
+         // ^ explicit width : PlotLines does not accept -1
+
+   kv("history", "avg %.1f   min %.1f   max %.1f ms",
+      window->frame_ms_avg, window->frame_ms_min, window->frame_ms_max);
+
+   // how much of the work budget this frame used (clamped: ImGui asserts fraction <= 1)
+   float target = window->frame_milliseconds_target;
+   float used = (target > 0) ? (window->frame_ms_work / target) : 0;
+   if (used > 1.f) used = 1.f;
+   char budget[48];
+   snprintf(budget, 48, "budget : %.1f / %.1f ms", window->frame_ms_work, target);
+   ImGui::PushStyleColor(ImGuiCol_PlotHistogram,
+      (used >= 1.f) ? ImVec4(0.82f, 0.50f, 0.44f, 1.f) : ImVec4(0.58f, 0.72f, 0.82f, 1.f));
+   ImGui::ProgressBar(used, ImVec2(-1, 0), budget);
+   ImGui::PopStyleColor();
+
+   kv("work / wait", "%.1f ms  /  %.1f ms",
+      window->frame_ms_work, window->frame_ms_last - window->frame_ms_work);
+}
+
+// what the renderer submitted this frame, as GameRenderer::draw tallies it
+static void draw_drawstats_panel(GameRenderer* rndr)
+{
+   using namespace CNSL;
+
+   // instances/vertices-per-mesh live in the table's total row : no repeat here,
+   // but the *instanced* vertex count is its own number and stays
+   section("Draw Stats");
+   kv("calls", "%u  (%u geometry + lighting)", rndr->stats.draw_calls + 1, rndr->stats.draw_calls);
+   kv("meshes", "%u / %d", rndr->stats.meshes_drawn, MAX_MESHES);
+   kv("tris", "%u  |  %u verts drawn", rndr->stats.triangles, rndr->stats.vertices);
+}
+
+// per-mesh draw list : proof each append_instances() landed. one row per mesh, the four
+// modes filterable, so a busy scene can be read one layout at a time
+static void draw_meshdrawlist_panel(GameRenderer* rndr)
+{
+   using namespace CNSL;
+
+   static const ImVec4 mode_colors[DRAW_MODE_COUNT] = {
+      ImVec4(0.65f, 0.76f, 0.87f, 1), // 1  static + uv    : dusty blue
+      ImVec4(0.56f, 0.66f, 0.78f, 1), // 3  static, no uv  : deeper blue
+      ImVec4(0.75f, 0.68f, 0.85f, 1), // 2  skinned + uv   : muted lilac
+      ImVec4(0.68f, 0.60f, 0.80f, 1), // 4  skinned, no uv : deeper lilac
+   };
+
+   section("Mesh Draw List");
+
+   // 0 = every mode at once, otherwise a DrawMode + 1
+   static int pass_pick = 0;
+   ImGui::SetNextItemWidth(ui(200));
+   if (ImGui::BeginCombo("pass", (pass_pick == 0) ? "all modes" : DRAW_MODE_INFO[pass_pick - 1].name))
+   {
+      if (ImGui::Selectable("all modes", pass_pick == 0)) pass_pick = 0;
+      for (uint m = 0; m < DRAW_MODE_COUNT; m++)
+         if (ImGui::Selectable(DRAW_MODE_INFO[m].name, pass_pick == (int)m + 1)) pass_pick = (int)m + 1;
+      ImGui::EndCombo();
+   }
+
+   if (ImGui::BeginTable("meshdraw", 7, TABLE_FLAGS))
+   {
+      ImGui::TableSetupColumn("pass"    , ImGuiTableColumnFlags_WidthFixed, ui(104));
+      ImGui::TableSetupColumn("id"      , ImGuiTableColumnFlags_WidthFixed, ui(30));
+      ImGui::TableSetupColumn("indices" , ImGuiTableColumnFlags_WidthFixed, ui(58));
+      ImGui::TableSetupColumn("insts"   , ImGuiTableColumnFlags_WidthFixed, ui(44));
+      ImGui::TableSetupColumn("verts"   , ImGuiTableColumnFlags_WidthFixed, ui(58));
+      ImGui::TableSetupColumn("base vtx", ImGuiTableColumnFlags_WidthFixed, ui(58));
+      ImGui::TableSetupColumn("base idx", ImGuiTableColumnFlags_WidthFixed, ui(62));
+      ImGui::TableHeadersRow();
+
+      // every mode writes the same fields, so one walk covers them all; the capture
+      // accumulates the totals row
+      uint tot_idx = 0, tot_inst = 0, tot_vert = 0;
+
+      for (uint m = 0; m < DRAW_MODE_COUNT; m++)
       {
-         ImGui::TableSetupColumn("pass"  , ImGuiTableColumnFlags_WidthFixed, 52);
-         ImGui::TableSetupColumn("id"    , ImGuiTableColumnFlags_WidthFixed, 30);
-         ImGui::TableSetupColumn("indices", ImGuiTableColumnFlags_WidthFixed, 58);
-         ImGui::TableSetupColumn("insts" , ImGuiTableColumnFlags_WidthFixed, 44);
-         ImGui::TableSetupColumn("verts" , ImGuiTableColumnFlags_WidthFixed, 58);
-         ImGui::TableSetupColumn("base vtx", ImGuiTableColumnFlags_WidthFixed, 58);
-         ImGui::TableSetupColumn("base idx", ImGuiTableColumnFlags_WidthFixed, 62);
-         ImGui::TableHeadersRow();
+         if (pass_pick != 0 && pass_pick != (int)m + 1) continue;
 
-         // both draw buffers share the mesh_info field names, so one writer covers them
-         auto pass_rows = [](const char* pass, auto* mesh_info, uint count)
+         DrawBuffer& db = rndr->buffer(m);
+         bool named = false; // the mode says its name once : its tint carries the rows
+
+         for (uint i = 0; i < MAX_MESHES; i++)
          {
-            for (uint i = 0; i < count; i++)
-            {
-               if (mesh_info[i].mesh_id == 0) continue;
+            if (db.mesh_info[i].mesh_id == 0) continue;
 
-               ImGui::TableNextRow();
-               ImGui::TableNextColumn(); ImGui::Text("%s", pass);
-               ImGui::TableNextColumn(); ImGui::Text("%u", mesh_info[i].mesh_id);
-               ImGui::TableNextColumn(); ImGui::Text("%u", mesh_info[i].num_indices);
-               ImGui::TableNextColumn();
-               if (mesh_info[i].num_instances == 0)
-                  ImGui::TextColored(severity_colors[WARNING], "%u", 0u); // never submitted this frame
-               else
-                  ImGui::Text("%u", mesh_info[i].num_instances);
-               ImGui::TableNextColumn(); ImGui::Text("%u", mesh_info[i].num_vertices);
-               ImGui::TableNextColumn(); ImGui::Text("%u", mesh_info[i].base_vertex);
-               ImGui::TableNextColumn(); ImGui::Text("%u", mesh_info[i].base_index);
-            }
-         };
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            if (!named) { ImGui::TextColored(mode_colors[m], "%s", DRAW_MODE_INFO[m].name); named = true; }
+            ImGui::TableNextColumn(); ImGui::Text("%u", db.mesh_info[i].mesh_id);
+            ImGui::TableNextColumn(); ImGui::Text("%u", db.mesh_info[i].num_indices);
+            ImGui::TableNextColumn();
+            if (db.mesh_info[i].num_instances == 0)
+               ImGui::TextColored(severity_colors[WARNING], "%u", 0u); // never submitted this frame
+            else
+               ImGui::Text("%u", db.mesh_info[i].num_instances);
+            ImGui::TableNextColumn(); ImGui::Text("%u", db.mesh_info[i].num_vertices);
+            ImGui::TableNextColumn(); ImGui::Text("%u", db.mesh_info[i].base_vertex);
+            ImGui::TableNextColumn(); ImGui::Text("%u", db.mesh_info[i].base_index);
 
-         pass_rows("static" , rndr->drawbuffer.mesh_info     , MAX_MESHES);
-         pass_rows("skinned", rndr->drawbuffer_anim.mesh_info, MAX_MESHES);
-         ImGui::EndTable();
+            tot_idx  += db.mesh_info[i].num_indices;
+            tot_inst += db.mesh_info[i].num_instances;
+            tot_vert += db.mesh_info[i].num_vertices;
+         }
       }
 
-      // ---- gpu buffer health
-      section("GPU Buffers");
+      // totals : what every mode submitted this frame
+      ImGui::TableNextRow();
+      ImGui::TableNextColumn(); ImGui::TextColored(ImVec4(0.63f, 0.61f, 0.58f, 1), "total");
+      ImGui::TableNextColumn();
+      ImGui::TableNextColumn(); ImGui::TextColored(data_color, "%u", tot_idx);
+      ImGui::TableNextColumn(); ImGui::TextColored(data_color, "%u", tot_inst);
+      ImGui::TableNextColumn(); ImGui::TextColored(data_color, "%u", tot_vert);
+      ImGui::TableNextColumn();
+      ImGui::TableNextColumn();
+      ImGui::EndTable();
+   }
+}
 
-      auto buffer_bar = [](const char* label, uint used, uint total)
+// gpu buffers : one row per mode plus the whole lot, then the cpu side of the same story
+static void draw_gpubuffers_panel(GameRenderer* rndr)
+{
+   using namespace CNSL;
+
+   section("GPU Buffers");
+
+   uint used = 0, reserved = 0;
+
+   if (ImGui::BeginTable("gpubuffers", 5, TABLE_FLAGS))
+   {
+      ImGui::TableSetupColumn("mode"    , ImGuiTableColumnFlags_WidthFixed, ui(140));
+      ImGui::TableSetupColumn("geometry", ImGuiTableColumnFlags_WidthFixed, ui(72));
+      ImGui::TableSetupColumn("index"   , ImGuiTableColumnFlags_WidthFixed, ui(72));
+      ImGui::TableSetupColumn("instance", ImGuiTableColumnFlags_WidthFixed, ui(72));
+      ImGui::TableSetupColumn("used / limit (KB)", ImGuiTableColumnFlags_WidthFixed, ui(132));
+      ImGui::TableHeadersRow();
+
+      for (uint m = 0; m < DRAW_MODE_COUNT; m++)
       {
-         float pct = total ? ((float)used / total) : 0;
-         char overlay[64];
-         snprintf(overlay, 64, "%s : %u / %u bytes (%.0f%%)", label, used, total, pct * 100);
+         DrawBuffer& db = rndr->buffer(m);
 
-         ImVec4 color = (pct > .8f) ? ImVec4(1.f, .4f, .3f, 1.f)
-            : (pct > .5f) ? ImVec4(1.f, .8f, .3f, 1.f)
-            : ImVec4(.4f, .75f, 1.f, 1.f);
-         ImGui::PushStyleColor(ImGuiCol_PlotHistogram, color);
-         ImGui::ProgressBar(pct, ImVec2(-1, 0), overlay);
-         ImGui::PopStyleColor();
-      };
+         ImGui::TableNextRow();
+         ImGui::TableNextColumn(); ImGui::Text("%s", DRAW_MODE_INFO[m].name);
+         ImGui::TableNextColumn(); ImGui::Text("%.1f", db.geom_size / 1024.f);
+         ImGui::TableNextColumn(); ImGui::Text("%.1f", db.indx_size / 1024.f);
+         ImGui::TableNextColumn(); ImGui::Text("%.1f", db.inst_size / 1024.f);
+         ImGui::TableNextColumn(); ImGui::Text("%.1f / %.0f",
+            (db.geom_size + db.indx_size + db.inst_size) / 1024.f, db.max_buffer_size / 1024.f);
 
-      buffer_bar("geometry" , rndr->drawbuffer.geom_size, rndr->drawbuffer.max_buffer_size);
-      buffer_bar("indices"  , rndr->drawbuffer.indx_size, rndr->drawbuffer.max_buffer_size);
-      buffer_bar("instances", rndr->drawbuffer.inst_size, rndr->drawbuffer.max_buffer_size);
+         used     += db.geom_size + db.indx_size + db.inst_size;
+         reserved += db.max_buffer_size * 3;
+      }
 
-      // ---- g-buffer : deferred pipeline inspector
-      section("G-Buffer");
+      // every mode reserves geometry, index and instance space, so the floor is three
+      // buffers' worth whether or not anything was loaded into them
+      ImGui::TableNextRow();
+      ImGui::TableNextColumn(); ImGui::TextColored(severity_colors[TRACE], "all modes");
+      ImGui::TableNextColumn(); ImGui::TableNextColumn(); ImGui::TableNextColumn();
+      ImGui::TableNextColumn(); ImGui::TextColored(severity_colors[TRACE], "%.1f / %.0f", used / 1024.f, reserved / 1024.f);
 
-      if (window->gbuf.rendertarget.complete)
-         ImGui::TextColored(severity_colors[SUCCESS], "framebuffer : COMPLETE");
-      else
-         ImGui::TextColored(severity_colors[FIXME], "framebuffer : INCOMPLETE - nothing will render");
-      ImGui::SameLine();
-      ImGui::Text("| %u x %u", window->screen_width, window->screen_height);
+      ImGui::EndTable();
+   }
 
-      auto gbuf_image = [&](const char* label, GLuint texture)
-      {
-         ImGui::Text("%s", label);
-         // uv flipped because render-to-texture is upside down vs imgui
-         ImGui::Image((ImTextureID)(intptr_t)texture, ImVec2(176, 99), ImVec2(0, 1), ImVec2(1, 0));
-      };
+   // and the cpu side : what the loaders hold besides the buffers
+   uint disk = 0, clip_ram = 0, tex_ram = 0;
 
-      gbuf_image("positions  RGB = world pos, A = metallic  [RGBA32F] ", window->gbuf.rendertarget.position_tx);
-      gbuf_image("normals    RGB = world nrm, A = roughness [RGBA16F] ", window->gbuf.rendertarget.normal_tx);
-      gbuf_image("albedo     RGB = base col, A = AO         [RGBA8]   ", window->gbuf.rendertarget.albedo_tx);
-      gbuf_image("depth                                   [DEPTH24] ", window->gbuf.rendertarget.depth_tx);
+   for (uint i = 0; i < MAX_MESHES; i++)
+   {
+      if (rndr->meshloader.meshes[i].size      != (uint)-1) disk += rndr->meshloader.meshes[i].size;
+      if (rndr->meshloader_anim.meshes[i].size != (uint)-1) disk += rndr->meshloader_anim.meshes[i].size;
+   }
 
-      // ---- camera & input (the scene owns the camera, this just reads it)
-      section("Camera / Input");
-      vec3 pos = camera->position;
-      ImGui::Text("position : %6.2f %6.2f %6.2f", pos.x, pos.y, pos.z);
-      ImGui::Text("yaw/pitch: %6.1f / %5.1f deg",
-         ToDegrees(camera->yaw), ToDegrees(camera->pitch));
-      ImGui::Text("focus    : %s (T frees the cursor, Y recaptures)",
-         window->focus_status == GAME ? "GAME" : "GUI");
-      ImGui::Text("mouse    : %.0f, %.0f   delta: %.1f, %.1f",
-         window->mouse.raw_x, window->mouse.raw_y, window->mouse.dx, window->mouse.dy);
-      ImGui::Text("buttons  : L[%s] R[%s]   keys: W[%d] A[%d] S[%d] D[%d]",
-         window->mouse.left_button.is_pressed ? "down" : "up  ",
-         window->mouse.right_button.is_pressed ? "down" : "up  ",
-         window->keys.W.is_pressed, window->keys.A.is_pressed,
-         window->keys.S.is_pressed, window->keys.D.is_pressed);
+   for (uint i = 1; i < MAX_ANIMATIONS; i++) // slot 0 = no clip
+      if (rndr->animloader.clip_paths[i][0])
+         clip_ram += rndr->animloader.clips[i].num_bones * rndr->animloader.clips[i].num_frames * (uint)sizeof(mat4);
+
+   for (uint i = 0; i < rndr->txloader.num_textures; i++)
+      tex_ram += rndr->txloader.textures[i].width * rndr->txloader.textures[i].height * 3; // decoded to rgb
+
+   kv("mesh files"    , "%.1f KB on disk", disk / 1024.f);
+   kv("clip keyframes", "%.1f KB in ram", clip_ram / 1024.f);
+   kv("textures"      , "~%.1f KB decoded", tex_ram / 1024.f);
+}
+
+// the scene owns the camera and the input : this only reads them
+static void draw_camera_panel(GameWindow* window, Camera* camera)
+{
+   using namespace CNSL;
+
+   section("Camera / Input");
+
+   vec3 pos = camera->position;
+   kv("position", "%6.2f  %6.2f  %6.2f", pos.x, pos.y, pos.z);
+   kv("yaw / pitch", "%.1f / %.1f deg", ToDegrees(camera->yaw), ToDegrees(camera->pitch));
+   kv("focus", "%s   (T frees the cursor, Y recaptures)",
+      window->focus_status == GAME ? "GAME" : "GUI");
+   kv("mouse", "%.0f, %.0f   delta %.1f, %.1f",
+      window->mouse.raw_x, window->mouse.raw_y, window->mouse.dx, window->mouse.dy);
+   kv("buttons", "L[%s] R[%s]   keys W[%d] A[%d] S[%d] D[%d]",
+      window->mouse.left_button.is_pressed ? "down" : "up  ",
+      window->mouse.right_button.is_pressed ? "down" : "up  ",
+      window->keys.W.is_pressed, window->keys.A.is_pressed,
+      window->keys.S.is_pressed, window->keys.D.is_pressed);
+}
+
+void draw_RENDER_console(GameRenderer* rndr, GameWindow* window, Camera* camera)
+{
+   if (ImGui::BeginTabItem("Render"))
+   {
+      draw_frame_panel(window);
+      draw_drawstats_panel(rndr);
+      draw_meshdrawlist_panel(rndr);
+      draw_gpubuffers_panel(rndr);
+      draw_gbuffer_panel(window);
+      draw_camera_panel(window, camera);
 
       ImGui::EndTabItem();
    }
@@ -320,24 +502,139 @@ void draw_PHYS_console(Physics* phys)
 
    if (ImGui::BeginTabItem("Phys"))
    {
+      // per-shape identity : chips and table rows share it
+      static const char* shape_names[] = { "none", "box", "sphere", "capsule", "cylinder", "cone" };
+      static const ImVec4 shape_colors[] = {
+         ImVec4(1, 1, 1, 1),
+         ImVec4(0.78f, 0.82f, 0.88f, 1), // box      : pale steel
+         ImVec4(0.64f, 0.80f, 0.84f, 1), // sphere   : dusty aqua
+         ImVec4(0.68f, 0.85f, 0.70f, 1), // capsule  : sage
+         ImVec4(0.90f, 0.78f, 0.58f, 1), // cylinder : sand
+         ImVec4(0.86f, 0.64f, 0.58f, 1), // cone     : clay
+      };
+
+      // joint kinds : hinge, cone twist, hinge2 (the car's wheels)
+      static const char* joint_names[] = { "none", "hinge", "cone", "hinge2" };
+      static const ImVec4 joint_colors[] = {
+         ImVec4(1, 1, 1, 1),
+         ImVec4(0.70f, 0.76f, 0.88f, 1), // hinge  : pale slate
+         ImVec4(0.80f, 0.70f, 0.86f, 1), // cone   : soft mauve
+         ImVec4(0.86f, 0.78f, 0.56f, 1), // hinge2 : soft ochre
+      };
+
+      // one tally feeds every readout on this tab
+      uint shape_counts[6] = {};
+      uint awake = 0, asleep = 0, total = 0;
+      for (uint i = 1; i < phys->num_bodies; i++)
+      {
+         if (!phys->bodies[i].body) continue;
+         total++;
+         shape_counts[phys->bodies[i].shape]++;
+         if (phys->bodies[i].body->getMass() == 0) continue; // static
+         if (phys->is_awake(i)) awake++; else asleep++;
+      }
+
+      section("World");
+      kv("gravity", "%.2f m/s2", phys->world->getGravity().y());
+      kv("material", "friction %.2f | restitution %.2f | ground %.2f",
+         PHYS_FRICTION, PHYS_RESTITUTION, GROUND_FRICTION);
+      kv("world", "%u / %d bodies | %u / %d joints | solver %d iters",
+         total, MAX_BODIES, phys->num_joints, MAX_JOINTS, phys->world->getSolverInfo().m_numIterations);
+
+      ImGui::TextDisabled("shapes"); // one tinted tally per shape tag
+      for (uint s = 1; s < 6; s++)
+      {
+         ImGui::SameLine();
+         ImGui::TextColored(shape_colors[s], "%u %s", shape_counts[s], shape_names[s]);
+      }
+
+      // vehicle : live numbers read straight off the hinges (only when built)
+      if (phys->vehicle.chassis_id)
+      {
+         section("Vehicle");
+         float speed = phys->vehicle_speed();
+         kv("speed", "%.2f m/s  |  %.1f km/h", speed, speed * 3.6f);
+         kv("steer", "%.1f deg", phys->vehicle_steer() * 180.f / PI);
+         kv("wheel", "%.2f rev", phys->vehicle_spin() / (2.f * PI));
+         kv("arrows", "spin %.0f | steer %.0f", phys->vehicle.spin_cmd, phys->vehicle.steer_cmd);
+
+         if (ImGui::BeginTable("physwheels", 4,
+            TABLE_FLAGS))
+         {
+            ImGui::TableSetupColumn("axle",      ImGuiTableColumnFlags_WidthFixed, ui(56));
+            ImGui::TableSetupColumn("id",        ImGuiTableColumnFlags_WidthFixed, ui(28));
+            ImGui::TableSetupColumn("spin rev",  ImGuiTableColumnFlags_WidthFixed, ui(66));
+            ImGui::TableSetupColumn("steer deg", ImGuiTableColumnFlags_WidthFixed, ui(66));
+            ImGui::TableHeadersRow();
+
+            for (uint i = 0; i < 4; i++)
+            {
+               btHinge2Constraint* h = phys->vehicle.hinges[i];
+               ImGui::TableNextRow();
+               ImGui::TableNextColumn(); ImGui::Text("%s %u", i < 2 ? "front" : "rear", i % 2 + 1);
+               ImGui::TableNextColumn(); ImGui::Text("%u", phys->vehicle.wheel_ids[i]);
+               ImGui::TableNextColumn(); ImGui::Text("%.2f", h->getAngle2() / (2.f * PI));
+               ImGui::TableNextColumn();
+               if (i < 2) ImGui::Text("%.1f", h->getAngle1() * 180.f / PI);
+               else       ImGui::TextDisabled("-"); // rear axle : no steering motor
+            }
+            ImGui::EndTable();
+         }
+      }
+
+      section("Constraints");
+      if (phys->num_joints == 0)
+         ImGui::TextDisabled("none built yet");
+      else if (ImGui::BeginTable("physjoints", 4,
+         TABLE_FLAGS))
+      {
+         ImGui::TableSetupColumn("kind",       ImGuiTableColumnFlags_WidthFixed, ui(62));
+         ImGui::TableSetupColumn("a",          ImGuiTableColumnFlags_WidthFixed, ui(30));
+         ImGui::TableSetupColumn("b",          ImGuiTableColumnFlags_WidthFixed, ui(30));
+         ImGui::TableSetupColumn("limits deg", ImGuiTableColumnFlags_WidthFixed, ui(158));
+         ImGui::TableHeadersRow();
+
+         const float to_deg = 180.f / PI;
+         for (uint j = 0; j < phys->num_joints; j++)
+         {
+            Phys_Joint& jt = phys->joints[j];
+            uint kind = (jt.kind <= 3) ? jt.kind : 0; // defensive : never index past the names
+
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn(); ImGui::TextColored(joint_colors[kind], "%s", joint_names[kind]);
+            ImGui::TableNextColumn(); ImGui::TextColored(shape_colors[phys->bodies[jt.a].shape], "%u", jt.a);
+            ImGui::TableNextColumn(); ImGui::TextColored(shape_colors[phys->bodies[jt.b].shape], "%u", jt.b);
+            ImGui::TableNextColumn();
+            if (jt.kind == PHYS_CONETWIST)   ImGui::Text("swing %.0f | twist %.0f", jt.lo * to_deg, jt.hi * to_deg);
+            else if (jt.kind == PHYS_HINGE2) ImGui::Text("steer +-%.0f", jt.hi * to_deg);
+            else                             ImGui::Text("%.0f .. %.0f", jt.lo * to_deg, jt.hi * to_deg);
+         }
+         ImGui::EndTable();
+      }
+
       section("Bodies");
-      ImGui::Text("in world : %u / %u slots", phys->num_bodies - 1, MAX_BODIES);
+      // state chips : what the solver is actually doing right now
+      ImGui::TextColored(severity_colors[WARNING], "%u awake", awake);
+      ImGui::SameLine();
+      ImGui::TextColored(ImVec4(0.56f, 0.68f, 0.79f, 1), "%u asleep", asleep);
+      ImGui::SameLine();
+      ImGui::TextColored(ImVec4(0.63f, 0.61f, 0.58f, 1), "%u static", total - awake - asleep);
+      ImGui::SameLine(0, ui(12));
+      if (ImGui::SmallButton("wake all")) phys->wake_all();
+      ImGui::SameLine();
+      if (ImGui::SmallButton("reset all")) phys->reset_all();
+      ImGui::SameLine();
       ImGui::Checkbox("collider wireframes", &phys->debug.enabled);
 
-      static const char* shape_names[] = { "none", "box", "sphere", "capsule", "cylinder" };
-
-      if (ImGui::BeginTable("physbodies", 9,
-         ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_RowBg | ImGuiTableFlags_Borders))
+      if (ImGui::BeginTable("physbodies", 6,
+         TABLE_FLAGS))
       {
-         ImGui::TableSetupColumn("id"   , ImGuiTableColumnFlags_WidthFixed, 30);
-         ImGui::TableSetupColumn("shape", ImGuiTableColumnFlags_WidthFixed, 52);
-         ImGui::TableSetupColumn("pos x", ImGuiTableColumnFlags_WidthFixed, 50);
-         ImGui::TableSetupColumn("pos y", ImGuiTableColumnFlags_WidthFixed, 50);
-         ImGui::TableSetupColumn("pos z", ImGuiTableColumnFlags_WidthFixed, 50);
-         ImGui::TableSetupColumn("vel x", ImGuiTableColumnFlags_WidthFixed, 50);
-         ImGui::TableSetupColumn("vel y", ImGuiTableColumnFlags_WidthFixed, 50);
-         ImGui::TableSetupColumn("vel z", ImGuiTableColumnFlags_WidthFixed, 50);
-         ImGui::TableSetupColumn("state", ImGuiTableColumnFlags_WidthFixed, 54);
+         ImGui::TableSetupColumn("id"   , ImGuiTableColumnFlags_WidthFixed, ui(28));
+         ImGui::TableSetupColumn("shape", ImGuiTableColumnFlags_WidthFixed, ui(62));
+         ImGui::TableSetupColumn("joints", ImGuiTableColumnFlags_WidthFixed, ui(46));
+         ImGui::TableSetupColumn("pos", ImGuiTableColumnFlags_WidthFixed, ui(122));
+         ImGui::TableSetupColumn("vel", ImGuiTableColumnFlags_WidthFixed, ui(122));
+         ImGui::TableSetupColumn("state", ImGuiTableColumnFlags_WidthFixed, ui(52));
          ImGui::TableHeadersRow();
 
          for (uint i = 1; i < phys->num_bodies; i++)
@@ -347,23 +644,28 @@ void draw_PHYS_console(Physics* phys)
 
             vec3 pos = phys->get_position(i);
             vec3 vel = phys->get_velocity(i);
+            bool moving = b.mass > 0 && phys->is_awake(i);
 
             ImGui::TableNextRow();
+            if (moving) // live rows glow faint amber : motion at a glance
+               ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, IM_COL32(255, 188, 80, 24));
+
             ImGui::TableNextColumn(); ImGui::Text("%u", i);
-            ImGui::TableNextColumn(); ImGui::Text("%s", shape_names[b.shape]);
-            ImGui::TableNextColumn(); ImGui::Text("%.2f", pos.x);
-            ImGui::TableNextColumn(); ImGui::Text("%.2f", pos.y);
-            ImGui::TableNextColumn(); ImGui::Text("%.2f", pos.z);
-            ImGui::TableNextColumn(); ImGui::Text("%.2f", vel.x);
-            ImGui::TableNextColumn(); ImGui::Text("%.2f", vel.y);
-            ImGui::TableNextColumn(); ImGui::Text("%.2f", vel.z);
+            ImGui::TableNextColumn();
+            ImGui::TextColored(shape_colors[b.shape], "%s", shape_names[b.shape]);
+            ImGui::TableNextColumn();
+            uint linked = phys->joints_of(i);
+            if (linked) ImGui::TextColored(data_color, "%u", linked);
+            else        ImGui::TextDisabled("-");
+            ImGui::TableNextColumn(); ImGui::Text("%6.2f %6.2f %6.2f", pos.x, pos.y, pos.z);
+            ImGui::TableNextColumn(); ImGui::Text("%6.2f %6.2f %6.2f", vel.x, vel.y, vel.z);
             ImGui::TableNextColumn();
             if (b.mass == 0)
-               ImGui::Text("static");
-            else if (phys->is_awake(i))
+               ImGui::TextColored(ImVec4(0.63f, 0.61f, 0.58f, 1), "static");
+            else if (moving)
                ImGui::TextColored(severity_colors[WARNING], "awake");
             else
-               ImGui::TextColored(severity_colors[TRACE], "sleep");
+               ImGui::TextColored(ImVec4(0.56f, 0.68f, 0.79f, 1), "sleep");
          }
          ImGui::EndTable();
       }
@@ -383,16 +685,16 @@ void draw_ASST_console(GameWindow* window, GameRenderer* rndr)
       auto mesh_table = [](const char* table_id, auto* meshes, auto* db, uint vert_bytes, TextureLoader* tx)
       {
          if (!ImGui::BeginTable(table_id, 7,
-            ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_RowBg | ImGuiTableFlags_Borders))
+            TABLE_FLAGS))
             return;
 
-         ImGui::TableSetupColumn("id"  , ImGuiTableColumnFlags_WidthFixed, 30);
-         ImGui::TableSetupColumn("file", ImGuiTableColumnFlags_WidthFixed, 190);
-         ImGui::TableSetupColumn("disk", ImGuiTableColumnFlags_WidthFixed, 54);
-         ImGui::TableSetupColumn("verts", ImGuiTableColumnFlags_WidthFixed, 58);
-         ImGui::TableSetupColumn("tris",  ImGuiTableColumnFlags_WidthFixed, 54);
-         ImGui::TableSetupColumn("gpu" , ImGuiTableColumnFlags_WidthFixed, 54);
-         ImGui::TableSetupColumn("texture", ImGuiTableColumnFlags_WidthFixed, 100);
+         ImGui::TableSetupColumn("id"  , ImGuiTableColumnFlags_WidthFixed, ui(30));
+         ImGui::TableSetupColumn("file", ImGuiTableColumnFlags_WidthFixed, ui(190));
+         ImGui::TableSetupColumn("disk", ImGuiTableColumnFlags_WidthFixed, ui(54));
+         ImGui::TableSetupColumn("verts", ImGuiTableColumnFlags_WidthFixed, ui(58));
+         ImGui::TableSetupColumn("tris",  ImGuiTableColumnFlags_WidthFixed, ui(54));
+         ImGui::TableSetupColumn("gpu" , ImGuiTableColumnFlags_WidthFixed, ui(54));
+         ImGui::TableSetupColumn("texture", ImGuiTableColumnFlags_WidthFixed, ui(100));
          ImGui::TableHeadersRow();
 
          // texture id -> file name only (the loader holds the full path)
@@ -458,31 +760,56 @@ void draw_ASST_console(GameWindow* window, GameRenderer* rndr)
          ImGui::EndTable();
       };
 
-      // ---- static meshes : file info joined with what actually landed in the gpu buffer
-      section("Static Meshes");
-      mesh_table("staticmeshtable", rndr->meshloader.meshes, &rndr->drawbuffer, sizeof(MeshVertexData), &rndr->txloader);
+      // ---- meshes : one layout at a time. the picker is the drawer mode, which also
+      // makes the no-uv buffers visible here instead of nowhere
+      section("Meshes");
 
-      // ---- skinned meshes : weights + bone ids vertex layout, posed by the active clip
-      section("Skinned Meshes");
-      mesh_table("skinnedmeshtable", rndr->meshloader_anim.meshes, &rndr->drawbuffer_anim, sizeof(MeshVertexDataAnim), &rndr->txloader);
+      // the table id has to differ per layout : imgui keys its state on that string
+      static const char* mesh_table_ids[DRAW_MODE_COUNT] = {
+         "meshtable_1", "meshtable_3", "meshtable_2", "meshtable_4",
+      };
+
+      static int mesh_layout = MODE_STATIC_UV;
+      const char* layouts[DRAW_MODE_COUNT];
+      for (uint m = 0; m < DRAW_MODE_COUNT; m++) layouts[m] = DRAW_MODE_INFO[m].name;
+
+      ImGui::SetNextItemWidth(ui(300));
+      ImGui::Combo("layout", &mesh_layout, layouts, DRAW_MODE_COUNT);
+
+      // the skinned modes read the anim loader's meshes, the static ones the mesh loader's.
+      // the two loaders' rows are different types, so this stays a branch, not a ternary
+      DrawBuffer& db          = rndr->buffer((uint)mesh_layout);
+      const char* table_id    = mesh_table_ids[mesh_layout];
+      uint        vertex_size = DRAW_MODE_INFO[mesh_layout].vertex_size;
+
+      if (DRAW_MODE_INFO[mesh_layout].skinned)
+         mesh_table(table_id, rndr->meshloader_anim.meshes, &db, vertex_size, &rndr->txloader);
+      else
+         mesh_table(table_id, rndr->meshloader.meshes,      &db, vertex_size, &rndr->txloader);
 
       // ---- animation clips : skeleton (parents + inverse-bind) + keyframes per loaded slot
       section("Animations");
       {
          AnimLoader* anim = &rndr->animloader;
-         uint bones = anim->num_players ? anim->clips[anim->players[anim->focus].clip_id].num_bones : 0u;
-         ImGui::Text("skeleton : %u bones in use / %u max | pose ubo : %u bytes (binding 1)",
+
+         // widest skeleton any loaded clip uses : that is what the pose ubo has to hold
+         uint bones = 0;
+         for (uint i = 1; i < MAX_ANIMATIONS; i++) // slot 0 = no clip
+            if (anim->clip_paths[i][0] && anim->clips[i].num_bones > bones)
+               bones = anim->clips[i].num_bones;
+
+         ImGui::Text("widest skeleton : %u bones / %u max | pose ubo : %u bytes (binding 1)",
             bones, MAX_ANIM_BONES, (uint)(MAX_ANIM_BONES * sizeof(mat4)));
 
          if (ImGui::BeginTable("cliptable", 6,
-            ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_RowBg | ImGuiTableFlags_Borders))
+            TABLE_FLAGS))
          {
-            ImGui::TableSetupColumn("slot"  , ImGuiTableColumnFlags_WidthFixed, 36);
-            ImGui::TableSetupColumn("file"  , ImGuiTableColumnFlags_WidthFixed, 190);
-            ImGui::TableSetupColumn("bones" , ImGuiTableColumnFlags_WidthFixed, 48);
-            ImGui::TableSetupColumn("frames", ImGuiTableColumnFlags_WidthFixed, 52);
-            ImGui::TableSetupColumn("holds" , ImGuiTableColumnFlags_WidthFixed, 48);
-            ImGui::TableSetupColumn("ram"   , ImGuiTableColumnFlags_WidthFixed, 64);
+            ImGui::TableSetupColumn("slot"  , ImGuiTableColumnFlags_WidthFixed, ui(36));
+            ImGui::TableSetupColumn("file"  , ImGuiTableColumnFlags_WidthFixed, ui(190));
+            ImGui::TableSetupColumn("bones" , ImGuiTableColumnFlags_WidthFixed, ui(48));
+            ImGui::TableSetupColumn("frames", ImGuiTableColumnFlags_WidthFixed, ui(52));
+            ImGui::TableSetupColumn("holds" , ImGuiTableColumnFlags_WidthFixed, ui(48));
+            ImGui::TableSetupColumn("ram"   , ImGuiTableColumnFlags_WidthFixed, ui(64));
             ImGui::TableHeadersRow();
 
             for (uint i = 1; i < MAX_ANIMATIONS; i++) // slot 0 = no clip
@@ -507,19 +834,8 @@ void draw_ASST_console(GameWindow* window, GameRenderer* rndr)
          }
       }
 
-      // ---- textures : TextureLoader storage
-      section("Textures");
-      if (rndr->txloader.num_textures == 0)
-      {
-         ImGui::TextColored(severity_colors[WARNING], "no textures loaded");
-      }
-      for (uint i = 0; i < rndr->txloader.num_textures; i++)
-      {
-         Texture_Data* tx = &rndr->txloader.textures[i];
-         ImGui::Image((ImTextureID)(intptr_t)tx->handle, ImVec2(48, 48), ImVec2(0, 1), ImVec2(1, 0));
-         ImGui::SameLine();
-         ImGui::Text("id %u : %s\n%dx%d, handle %u", tx->id, tx->path, tx->width, tx->height, tx->handle);
-      }
+      // ---- textures : the loader's contents, one at a time
+      draw_texture_panel(rndr);
 
       // ---- shaders : compile/link results queried from GL at startup
       section("Shaders");
@@ -546,42 +862,200 @@ void draw_ASST_console(GameWindow* window, GameRenderer* rndr)
 }
 
 // ---------------- tab 4 : Anim ----------------
-// reads/writes the renderer's AnimLoader : the focus player's state (what update()
-// wrote), its control (what the tab sets) and the clip's segments (frame ranges +
-// per-segment feel). one player per clip in flight - the picker picks who edits
-void draw_ANIM_console(AnimLoader* anim)
+// an inspector for the skinned meshes the scene draws : pick one from the dropdown
+// and everything under it belongs to that mesh - the player posing it, the clip that
+// player runs (skeleton, segments and per-segment feel) and the playback controls.
+// one player per clip in flight, so several meshes animate at once
+void draw_ANIM_console(GameRenderer* rndr)
 {
    using namespace CNSL;
 
    if (ImGui::BeginTabItem("Anim"))
    {
-      section("Playback");
+      AnimLoader* anim = &rndr->animloader;
 
-      if (anim->num_players == 0)
+      static const char* eases[] = { "linear", "smooth", "in-out cubic", "out cubic", "in-out quint" };
+      static int  selected   = 0; // segment the editor below acts on
+      static bool show_juice = false;
+      static bool combine    = false;
+
+      // the mesh loader keeps the path every id was loaded from. id 0 is every unused
+      // loader slot, so it is never looked up, and a name is never empty : an empty
+      // label in a combo is how garbage ends up on screen
+      static char fallback[32];
+
+      auto path_of = [&](uint mesh_id) -> const char*
       {
-         ImGui::TextColored(severity_colors[FIXME], "no clip playing");
+         if (mesh_id == 0) return "";
+         for (uint i = 0; i < MAX_MESHES; i++)
+            if (rndr->meshloader_anim.meshes[i].id == mesh_id)
+               return rndr->meshloader_anim.meshes[i].filepath;
+         return "";
+      };
+      auto name_of = [&](uint mesh_id) -> const char*
+      {
+         const char* path  = path_of(mesh_id);
+         const char* slash = strrchr(path, '/');
+         const char* name  = (slash ? slash + 1 : path);
+
+         if (name[0]) return name;
+         snprintf(fallback, sizeof(fallback), "mesh %u", mesh_id);
+         return fallback;
+      };
+      auto clip_of = [&](uint clip_id) -> const char*
+      {
+         const char* path  = (clip_id < MAX_ANIMATIONS) ? anim->clip_paths[clip_id] : "";
+         const char* slash = strrchr(path, '/');
+         const char* name  = (slash ? slash + 1 : path);
+
+         if (name[0]) return name;
+         snprintf(fallback, sizeof(fallback), "clip %u", clip_id);
+         return fallback;
+      };
+
+      // ---- the mesh : the dropdown the whole tab hangs off
+      section("Mesh");
+
+      // both skinned buffers : an entry past MAX_MESHES is the no-uv one, so a single
+      // pick stays unambiguous without a second dropdown
+      auto buf_of = [&](uint entry) -> DrawBuffer*
+      {
+         return &rndr->buffer((entry >= MAX_MESHES) ? MODE_ANIM_NOUV : MODE_ANIM_UV);
+      };
+      auto slot_of    = [](uint entry) { return (entry >= MAX_MESHES) ? entry - MAX_MESHES : entry; };
+      auto mesh_id_at = [&](uint entry) { return buf_of(entry)->mesh_info[slot_of(entry)].mesh_id; };
+
+      uint slots[MAX_MESHES * 2];
+      uint num_slots = 0;
+
+      DrawBuffer& anim_uv   = rndr->buffer(MODE_ANIM_UV);
+      DrawBuffer& anim_nouv = rndr->buffer(MODE_ANIM_NOUV);
+
+      for (uint i = 0; i < MAX_MESHES; i++)
+         if (anim_uv.mesh_info[i].mesh_id)
+            slots[num_slots++] = i;
+
+      for (uint i = 0; i < MAX_MESHES; i++)
+         if (anim_nouv.mesh_info[i].mesh_id)
+            slots[num_slots++] = i + MAX_MESHES;
+
+      if (num_slots == 0)
+      {
+         ImGui::TextColored(severity_colors[FIXME], "no animated mesh in the scene");
+         ImGui::EndTabItem();
+         return;
+      }
+
+      static uint pick = (uint)-1; // an entry : it never moves, unlike a list index
+      bool valid = false;
+      for (uint i = 0; i < num_slots; i++)
+         if (slots[i] == pick) valid = true;
+      if (!valid) pick = slots[0];
+
+      auto* mi = &buf_of(pick)->mesh_info[slot_of(pick)];
+
+      ImGui::SetNextItemWidth(ui(300));
+      if (ImGui::BeginCombo("mesh", name_of(mi->mesh_id)))
+      {
+         for (uint i = 0; i < num_slots; i++)
+         {
+            uint mesh_id = mesh_id_at(slots[i]);
+            bool nouv    = (slots[i] >= MAX_MESHES);
+
+            char label[96];
+            snprintf(label, sizeof(label), "%u : %.40s%s##amesh%u",
+               mesh_id, name_of(mesh_id), nouv ? "  (no uv)" : "", slots[i]);
+            if (ImGui::Selectable(label, slots[i] == pick)) pick = slots[i];
+            if (slots[i] == pick) ImGui::SetItemDefaultFocus();
+         }
+         ImGui::EndCombo();
+      }
+
+      kv("source", "%.44s", name_of(mi->mesh_id));
+      kv("geometry", "%u verts | %u tris | %u instances",
+         mi->num_vertices, mi->num_indices / 3, mi->num_instances);
+      kv("texture", "id %u", mi->tx_id);
+
+      // ---- the player posing it : writing here is what update() reads next frame
+      uint player = mi->anim_player;
+      bool posed  = player < anim->num_players;
+
+      ImGui::SetNextItemWidth(ui(300));
+      if (ImGui::BeginCombo("posed by", posed ? clip_of(anim->players[player].clip_id)
+                                             : "none - identity pose"))
+      {
+         if (ImGui::Selectable("none - identity pose", !posed))
+            mi->anim_player = (uint)-1;
+
+         for (uint i = 0; i < anim->num_players; i++)
+         {
+            char label[80];
+            snprintf(label, sizeof(label), "%u : %.40s##aply%u",
+               i, clip_of(anim->players[i].clip_id), i);
+            if (ImGui::Selectable(label, posed && i == player))
+               mi->anim_player = i;
+            if (posed && i == player) ImGui::SetItemDefaultFocus();
+         }
+         ImGui::EndCombo();
+      }
+
+      // ---- the rig on screen : the animator's own overlay pass. it follows whatever
+      // the dropdown is showing, so it is always the mesh being inspected
+      section("Skeleton");
+      ImGui::Checkbox("skeleton", &rndr->animdebug.enabled);
+      ImGui::SameLine();
+      ImGui::Checkbox("bones", &rndr->animdebug.bones);
+      ImGui::SameLine();
+      ImGui::Checkbox("parent links", &rndr->animdebug.links);
+      ImGui::SameLine();
+      ImGui::Checkbox("joint axes", &rndr->animdebug.axes);
+
+      if (rndr->animdebug.enabled)
+      {
+         rndr->animdebug.slot  = slot_of(pick); // the overlay takes a slot plus its buffer
+         rndr->animdebug.no_uv = (pick >= MAX_MESHES);
+         kv("overlay", "mesh %u, in world space", mi->mesh_id);
+
+         // what the tint means : one colour per bone, in index order
+         ImGui::TextDisabled("tint");
+         for (uint t = 0; t < SKELETON_TIERS; t++)
+         {
+            ImGui::SameLine();
+            vec3 c = SKELETON_TIER_COLOR[t];
+            ImGui::TextColored(ImVec4(c.r, c.g, c.b, 1.f),
+               (t + 1 == SKELETON_TIERS) ? "%u+" : "%u", t);
+         }
+
+         // the wiring in words. these rigs are flat - one root, every part hanging off
+         // it - so this, not a chain depth, is what says which bone moves which
+         if (posed)
+         {
+            Animation* bones_of = &anim->clips[anim->players[player].clip_id];
+            ImGui::TextDisabled("bones");
+            for (uint b = 0; b < bones_of->num_bones; b++)
+            {
+               int  p = bones_of->parents[b];
+               vec3 c = SKELETON_TIER_COLOR[(b < SKELETON_TIERS) ? b : SKELETON_TIERS - 1];
+
+               ImGui::SameLine();
+               ImGui::TextColored(ImVec4(c.r, c.g, c.b, 1.f),
+                  (p < 0 || p == (int)b) ? "%u root" : "%u<-%d", b, p);
+            }
+         }
+      }
+
+      if (!posed)
+      {
+         ImGui::TextDisabled("nothing bound : this mesh draws its identity pose");
       }
       else
       {
-         static int selected = 0; // tab-local : which segment the Feel section edits
-         static const char* eases[] = { "linear", "smooth", "in-out cubic", "out cubic", "in-out quint" };
-
-         Anim_Player* pl = &anim->players[anim->focus];
+         Anim_Player* pl = &anim->players[player];
          Animation* clip = &anim->clips[pl->clip_id];
-         if (selected >= (int)clip->num_segs) selected = (int)clip->num_segs - 1; // the picker can swap to a shorter clip
+         if (selected >= (int)clip->num_segs) selected = (int)clip->num_segs - 1; // the pick can swap to a shorter clip
 
-         // pick which player this tab edits
-         ImGui::Text("player :");
-         for (uint i = 0; i < anim->num_players; i++)
-         {
-            ImGui::SameLine();
-            const char* file = anim->clip_paths[anim->players[i].clip_id];
-            const char* name = strrchr(file, '/'); name = name ? name + 1 : file;
-            char label[48];
-            snprintf(label, sizeof(label), "%s%u : %.14s##plr%u",
-               (i == anim->focus) ? " >" : " ", i, name, i);
-            if (ImGui::SmallButton(label)) anim->focus = i;
-         }
+         // ---- playback : the timeline, the transport and the clock
+         section("Playback");
 
          const Anim_Segment& pseg = clip->segs[pl->state.seg]; // the playing one
 
@@ -603,26 +1077,46 @@ void draw_ANIM_console(AnimLoader* anim)
             uint b1 = (hold.last < pseg.last) ? hold.last : pseg.last;
             float x0 = r0.x + ((b0 - pseg.first) / span) * (r1.x - r0.x);
             float x1 = r0.x + (((b1 + 1) - pseg.first) / span) * (r1.x - r0.x);
-            draw_list->AddRectFilled(ImVec2(x0, r0.y), ImVec2(x1, r1.y), IM_COL32(90, 170, 100, 90));
-            draw_list->AddLine(ImVec2(x0, r0.y), ImVec2(x0, r1.y), IM_COL32(130, 230, 140, 200));
+            draw_list->AddRectFilled(ImVec2(x0, r0.y), ImVec2(x1, r1.y), IM_COL32(118, 172, 124, 78));
+            draw_list->AddLine(ImVec2(x0, r0.y), ImVec2(x0, r1.y), IM_COL32(150, 198, 150, 215), ui(1.f));
          }
 
-         // transport
-         if (ImGui::Button(pl->control.paused ? ">" : "||"))
-            pl->control.paused = !pl->control.paused;
-         ImGui::SameLine();
-         if (ImGui::Button("restart"))
-            pl->control.restart = true;
-         ImGui::SameLine();
+         // transport : one dropdown, and its own label is the playback state
          const char* play_state = pl->control.paused ? "paused"
             : pl->state.playing ? "playing"
             : (pl->state.duration > 0 ? "finished" : "static frame 0");
-         ImGui::Text("%s | %.2f / %.2f s | frame %.2f / %u | seg %u / %u",
-            play_state, pl->state.elapsed, pl->state.duration, pl->state.frame_f,
-            clip->num_frames, pl->state.seg, clip->num_segs);
 
-         // ---- the segmented clip : several animations live in one file as frame ranges
-         section("Segments");
+         ImGui::SetNextItemWidth(ui(170));
+         if (ImGui::BeginCombo("playback", play_state))
+         {
+            if (ImGui::Selectable("play", !pl->control.paused))
+            {
+               pl->control.paused = false;
+               if (!pl->state.playing && pl->state.duration > 0)
+                  pl->control.restart = true; // finished : play means start over
+            }
+            if (ImGui::Selectable("pause", pl->control.paused))
+               pl->control.paused = true;
+            if (ImGui::Selectable("restart"))
+               pl->control.restart = true;
+            ImGui::EndCombo();
+         }
+
+         kv("clock", "%.2f / %.2f s", pl->state.elapsed, pl->state.duration);
+         kv("frame", "%.2f / %u", pl->state.frame_f, clip->num_frames);
+         kv("segment", "%u / %u", pl->state.seg, clip->num_segs);
+         kv("seam", "%.2f s blend where the loop wraps", anim->seam_duration);
+
+         ImGui::SliderFloat("speed", &pl->control.speed, 0.1f, 2.f, "%.2fx");
+         ImGui::Checkbox("loop", &pl->control.loop);
+
+         // ---- the clip : several animations live in one file as frame ranges
+         section("Clip");
+         kv("file", "%.44s", clip_of(pl->clip_id));
+         kv("skeleton", "%u bones | %u frames", clip->num_bones, clip->num_frames);
+         kv("holds", "%u rotation rests | %u segments", clip->num_holds, clip->num_segs);
+         kv("length", "%.2f s : set by play(), scaled by speed", pl->state.duration);
+
          for (uint s = 0; s < clip->num_segs; s++)
          {
             Anim_Segment& sg = clip->segs[s];
@@ -691,10 +1185,10 @@ void draw_ANIM_console(AnimLoader* anim)
             if (selected >= (int)clip->num_segs) selected = clip->num_segs - 1;
          }
 
-         // ---- feel : the selected segment's easing + juice, previewed on the graph
-         section("Feel");
+         // ---- the selected segment : frame range, feel and what both do to the clock
+         section("Segment");
          ImGui::Text("segment %d of %u", selected, clip->num_segs);
-         ImGui::Combo("time ease", &clip->segs[selected].ease, eases, 5);
+         ImGui::Combo("ease", &clip->segs[selected].ease, eases, 5);
          ImGui::SliderFloat("juice", &clip->segs[selected].juice, 0.f, 1.f, "%.2f");
 
          // time warp graph : clock (x) -> clip position (y), all methods at once.
@@ -702,15 +1196,13 @@ void draw_ANIM_console(AnimLoader* anim)
          // juice layer = the spring chasing a ramp, same constants as apply_spring ;
          // combine = the spring chases the selected ease instead, so you see both together
          {
-            static bool show_juice = false;
-            static bool combine = false; // ease shapes the target the spring follows
             const int N = 48;
             int ease = clip->segs[selected].ease;
             ImVec2 p0 = ImGui::GetCursorScreenPos();
-            ImVec2 size(240, 140), p1(p0.x + size.x, p0.y + size.y);
+            ImVec2 size(ui(240), ui(140)), p1(p0.x + size.x, p0.y + size.y);
             ImDrawList* dl = ImGui::GetWindowDrawList();
 
-            dl->AddRectFilled(p0, p1, IM_COL32(16, 18, 24, 255)); // plot bg
+            dl->AddRectFilled(p0, p1, IM_COL32(8, 10, 15, 255)); // plot bg
             for (int q = 1; q < 4; q++) // quarter grid
             {
                dl->AddLine(ImVec2(p0.x + size.x * q / 4, p0.y), ImVec2(p0.x + size.x * q / 4, p1.y),
@@ -732,8 +1224,8 @@ void draw_ANIM_console(AnimLoader* anim)
                }
                bool active = (m == ease);
                dl->AddPolyline(pts, N + 1,
-                  active ? IM_COL32(120, 180, 255, 255) : IM_COL32(150, 160, 180, 90),
-                  active ? 2.f : 1.f, true);
+                  active ? IM_COL32(150, 172, 205, 255) : IM_COL32(158, 152, 142, 90),
+                  active ? ui(2.f) : ui(1.f), true);
             }
 
             // juice layer : spring response over a 2s window (ramps 0..1s, then settles)
@@ -757,15 +1249,15 @@ void draw_ANIM_console(AnimLoader* anim)
                      pos += vel * sdt;
                      pts[i] = ImVec2(p0.x + (t / 2.f) * size.x, p1.y - pos * size.y);
                   }
-                  dl->AddPolyline(pts, 121, IM_COL32(235, 130, 210, 210), 1.5f, false);
+                  dl->AddPolyline(pts, 121, IM_COL32(218, 158, 190, 205), ui(1.5f), false);
                }
             }
 
             // live playback dot on the selected ease
             float raw = (pl->state.duration > 0) ? pl->state.elapsed / pl->state.duration : 0.f;
             ImVec2 dot(p0.x + raw * size.x, p1.y - anim->time_warp(raw, ease) * size.y);
-            dl->AddLine(ImVec2(dot.x, p0.y), ImVec2(dot.x, p1.y), IM_COL32(255, 220, 90, 70));
-            dl->AddCircleFilled(dot, 3.f, IM_COL32(255, 220, 90, 255));
+            dl->AddLine(ImVec2(dot.x, p0.y), ImVec2(dot.x, p1.y), IM_COL32(225, 200, 130, 75), ui(1.f));
+            dl->AddCircleFilled(dot, ui(3.f), IM_COL32(225, 200, 130, 255));
 
             ImGui::Dummy(size);
             ImGui::Checkbox("juice layer", &show_juice);
@@ -774,13 +1266,187 @@ void draw_ANIM_console(AnimLoader* anim)
             ImGui::Text("x : clock    y : clip position    dot = playback head");
          }
 
-         ImGui::SliderFloat("speed", &pl->control.speed, 0.1f, 2.f, "%.2fx");
-         ImGui::Checkbox("loop", &pl->control.loop);
+      }
 
-         section("Clip");
-         ImGui::Text("bones : %u | frames : %u | holds : %u | segments : %u",
-            clip->num_bones, clip->num_frames, clip->num_holds, clip->num_segs);
-         ImGui::Text("length: %.2fs (set by play(), scaled by speed)", pl->state.duration);
+      ImGui::EndTabItem();
+   }
+}
+
+// ---------------- tab : Player ----------------
+void draw_PLAYER_console(GameScene* scene, GameRenderer* rndr)
+{
+   using namespace CNSL;
+
+   Player* player = &scene->player;
+   static const char* action_names[] = { "reload", "shoot", "inspect", "idle" };
+
+   if (ImGui::BeginTabItem("Player"))
+   {
+      section("View");
+      kv("mode", player->flycam ? "fly camera (F)" : "capsule (F to fly)");
+      kv("position", "%.2f %.2f %.2f", player->camera.position.x, player->camera.position.y,
+         player->camera.position.z);
+      kv("grounded / bob", "%s / %.2f", player->grounded ? "yes" : "no", player->bob);
+      kv("fov punch", "%.2f deg", player->fov_punch);
+
+      section("View model");
+      uint action = (player->action <= 3) ? player->action : 3; // defensive index
+      kv("action", "%s", action_names[action]);
+      kv("time left", "%.2f s", player->action_time);
+      kv("ammo", "%u / %u", player->ammo, GUN_MAG);
+      kv("shots", "%u fired, %u hit", player->fired, player->hits);
+      kv("mesh / player", "%u / %u", player->gun_mesh, player->gun_player);
+      kv("sway", "%.3f %.3f", player->sway.x, player->sway.y);
+      kv("kick", "%.2f %.2f %.2f", player->kick.x, player->kick.y, player->kick.z);
+
+      // drive the gun from here too : handy without grabbing the mouse
+      if (ImGui::SmallButton("fire"))    player->fire(rndr, &scene->phys);
+      ImGui::SameLine();
+      if (ImGui::SmallButton("reload"))  player->start_action(rndr, GUN_RELOAD, GUN_RELOAD_TIME);
+      ImGui::SameLine();
+      if (ImGui::SmallButton("inspect")) player->start_action(rndr, GUN_INSPECT, GUN_INSPECT_TIME);
+
+      section("Bullets");
+      uint live_rounds = player->bullets_alive();
+      kv("alive", "%u / %u", live_rounds, MAX_BULLETS);
+
+      if (live_rounds == 0)
+         ImGui::TextDisabled("none in flight");
+      else if (ImGui::BeginTable("playerbullets", 7,
+         TABLE_FLAGS))
+      {
+         ImGui::TableSetupColumn("#",     ImGuiTableColumnFlags_WidthFixed, ui(24));
+         ImGui::TableSetupColumn("pos x", ImGuiTableColumnFlags_WidthFixed, ui(52));
+         ImGui::TableSetupColumn("pos y", ImGuiTableColumnFlags_WidthFixed, ui(52));
+         ImGui::TableSetupColumn("pos z", ImGuiTableColumnFlags_WidthFixed, ui(52));
+         ImGui::TableSetupColumn("speed", ImGuiTableColumnFlags_WidthFixed, ui(56));
+         ImGui::TableSetupColumn("life",  ImGuiTableColumnFlags_WidthFixed, ui(44));
+         ImGui::TableSetupColumn("state", ImGuiTableColumnFlags_WidthFixed, ui(50));
+         ImGui::TableHeadersRow();
+
+         for (uint i = 0; i < MAX_BULLETS; i++)
+         {
+            Player::Bullet& b = player->bullets[i];
+            if (b.life <= 0) continue;
+
+            ImGui::TableNextRow();
+            ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, IM_COL32(230, 184, 112, 18)); // live rounds glow
+
+            ImGui::TableNextColumn(); ImGui::Text("%u", i);
+            ImGui::TableNextColumn(); ImGui::Text("%.2f", b.pos.x);
+            ImGui::TableNextColumn(); ImGui::Text("%.2f", b.pos.y);
+            ImGui::TableNextColumn(); ImGui::Text("%.2f", b.pos.z);
+            ImGui::TableNextColumn(); ImGui::Text("%.1f", length(b.vel));
+            ImGui::TableNextColumn(); ImGui::Text("%.2f", b.life);
+            ImGui::TableNextColumn(); ImGui::TextColored(severity_colors[SUCCESS], "flying");
+         }
+         ImGui::EndTable();
+      }
+
+      ImGui::EndTabItem();
+   }
+}
+
+// ---------------- tab : Audio ----------------
+void draw_AUDIO_console()
+{
+   using namespace CNSL;
+
+   if (ImGui::BeginTabItem("Audio"))
+   {
+      section("Master");
+      float master = audio.master;
+      ImGui::SetNextItemWidth(ui(180));
+      if (ImGui::SliderFloat("gain", &master, 0.f, 1.f, "%.2f")) audio.set_master(master);
+      ImGui::SameLine();
+      if (ImGui::SmallButton("halt all")) audio.halt_all();
+      ImGui::SameLine();
+      ImGui::TextDisabled("%u sounds / %u slots", audio.num_sounds, MAX_SOUNDS);
+
+      section("Sounds");
+
+      // mixer queries take the backend lock : sample them a few times a second
+      static bool  live[MAX_SOUNDS] = {};
+      static float head[MAX_SOUNDS] = {};
+      static uint  tick = 0;
+      if ((tick++ % 8) == 0)
+         for (uint i = 1; i <= audio.num_sounds; i++)
+         {
+            live[i - 1] = audio.playing(i);
+            head[i - 1] = audio.head(i);
+         }
+
+      if (audio.num_sounds == 0)
+         ImGui::TextDisabled("nothing loaded yet");
+      else if (ImGui::BeginTable("audiosounds", 6,
+         TABLE_FLAGS))
+      {
+         ImGui::TableSetupColumn("name", ImGuiTableColumnFlags_WidthFixed, ui(72));
+         ImGui::TableSetupColumn("gain", ImGuiTableColumnFlags_WidthFixed, ui(102));
+         ImGui::TableSetupColumn("pitch", ImGuiTableColumnFlags_WidthFixed, ui(98));
+         ImGui::TableSetupColumn("wave / playhead", ImGuiTableColumnFlags_WidthFixed, ui(176));
+         ImGui::TableSetupColumn("stop", ImGuiTableColumnFlags_WidthFixed, ui(52));
+         ImGui::TableSetupColumn("loop", ImGuiTableColumnFlags_WidthFixed, ui(46));
+         ImGui::TableHeadersRow();
+
+         for (uint i = 1; i <= audio.num_sounds; i++)
+         {
+            uint s = i - 1;
+            ImGui::PushID((int)s);
+            ImGui::TableNextRow();
+            if (live[s]) // live rows glow faint amber
+               ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, IM_COL32(230, 184, 112, 20));
+
+            // the name is a button as well : two hit targets per row
+            ImGui::TableNextColumn();
+            if (ImGui::SmallButton(audio.sounds[s].name)) audio.play(i);
+            ImGui::TextDisabled("%.2fs", audio.sounds[s].seconds);
+
+            ImGui::TableNextColumn();
+            float gain = audio.sounds[s].gain;
+            ImGui::SetNextItemWidth(ui(90));
+            if (ImGui::SliderFloat("##gain", &gain, 0.f, 1.f, "%.2f")) audio.set_gain(i, gain);
+
+            ImGui::TableNextColumn();
+            float pitch = audio.sounds[s].pitch;
+            ImGui::SetNextItemWidth(ui(86));
+            if (ImGui::SliderFloat("##pitch", &pitch, .25f, 2.5f, "%.2f")) audio.set_pitch(i, pitch);
+
+            // envelope with the playhead riding it
+            ImGui::TableNextColumn();
+            {
+               ImVec2 p = ImGui::GetCursorScreenPos();
+               float w = ui(144), h = ui(20), mid = p.y + h * .5f;
+               ImDrawList* dl = ImGui::GetWindowDrawList();
+
+               dl->AddRectFilled(p, ImVec2(p.x + w, p.y + h), IM_COL32(10, 12, 18, 255));
+               dl->AddRect(p, ImVec2(p.x + w, p.y + h), IM_COL32(70, 78, 92, 255));
+
+               for (uint k = 0; k < WAVE_POINTS; k++)
+               {
+                  float x = p.x + w * (k / (float)WAVE_POINTS);
+                  float amp = audio.sounds[s].wave[k] * h * .42f;
+                  dl->AddRectFilled(ImVec2(x, mid - amp), ImVec2(x + ui(1.2f), mid + amp), IM_COL32(170, 190, 205, 200));
+               }
+               if (live[s])
+               {
+                  float x = p.x + w * head[s];
+                  dl->AddLine(ImVec2(x, p.y), ImVec2(x, p.y + h), IM_COL32(230, 184, 112, 255), ui(1.5f));
+               }
+               ImGui::Dummy(ImVec2(w, h));
+            }
+
+            // play lives on the name above ; this column just silences the voices
+            ImGui::TableNextColumn();
+            if (ImGui::SmallButton("stop")) audio.halt(i);
+
+            ImGui::TableNextColumn();
+            bool loop = audio.sounds[s].loop;
+            if (ImGui::Checkbox("##loop", &loop)) audio.set_loop(i, loop);
+
+            ImGui::PopID();
+         }
+         ImGui::EndTable();
       }
 
       ImGui::EndTabItem();
@@ -801,13 +1467,13 @@ void draw_MAIN_console(GameConsole* console)
 
    if (ImGui::BeginTabItem("Console"))
    {
-      // ---- row 1 : severity toggles + badge counts
+      // ---- row 1 : severity chips with live counts
       for (uint s = 0; s < 5; s++)
       {
-         ImGui::PushStyleColor(ImGuiCol_Text,
-            severity_visible[s] ? severity_colors[s] : ImVec4(0.35f, 0.35f, 0.35f, 0.7f));
-         char label[12];
-         snprintf(label, 12, "%s##sev%u", severity_messages[s], s);
+         ImGui::PushStyleColor(ImGuiCol_Text, severity_visible[s]
+            ? severity_colors[s] : ImVec4(0.48f, 0.46f, 0.43f, 0.6f));
+         char label[20];
+         snprintf(label, sizeof(label), "%s %u##sev%u", severity_messages[s], console->count(s), s);
          if (ImGui::SmallButton(label)) severity_visible[s] = !severity_visible[s];
          ImGui::PopStyleColor();
          if (s < 4) ImGui::SameLine();
@@ -819,10 +1485,10 @@ void draw_MAIN_console(GameConsole* console)
       ImGui::TextColored(severity_colors[FIXME], "%u errors", console->count(FIXME));
 
       // ---- row 2 : search, autoscroll, clear
-      ImGui::SetNextItemWidth(-190);
+      ImGui::SetNextItemWidth(-ui(190));
       ImGui::InputText("##logsearch", search, sizeof(search));
       ImGui::SameLine();
-      ImGui::Checkbox("Autoscroll", &autoscroll);
+      ImGui::Checkbox("autoscroll", &autoscroll);
       ImGui::SameLine();
       if (ImGui::Button("Clear")) console->clear();
 
@@ -851,12 +1517,52 @@ void draw_MAIN_console(GameConsole* console)
             draw_log_entry(entry);
          }
       };
-      draw_range(logs.write_idx, MAX_LOGQUEUE_ENTRIES);
-      draw_range(0, logs.write_idx);
+      // the log scrolls inside its own child, so autoscroll can never drag the
+      // tab bar out of reach : the tabs stay put, the lines scroll beneath them
+      ImGui::BeginChild("##log", ImVec2(0, 0), false);
+      {
+         draw_range(logs.write_idx, MAX_LOGQUEUE_ENTRIES);
+         draw_range(0, logs.write_idx);
 
-      if (autoscroll) ImGui::SetScrollHereY(1.0f); // keep newest line visible
+         if (autoscroll) ImGui::SetScrollHereY(1.0f); // keep newest line visible
+
+         // reaching back up lets go of autoscroll instead of fighting it
+         if (ImGui::IsWindowHovered() && ImGui::GetIO().MouseWheel > 0) autoscroll = false;
+      }
+      ImGui::EndChild();
 
       ImGui::EndTabItem();
+   }
+}
+
+// material names, projected onto their spheres : the only text the scene gets.
+// props without a label (everything except the material grid) are skipped
+void draw_world_labels(GameScene* scene, GameWindow* window)
+{
+   ImDrawList* dl = ImGui::GetBackgroundDrawList(); // over the frame, under the console
+
+   for (uint i = 0; i < scene->num_props; i++)
+   {
+      GameScene::Prop& p = scene->props[i];
+      if (!p.label[0]) continue;
+
+      // just above the prop, so the sphere itself stays readable
+      vec4 clip = scene->proj_view * vec4(p.pos + vec3(0, p.scale.y + 0.25f, 0), 1.f);
+      if (clip.w < 0.001f) continue; // behind the camera
+
+      // a touch under the ui font : world text should not shout
+      const ImFont* font = ImGui::GetFont();
+      const float label_size = 11.f;
+
+      vec2 ndc = vec2(clip) / clip.w;
+      if (ndc.x < -1.f || ndc.x > 1.f || ndc.y < -1.f || ndc.y > 1.f) continue; // off screen
+
+      ImVec2 size = font->CalcTextSizeA(label_size, 9999.f, 0.f, p.label);
+      ImVec2 at((ndc.x * 0.5f + 0.5f) * window->screen_width - size.x * 0.5f,
+                (0.5f - ndc.y * 0.5f) * window->screen_height);
+
+      dl->AddText(font, label_size, ImVec2(at.x + 1.f, at.y + 1.f), IM_COL32(0, 0, 0, 200), p.label); // shadow : reads over sky
+      dl->AddText(font, label_size, at, IM_COL32(235, 238, 243, 255), p.label);
    }
 }
 
@@ -864,31 +1570,56 @@ void draw_console(GameConsole* console, GameRenderer* rndr, GameWindow* window, 
 {
    using namespace CNSL;
 
-   // imgui window settings
+   // the scene's annotations : drawn whether or not the panel is up
+   draw_world_labels(scene, window);
+
+   // F1 hides the whole panel : the scene plays unobstructed
+   static bool visible = true;
+   if (window->keys.F1.is_pressed && !window->keys.F1.was_pressed) visible = !visible;
+   if (!visible) return;
+
+   // full-height side slab : top to bottom of the window, width scaled to it,
+   // scrollable (the Assets tab overflows a short window)
    ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse
       | ImGuiWindowFlags_NoResize
       | ImGuiWindowFlags_NoMove
-      | ImGuiWindowFlags_NoScrollbar
       | ImGuiWindowFlags_NoTitleBar;
 
-   // imgui window -> background color
-   ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.1f, 0.1f, 0.1f, 0.5f)); // RGBA
+   float panel_w = ui(620.f);
+   float max_w = window->screen_width * 0.45f; // never eats the whole scene on narrow windows
+   if (panel_w > max_w) panel_w = max_w;
 
-   // create imgui window
+   ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.f); // edge to edge slab
+   ImGui::SetNextWindowPos(ImVec2(0, 0));
+   ImGui::SetNextWindowSize(ImVec2(panel_w, (float)window->screen_height));
    ImGui::Begin("GameConsole", NULL, flags);
-   ImGui::SetWindowPos(ImVec2(0, 0));
-   ImGui::SetWindowSize(ImVec2(620, 1080)); // wide enough for the data tables
 
-   // draw tabs
+   // header band : identity + the number everyone watches + the hide hint
+   ImGui::TextColored(ImVec4(0.90f, 0.72f, 0.44f, 1.f), "ENGINE CONSOLE");
+   if (window->frame_ms_last > 0)
+   {
+      ImGui::SameLine();
+      ImGui::TextColored(severity_colors[TRACE], "| %.0f fps  %.1f ms  |  F1 hide",
+         1000.f / window->frame_ms_last, window->frame_ms_last);
+   }
+   ImGui::Separator();
+
+   // general -> specific -> the log
+   // nothing runs past the panel edge : overlong lines wrap instead of clipping
+   ImGui::PushTextWrapPos(ImGui::GetWindowWidth() - ui(16));
+
    ImGui::BeginTabBar("Console Tabs", ImGuiTabBarFlags_None);
-   draw_ANIM_console(&rndr->animloader);
    draw_SYSTEM_console(window);
    draw_RENDER_console(rndr, window, &scene->camera);
    draw_PHYS_console(&scene->phys);
+   draw_PLAYER_console(scene, rndr);
+   draw_ANIM_console(rndr);
    draw_ASST_console(window, rndr);
+   draw_AUDIO_console();
    draw_MAIN_console(console);
    ImGui::EndTabBar();
+   ImGui::PopTextWrapPos();
 
    ImGui::End();
-   ImGui::PopStyleColor();
+   ImGui::PopStyleVar(); // window rounding
 }

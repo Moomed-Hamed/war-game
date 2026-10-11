@@ -1,5 +1,5 @@
 // ------------------------------------------------- //
-// ----------- Last-Touched : Aug 2026  ------------ //
+// ----------- Last-Touched : Oct 2026  ------------ //
 // ------------------------------------------------- //
 
 // -------------------- Libraries ------------------ //
@@ -416,6 +416,14 @@ uint get_directory_size(const char* path)
 #include "../BULLET/BulletSoftBody/btSoftRigidDynamicsWorld.h"
 
 // ------------------------------------------------- //
+// ---------------------- Audio -------------------- //
+// ------------------------------------------------- //
+
+#pragma comment(lib, "dependencies/external/OpenAL/OpenAL32.lib") // OpenAL32.dll at run time
+#include "../external/OpenAL/al.h"
+#include "../external/OpenAL/alc.h"
+
+// ------------------------------------------------- //
 // ------------------- Networking ------------------ //
 // ------------------------------------------------- //
 
@@ -435,69 +443,79 @@ uint get_directory_size(const char* path)
 // IMGUI
 void apply_imgui_style(ImGuiIO& io)
 {
-	// Darkest  0.14f, 0.18f, 0.14f
-	// Lighter  0.2f , 0.29f, 0.33f
-	// Lightest 0.29f, 0.39f, 0.45f
-	// Orange   0.98f, 0.66f, 0.2f
+	// obsidian base + neon amber : near-black backgrounds, high-chroma foregrounds
 
 	// Setup Dear ImGui style
 	ImGuiStyle* style = &ImGui::GetStyle();
 	ImVec4* colors = style->Colors;
 
 	// --- Text ---
-	colors[ImGuiCol_Text] = ImVec4(0.95f, 0.95f, 0.95f, 1.00f);
-	colors[ImGuiCol_TextDisabled] = ImVec4(0.55f, 0.55f, 0.55f, 1.00f);
+	colors[ImGuiCol_Text] = ImVec4(0.93f, 0.91f, 0.86f, 1.00f); // warm cream
+	colors[ImGuiCol_TextDisabled] = ImVec4(0.52f, 0.50f, 0.47f, 1.00f); // warm gray
 
 	// --- Windows / Panels ---
-	colors[ImGuiCol_WindowBg] = ImVec4(0.06f, 0.06f, 0.07f, 0.35f);  // smoky glass
-	colors[ImGuiCol_ChildBg] = ImVec4(0.05f, 0.05f, 0.06f, 0.45f);
-	colors[ImGuiCol_PopupBg] = ImVec4(0.08f, 0.08f, 0.09f, 0.70f);
+	colors[ImGuiCol_WindowBg] = ImVec4(0.020f, 0.024f, 0.035f, 0.88f); // obsidian, lets the scene through
+	colors[ImGuiCol_ChildBg] = ImVec4(0.026f, 0.031f, 0.045f, 0.88f);
+	colors[ImGuiCol_PopupBg] = ImVec4(0.031f, 0.037f, 0.055f, 0.94f);
 
 	// --- Borders ---
-	colors[ImGuiCol_Border] = ImVec4(0.20f, 0.20f, 0.22f, 0.35f);
+	colors[ImGuiCol_Border] = ImVec4(0.24f, 0.28f, 0.36f, 0.70f);
 	colors[ImGuiCol_BorderShadow] = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
 
 	// --- Frames / Inputs ---
-	colors[ImGuiCol_FrameBg] = ImVec4(0.12f, 0.12f, 0.14f, 0.35f);
-	colors[ImGuiCol_FrameBgHovered] = ImVec4(0.30f, 0.30f, 0.32f, 0.40f);
-	colors[ImGuiCol_FrameBgActive] = ImVec4(0.35f, 0.35f, 0.38f, 0.50f);
+	colors[ImGuiCol_FrameBg] = ImVec4(0.055f, 0.065f, 0.090f, 0.97f);
+	colors[ImGuiCol_FrameBgHovered] = ImVec4(0.13f, 0.15f, 0.21f, 0.98f);
+	colors[ImGuiCol_FrameBgActive] = ImVec4(0.18f, 0.21f, 0.29f, 1.00f);
 
 	// --- Titles ---
-	colors[ImGuiCol_TitleBg] = ImVec4(0.08f, 0.08f, 0.09f, 0.75f);
-	colors[ImGuiCol_TitleBgActive] = ImVec4(0.10f, 0.10f, 0.12f, 0.85f);
-	colors[ImGuiCol_TitleBgCollapsed] = ImVec4(0.05f, 0.05f, 0.05f, 0.65f);
+	colors[ImGuiCol_TitleBg] = ImVec4(0.026f, 0.031f, 0.045f, 0.97f);
+	colors[ImGuiCol_TitleBgActive] = ImVec4(0.040f, 0.047f, 0.065f, 0.98f);
+	colors[ImGuiCol_TitleBgCollapsed] = colors[ImGuiCol_TitleBg];
 
 	// --- Tabs ---
-	colors[ImGuiCol_Tab] = ImVec4(0.12f, 0.12f, 0.14f, 0.65f);
-	colors[ImGuiCol_TabHovered] = ImVec4(0.25f, 0.20f, 0.10f, 0.55f); // hint of orange warmth
-	colors[ImGuiCol_TabActive] = ImVec4(0.30f, 0.25f, 0.15f, 0.70f);
-	colors[ImGuiCol_TabUnfocused] = ImVec4(0.10f, 0.10f, 0.11f, 0.60f);
+	colors[ImGuiCol_Tab] = ImVec4(0.055f, 0.065f, 0.090f, 0.94f);
+	colors[ImGuiCol_TabHovered] = ImVec4(0.27f, 0.20f, 0.12f, 1.00f); // warm amber
+	colors[ImGuiCol_TabActive] = ImVec4(0.22f, 0.16f, 0.10f, 1.00f);
+	colors[ImGuiCol_TabUnfocused] = ImVec4(0.040f, 0.047f, 0.065f, 0.94f);
 	colors[ImGuiCol_TabUnfocusedActive] = colors[ImGuiCol_TabActive];
 
 	// --- Buttons ---
-	colors[ImGuiCol_Button] = ImVec4(0.16f, 0.16f, 0.17f, 0.40f);
-	colors[ImGuiCol_ButtonHovered] = ImVec4(0.45f, 0.30f, 0.15f, 0.55f); // faint amber glow
-	colors[ImGuiCol_ButtonActive] = ImVec4(0.60f, 0.45f, 0.20f, 0.60f);
+	colors[ImGuiCol_Button] = ImVec4(0.075f, 0.085f, 0.12f, 0.97f);
+	colors[ImGuiCol_ButtonHovered] = ImVec4(0.52f, 0.34f, 0.14f, 1.00f); // warm amber
+	colors[ImGuiCol_ButtonActive] = ImVec4(0.64f, 0.42f, 0.16f, 1.00f);
 
 	// --- Headers ---
-	colors[ImGuiCol_Header] = ImVec4(0.20f, 0.20f, 0.22f, 0.45f);
-	colors[ImGuiCol_HeaderHovered] = ImVec4(0.40f, 0.30f, 0.20f, 0.55f);
-	colors[ImGuiCol_HeaderActive] = ImVec4(0.50f, 0.35f, 0.20f, 0.60f);
+	colors[ImGuiCol_Header] = ImVec4(0.10f, 0.115f, 0.16f, 0.97f);
+	colors[ImGuiCol_HeaderHovered] = ImVec4(0.40f, 0.27f, 0.12f, 1.00f);
+	colors[ImGuiCol_HeaderActive] = ImVec4(0.52f, 0.34f, 0.14f, 1.00f);
 
 	// --- Sliders / Grabs ---
-	colors[ImGuiCol_SliderGrab] = ImVec4(0.80f, 0.55f, 0.25f, 0.45f);
-	colors[ImGuiCol_SliderGrabActive] = ImVec4(1.00f, 0.70f, 0.30f, 0.60f);
+	colors[ImGuiCol_SliderGrab] = ImVec4(0.92f, 0.62f, 0.26f, 0.95f);
+	colors[ImGuiCol_SliderGrabActive] = ImVec4(1.00f, 0.70f, 0.36f, 1.00f);
 
 	// --- Checkmarks / Separators ---
-	colors[ImGuiCol_CheckMark] = ImVec4(1.00f, 0.70f, 0.25f, 0.65f);
-	colors[ImGuiCol_Separator] = ImVec4(0.25f, 0.25f, 0.27f, 0.50f);
-	colors[ImGuiCol_SeparatorHovered] = ImVec4(0.70f, 0.55f, 0.30f, 0.55f);
-	colors[ImGuiCol_SeparatorActive] = ImVec4(0.80f, 0.65f, 0.35f, 0.70f);
+	colors[ImGuiCol_CheckMark] = ImVec4(0.95f, 0.66f, 0.30f, 1.00f);
+	colors[ImGuiCol_Separator] = ImVec4(0.22f, 0.26f, 0.33f, 0.85f);
+	colors[ImGuiCol_SeparatorHovered] = ImVec4(0.62f, 0.48f, 0.26f, 0.75f);
+	colors[ImGuiCol_SeparatorActive] = ImVec4(0.80f, 0.58f, 0.30f, 0.95f);
+
+	// --- Plots (frame graph, budget + buffer bars) ---
+	colors[ImGuiCol_PlotLines] = ImVec4(0.58f, 0.72f, 0.84f, 1.00f); // dusty blue
+	colors[ImGuiCol_PlotHistogram] = ImVec4(0.85f, 0.66f, 0.38f, 1.00f); // ochre
+
+	// --- Tables / Scrollbars ---
+	colors[ImGuiCol_TableHeaderBg] = ImVec4(0.075f, 0.085f, 0.12f, 1.00f);
+	colors[ImGuiCol_TableBorderStrong] = ImVec4(0.24f, 0.28f, 0.36f, 0.90f);
+	colors[ImGuiCol_TableBorderLight] = ImVec4(0.15f, 0.17f, 0.23f, 0.90f);
+	colors[ImGuiCol_ScrollbarBg] = ImVec4(0.020f, 0.024f, 0.035f, 0.90f);
+	colors[ImGuiCol_ScrollbarGrab] = ImVec4(0.22f, 0.25f, 0.33f, 1.00f);
+	colors[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.38f, 0.42f, 0.52f, 1.00f);
+	colors[ImGuiCol_ScrollbarGrabActive] = ImVec4(0.55f, 0.60f, 0.72f, 1.00f);
 
 	// --- Misc ---
-	colors[ImGuiCol_NavHighlight] = ImVec4(1.00f, 0.70f, 0.25f, 0.35f);
-	colors[ImGuiCol_TextSelectedBg] = ImVec4(1.00f, 0.60f, 0.10f, 0.25f);
-	colors[ImGuiCol_ModalWindowDimBg] = ImVec4(0.03f, 0.03f, 0.03f, 0.50f);
+	colors[ImGuiCol_NavHighlight] = ImVec4(0.95f, 0.64f, 0.28f, 0.40f);
+	colors[ImGuiCol_TextSelectedBg] = ImVec4(0.95f, 0.62f, 0.24f, 0.35f);
+	colors[ImGuiCol_ModalWindowDimBg] = ImVec4(0.01f, 0.015f, 0.025f, 0.60f);
 
 	style->WindowRounding = 8.0f;
 	style->ChildRounding = 8.0f;
@@ -508,7 +526,7 @@ void apply_imgui_style(ImGuiIO& io)
 	style->WindowBorderSize = 1.0f;
 	style->FrameBorderSize = 1.0f;
 
-	style->Alpha = 0.95f;
+	style->Alpha = 1.00f; // full opacity - legibility over the game beats glass
 	style->WindowPadding = ImVec2(8, 6);
 	style->FramePadding = ImVec2(6, 4);
 }

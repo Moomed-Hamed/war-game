@@ -16,7 +16,8 @@ enum LOGSOURCE {
    WNDW = 0, // Window
    RNDR,     // Renderer
    PHYS,     // Physics
-   NETW      // Networking
+   NETW,     // Networking
+   AUDI      // Audio
 };
 
 const uint MAX_LOGQUEUE_ENTRIES = 128;
@@ -67,5 +68,32 @@ struct GameConsole {
          if (logs.entries[i].text[0] != 0 && logs.entries[i].severity == severity)
             total++;
       return total;
+   }
+
+   // write the whole log to a text file, oldest first, on the way out : a session can
+   // then be read back rather than described. returns false if the file would not open
+   bool dump(const char* path = "console_log.txt")
+   {
+      FILE* out = fopen(path, "w");
+      if (!out) return false;
+
+      static const char* sev[5] = { "TRACE", "WARN ", "FIXME", "DEBUG", "OK   " };
+      static const char* src[5] = { "WNDW", "RNDR", "PHYS", "NETW", "AUDI" };
+
+      // the ring's write index is the oldest entry still held, so start there and walk
+      // forwards : that is chronological order
+      for (uint n = 0; n < MAX_LOGQUEUE_ENTRIES; n++)
+      {
+         Log_Entry& e = logs.entries[(logs.write_idx + n) % MAX_LOGQUEUE_ENTRIES];
+         if (e.text[0] == 0) continue; // never written
+
+         fprintf(out, "[%s][%s] %s\n",
+            sev[e.severity < 5 ? e.severity : 0],
+            src[e.source   < 5 ? e.source   : 0],
+            e.text);
+      }
+
+      fclose(out);
+      return true;
    }
 } *console;
