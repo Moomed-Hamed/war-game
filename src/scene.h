@@ -1,4 +1,4 @@
-#include "drawer.h"
+#include "physics.h"
 
 /* ------------------------- *
 	-        Scene          -
@@ -11,8 +11,31 @@ struct GameScene
 	Camera camera;    // the view the world is rendered from
 	mat4   proj_view; // built from the camera every frame in update()
 
-	// static meshes
-	uint floor_id, sphere_id, cube_id, ammo_id, palm_id;
+	Physics phys; // owns motion, the props read their pose from it
+
+	// world content : a mesh plus an optional body. collider sizes are in
+	// world units (mesh scale already applied) ; dynamic props get pos/rot
+	// overwritten from bullet every frame
+	struct Prop {
+		uint mesh_id;
+		uint phys_id; // 0 = static decoration
+		vec3 pos;
+		mat3 rot;
+		float scale;
+	} props[16];
+	uint num_props;
+
+	// one more instance in the world, posed at (pos, yaw, scale)
+	Prop& add_prop(uint mesh_id, vec3 pos, float yaw, float scale)
+	{
+		Prop& p = props[num_props++];
+		p.mesh_id = mesh_id;
+		p.phys_id = 0;
+		p.pos     = pos;
+		p.rot     = mat3(glm::rotate(mat4(1), yaw, vec3(0, 1, 0)));
+		p.scale   = scale;
+		return p;
+	}
 
 	// skinned weapons : each on its own animation player so they animate at once
 	struct Weapon {
@@ -32,14 +55,43 @@ struct GameScene
 		camera.update_dir(0, 0, 0); // seeds front/right/up from yaw/pitch
 
 		// floor : generated grid plane, the shader tiles its uvs (uv * 4)
-		floor_id = renderer->add_mesh(
+		uint floor_mesh = renderer->add_mesh(
 			MeshFactory::generate_plane(60.f, 60, MeshFactory::PLANE_XZ), "assets/textures/grid.bmp");
 
-		// props
-		sphere_id = renderer->add_mesh("assets/meshes/sphere.mesh_uv");
-		cube_id   = renderer->add_mesh("assets/meshes/cube.mesh_uv", "assets/textures/checker.bmp");
-		ammo_id   = renderer->add_mesh("assets/meshes/ammo.mesh_uv");
-		palm_id   = renderer->add_mesh("assets/meshes/palm_tree.mesh_uv");
+		uint sphere_mesh = renderer->add_mesh("assets/meshes/sphere.mesh_uv");
+		uint cube_mesh   = renderer->add_mesh("assets/meshes/cube.mesh_uv", "assets/textures/checker.bmp");
+		uint ammo_mesh   = renderer->add_mesh("assets/meshes/ammo.mesh_uv");
+		uint palm_mesh   = renderer->add_mesh("assets/meshes/palm_tree.mesh_uv");
+
+		// world content : every body starts at its authored spot
+		phys.init();
+
+		// floor : ground slab under it, top face exactly at y 0
+		add_prop(floor_mesh, vec3(0), 0, 1.f).phys_id = phys.add_ground(30.f);
+
+		// sphere : dynamic, radius 1.5 at this scale
+		Prop& sphere = add_prop(sphere_mesh, vec3(-11, 1.5f, 3), 0, 1.5f);
+		sphere.phys_id = phys.add_sphere(sphere.pos, 1.5f, 1.f);
+
+		// cube : drops in from above and lands back on its spot
+		Prop& cube = add_prop(cube_mesh, vec3(11, 4.f, 3), 0, 1.f);
+		cube.phys_id = phys.add_box(cube.pos, vec3(.5f), 1.f);
+
+		// ammo diagonal : three small dynamic boxes
+		vec3 ammo_spots[3] = { vec3(7.8f, 0.1f, 1.6f), vec3(8.6f, 0.1f, 2.3f), vec3(9.4f, 0.1f, 1.6f) };
+		for (uint i = 0; i < 3; i++)
+		{
+			Prop& ammo = add_prop(ammo_mesh, ammo_spots[i], 0.7f * i, 2.f);
+			ammo.phys_id = phys.add_box(ammo.pos, vec3(.15f, .1f, .15f), .5f);
+		}
+
+		// palms : static scenery, a thin trunk slab so nothing shoves them
+		vec3 palm_spots[2] = { vec3(-13, 0, -4), vec3(13, 0, -4) };
+		for (uint i = 0; i < 2; i++)
+		{
+			Prop& palm = add_prop(palm_mesh, palm_spots[i], (float)i * 2.1f, 1.6f);
+			palm.phys_id = phys.add_box(palm.pos + vec3(0, 3, 0), vec3(.2f, 3.f, .2f), 0);
+		}
 
 		// weapons row : same files the old game shipped, sliced the way it played them
 		struct { const char* mesh, *clip; uint seg; float dur; } setup[5] = {
@@ -114,44 +166,29 @@ struct GameScene
 		mat4 proj = glm::perspective(fov, (float)window->screen_width / window->screen_height, 0.1f, 256.f);
 		proj_view = proj * glm::lookAt(camera.position, camera.position + camera.front, camera.up);
 
+		phys.step(window->dtime);
+
 		// fresh instance streams (each mesh id may only be appended once per frame)
 		renderer->drawbuffer.clear_instances();
 		renderer->drawbuffer_anim.clear_instances();
 
-		// floor
-		mat4 model = mat4(1);
-		renderer->drawbuffer.append_instances(floor_id, 1, &model);
-
-		// props : flanks + a small ammo diagonal
-		model = glm::translate(mat4(1), vec3(-11, 1.5f, 3)) * glm::scale(mat4(1), vec3(1.5f));
-		renderer->drawbuffer.append_instances(sphere_id, 1, &model);
-
-		model = glm::translate(mat4(1), vec3(11, 0.5f, 3));
-		renderer->drawbuffer.append_instances(cube_id, 1, &model);
-
-		vec3 ammo_spots[3] = { vec3(7.8f, 0.1f, 1.6f), vec3(8.6f, 0.1f, 2.3f), vec3(9.4f, 0.1f, 1.6f) };
-		for (uint i = 0; i < 3; i++)
+		// props : the body owns the pose of anything dynamic
+		for (uint i = 0; i < num_props; i++)
 		{
-			model = glm::translate(mat4(1), ammo_spots[i])
-			      * glm::rotate(mat4(1), 0.7f * i, vec3(0, 1, 0))
-			      * glm::scale(mat4(1), vec3(2.f));
-			renderer->drawbuffer.append_instances(ammo_id, 1, &model);
-		}
+			Prop& p = props[i];
+			if (p.phys_id) phys.get_transform(p.phys_id, &p.pos, &p.rot);
 
-		vec3 palm_spots[2] = { vec3(-13, 0, -4), vec3(13, 0, -4) };
-		for (uint i = 0; i < 2; i++)
-		{
-			model = glm::translate(mat4(1), palm_spots[i])
-			      * glm::rotate(mat4(1), (float)i * 2.1f, vec3(0, 1, 0))
-			      * glm::scale(mat4(1), vec3(1.6f));
-			renderer->drawbuffer.append_instances(palm_id, 1, &model);
+			mat4 model = glm::translate(mat4(1), p.pos)
+			           * mat4(p.rot)
+			           * glm::scale(mat4(1), vec3(p.scale));
+			renderer->drawbuffer.append_instances(p.mesh_id, 1, &model);
 		}
 
 		// weapons : parked in their row, still animating
 		for (uint i = 0; i < 5; i++)
 		{
 			Weapon& w = weapons[i];
-			model = glm::translate(mat4(1), w.pos)
+			mat4 model = glm::translate(mat4(1), w.pos)
 			      * glm::rotate(mat4(1), w.yaw, vec3(0, 1, 0))
 			      * glm::scale(mat4(1), vec3(w.scale));
 			renderer->drawbuffer_anim.append_instances(w.mesh, 1, &model);
