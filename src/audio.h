@@ -131,6 +131,10 @@ struct GameAudio
 	// sound's slot (0 = failed, error already logged) - play it with play()
 	uint load(const char* name, const char* path)
 	{
+		// the mixer outlives scenes : the same name returns the same slot
+		for (uint i = 0; i < num_sounds; i++)
+			if (strcmp(sounds[i].name, name) == 0) return i + 1;
+
 		if (num_sounds >= MAX_SOUNDS)
 		{
 			console->add_entry("audio : sound slots full", FIXME, AUDI);

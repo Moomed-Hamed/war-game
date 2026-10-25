@@ -63,16 +63,16 @@ struct Player
 	struct Bullet { vec3 pos, vel; float life; } bullets[MAX_BULLETS];
 	uint fired, hits;
 
-	void init(GameRenderer* renderer, Physics* phys, uint mesh)
+	void init(GameRenderer* renderer, Physics* phys, vec3 spawn, uint mesh = 0, uint clip = 0)
 	{
-		body = phys->add_capsule(vec3(0, 5, 8), PLAYER_RADIUS, PLAYER_HEIGHT, PLAYER_MASS);
+		body = phys->add_capsule(spawn, PLAYER_RADIUS, PLAYER_HEIGHT, PLAYER_MASS);
 		if (!body) return;
 
 		btRigidBody* b = phys->bodies[body].body;
 		b->setAngularFactor(0); // never tips over
 		b->setFriction(.9f);
 
-		camera.position = vec3(0, 5 + EYE_HEIGHT, 8);
+		camera.position = spawn + vec3(0, EYE_HEIGHT, 0);
 		camera.yaw      = -PI / 2; // facing -z, into the scene
 		camera.pitch    = 0;
 		camera.update_dir(0, 0, 0);
@@ -80,26 +80,31 @@ struct Player
 		// the view gun rides the display row's mesh : its instance is appended
 		// just before the row each frame, so the mesh keeps one contiguous run
 		gun_mesh = mesh;
-		uint clip = 0;
-		renderer->animloader.load("assets/anim/testpistol.anim", &clip);
-		gun_player = renderer->animloader.play(clip, GUN_IDLE, .5f);
-		if (gun_player == (uint)-1 || !gun_mesh) // no weapon : the capsule still works
+		gun_player = (uint)-1;
+		bullet_mesh = 0;
+
+		// a scene with no view model passes mesh 0 : the capsule still works
+		if (gun_mesh && clip)
 		{
-			gun_mesh = 0;
-			console->add_entry("Player : view model failed to load", FIXME, PHYS);
+			gun_player = renderer->animloader.play(clip, GUN_IDLE, .5f);
+			if (gun_player == (uint)-1)
+			{
+				gun_mesh = 0;
+				console->add_entry("Player : view model failed to load", FIXME, PHYS);
+			}
+			else renderer->bind_player(gun_mesh, gun_player);
+
+			bullet_mesh = renderer->add_mesh(MeshFactory::generate_uv_sphere(.04f, 8, 6));
+
+			sfx_fire[0] = audio.load("shot 1",  "assets/audio/pistol_shot_1.audio");
+			sfx_fire[1] = audio.load("shot 2",  "assets/audio/pistol_shot_2.audio");
+			sfx_fire[2] = audio.load("shot 3",  "assets/audio/pistol_shot_3.audio");
+			sfx_reload  = audio.load("reload",  "assets/audio/arm.audio");
+			sfx_inspect = audio.load("inspect", "assets/audio/lmg_tail.audio");
+			sfx_hit     = audio.load("hit",     "assets/audio/hitmarker.audio");
 		}
-		else renderer->bind_player(gun_mesh, gun_player);
 
-		bullet_mesh = renderer->add_mesh(MeshFactory::generate_uv_sphere(.04f, 8, 6));
-
-		sfx_fire[0] = audio.load("shot 1",  "assets/audio/pistol_shot_1.audio");
-		sfx_fire[1] = audio.load("shot 2",  "assets/audio/pistol_shot_2.audio");
-		sfx_fire[2] = audio.load("shot 3",  "assets/audio/pistol_shot_3.audio");
-		sfx_reload  = audio.load("reload",  "assets/audio/arm.audio");
-		sfx_inspect = audio.load("inspect", "assets/audio/lmg_tail.audio");
-		sfx_hit     = audio.load("hit",     "assets/audio/hitmarker.audio");
-
-		ammo   = GUN_MAG;
+		ammo   = gun_mesh ? GUN_MAG : 0;
 		action = GUN_IDLE;
 
 		console->add_entry("Player spawned : F swaps to the fly camera", SUCCESS, PHYS);
@@ -182,6 +187,8 @@ struct Player
 	// action clock, input, and the juice layers
 	void weapon(GameWindow* window, GameRenderer* renderer, Physics* phys, ImGuiIO& io, vec2 look, float dt)
 	{
+		if (!gun_mesh) return; // no view model in this scene
+
 		// an action holds the gun until its time runs out
 		if (action_time > 0)
 		{
@@ -246,6 +253,8 @@ struct Player
 
 	void fire(GameRenderer* renderer, Physics* phys)
 	{
+		if (!gun_mesh) return; // nothing to fire
+
 		start_action(renderer, GUN_SHOOT, GUN_SHOT_TIME);
 
 		if (ammo == 0) return; // dry click, nothing leaves

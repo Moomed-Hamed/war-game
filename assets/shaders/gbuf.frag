@@ -3,12 +3,12 @@
 // deferred lighting pass : one fullscreen quad shades the frame from the g-buffer
 // (world pos + metallic, normal + roughness, albedo + ao).
 //
-// the rig is a warm key sun and a cool rim from behind the camera. the environment
-// is a procedural hazy sky that serves as the background, the ambient and the
-// reflections at once, so what a mirror shows is what the camera sees. occlusion is
-// screen space and applies to the ambient only - there are no shadow maps yet, so
-// the key light does not cast. the lighting pass binds the samplers and uploads
-// view_pos (it arrives as vs_out.view_position) and proj_view.
+// the rig is a key sun and a cool rim, uploaded per scene, over a procedural hazy
+// sky that serves as the background, the ambient and the reflections at once, so
+// what a mirror shows is what the camera sees. occlusion is screen space and
+// applies to the ambient only - there are no shadow maps yet, so the key light
+// does not cast. the lighting pass binds the samplers and uploads view_pos,
+// proj_view and the scene's lighting.
 
 struct VS_OUT {
     vec2 uv;
@@ -25,28 +25,34 @@ layout (location = 0) out vec4 pixel_color;
 
 uniform mat4 proj_view; // the occlusion taps land with it
 
+// ---- per-scene lighting ---------------------------------------------------
+// uploaded from GameWindow::draw_gbuf. directions are the direction the light
+// travels; every use below flips them to surface -> light.
+
+uniform vec3  sun_direction;
+uniform vec3  sun_color;
+uniform float sun_power;
+uniform float sun_disk;      // the bright spot in the procedural sky
+
+uniform vec3  rim_direction;
+uniform vec3  rim_color;
+uniform float rim_power;
+
+uniform float exposure;
+uniform float fog_density;
+uniform float multiscatter;
+uniform float ao_strength;
+
+uniform vec3 zenith;
+uniform vec3 haze;
+uniform vec3 glow;
+uniform vec3 ground;
+
+uniform vec3 ambient_up;
+uniform vec3 ambient_side;
+uniform vec3 ambient_down;
+
 const float PI = 3.14159265359;
-
-// ---- the lights -----------------------------------------------------------
-
-// key : warm, high, off to the right, so the material grid is lit from the front
-const vec3  sun_direction = normalize(vec3(-0.36, -0.84, -0.30)); // travel direction
-const vec3  sun_color     = vec3(1.00, 0.86, 0.68);
-const float sun_power     = 4.0;
-
-// rim : cool, low, out of the camera's side of the world. a single light leaves a
-// silhouette flat against whatever is behind it, this is what separates it
-const vec3  rim_direction = normalize(vec3(0.58, -0.22, 0.60));
-const vec3  rim_color     = vec3(0.50, 0.64, 0.92);
-const float rim_power     = 0.60;
-
-const vec3 L_sun = -sun_direction;
-const vec3 L_rim = -rim_direction;
-
-const float exposure     = 1.0;
-const float fog_density  = 0.0070; // the far end of the floor reads far
-const float multiscatter = 0.35;   // how much lost rough-metal light comes back
-const float ao_strength  = 1.1;    // screen space occlusion, 0 turns it off
 
 // ---- the environment ------------------------------------------------------
 
@@ -57,17 +63,13 @@ vec3 environment(vec3 dir)
 {
     dir = normalize(dir);
     float h = dir.y;
+    vec3 L_sun = -sun_direction;
 
     // how much of the sun's compass direction this ray carries : the horizon warms
     // around it whether the sun is high or low
     vec2 flat_dir = normalize(vec2(dir.x, dir.z) + vec2(1e-4, 0.0));
     vec2 flat_sun = normalize(vec2(L_sun.x, L_sun.z) + vec2(1e-4, 0.0));
     float azimuth = max(dot(flat_dir, flat_sun), 0.0);
-
-    const vec3 zenith = vec3(0.100, 0.155, 0.290);
-    const vec3 haze   = vec3(0.300, 0.315, 0.345);
-    const vec3 glow   = vec3(0.720, 0.420, 0.220);
-    const vec3 ground = vec3(0.045, 0.042, 0.038);
 
     vec3 horizon = mix(haze, glow, pow(azimuth, 3.0) * 0.85);
     vec3 col = (h > 0.0) ? mix(horizon, zenith, pow(h, 0.55))
@@ -77,18 +79,14 @@ vec3 environment(vec3 dir)
     // sphere instead of sitting on it as a dot
     float d = max(dot(dir, L_sun), 0.0);
     float disk = smoothstep(0.99930, 0.99975, d);
-    return col + sun_color * (disk * 26.0 + pow(d, 24.0) * 0.35 + pow(d, 4.0) * 0.05);
+    return col + sun_color * (disk * 26.0 + pow(d, 24.0) * 0.35 + pow(d, 4.0) * 0.05) * sun_disk;
 }
 
 // hemisphere irradiance : three zones is enough for the eye to read the sky's shape
 vec3 ambient_irradiance(vec3 N)
 {
-    const vec3 up   = vec3(0.500, 0.575, 0.730);
-    const vec3 side = vec3(0.255, 0.270, 0.310);
-    const vec3 down = vec3(0.075, 0.070, 0.062);
-
-    return (N.y > 0.0) ? mix(side, up,   smoothstep(0.0, 1.0,  N.y))
-                       : mix(side, down, smoothstep(0.0, 1.0, -N.y));
+    return (N.y > 0.0) ? mix(ambient_side, ambient_up,   smoothstep(0.0, 1.0,  N.y))
+                       : mix(ambient_side, ambient_down, smoothstep(0.0, 1.0, -N.y));
 }
 
 // ---- brdf -----------------------------------------------------------------
@@ -263,6 +261,9 @@ void main()
     float diffuse_ao = ao * vis;
 
     // --- the lights ----------------------------------------------------------
+    vec3 L_sun = -sun_direction;
+    vec3 L_rim = -rim_direction;
+
     vec3 direct = direct_light(N, V, L_sun, sun_color * sun_power,
                                base, F0, metallic, spec_rough, NdotV)
                 + direct_light(N, V, L_rim, rim_color * rim_power,

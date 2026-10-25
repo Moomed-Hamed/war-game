@@ -178,6 +178,13 @@ struct Phys_Debug
 		next_wire_mesh = 5; // per-body capsule wires take it from here
 	}
 
+	// release the overlay's gpu objects with the physics world that owns them
+	void shutdown()
+	{
+		lines.shutdown();
+		shader.destroy();
+	}
+
 	// an exact wire for one capsule body : non-uniform scaling would squash the
 	// caps, so each body gets its own mesh (radius + cylinder height, same
 	// convention as bullet and the mesh factory)
@@ -296,6 +303,45 @@ struct Physics
 		debug.init();
 
 		console->add_entry("Init Physics", SUCCESS, PHYS);
+	}
+
+	// tear the world down : constraints, then bodies with the shapes and motion
+	// states they own, then the world and its helpers. safe before init()
+	void shutdown()
+	{
+		if (!world) return;
+
+		for (int i = world->getNumConstraints() - 1; i >= 0; i--)
+		{
+			btTypedConstraint* c = world->getConstraint(i);
+			world->removeConstraint(c);
+			delete c;
+		}
+
+		for (uint i = 0; i < num_bodies; i++)
+		{
+			btRigidBody* b = bodies[i].body;
+			if (!b) continue;
+
+			world->removeRigidBody(b);
+			delete b->getMotionState();
+			delete b->getCollisionShape();
+			delete b;
+		}
+
+		debug.shutdown();
+
+		delete world;      world = NULL;
+		delete solver;     solver = NULL;
+		delete broadphase; broadphase = NULL;
+		delete dispatcher; dispatcher = NULL;
+		delete config;     config = NULL;
+
+		memset(bodies, 0, sizeof(bodies));
+		memset(joints, 0, sizeof(joints));
+		num_bodies = 1;
+		num_joints = 0;
+		vehicle = {};
 	}
 
 	// one body in the world. mass 0 = static. tilt = spawn rotation, radians about

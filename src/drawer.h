@@ -378,6 +378,25 @@ struct DrawBuffer
 		for (uint i = 0; i < MAX_MESHES; i++)
 			mesh_info[i].num_instances = 0;
 	}
+
+	// release the gpu objects : the buffer must be init()ed again before use
+	void shutdown()
+	{
+		glDeleteBuffers(1, &geom_buffer);
+		glDeleteBuffers(1, &indx_buffer);
+		glDeleteBuffers(1, &inst_buffer);
+		if (pose_buffer) glDeleteBuffers(1, &pose_buffer);
+		glDeleteVertexArrays(1, &vao);
+		*this = {};
+	}
+
+	// drop every mesh and refill with empty buffers of the same size
+	void reset()
+	{
+		uint size = max_buffer_size, m = mode;
+		shutdown();
+		init(size, m);
+	}
 };
 
 // stores mesh ids + generates draw-params for opengl
@@ -891,6 +910,23 @@ struct GameRenderer
 	{
 		for (uint mode = 0; mode < DRAW_MODE_COUNT; mode++)
 			drawbuffers[mode].clear_instances();
+	}
+
+	// drop the current scene's content : gpu buffers, mesh caches, clips and
+	// textures. the shaders and the debug overlays are renderer state and stay
+	void unload_scene()
+	{
+		for (uint mode = 0; mode < DRAW_MODE_COUNT; mode++)
+			drawbuffers[mode].reset();
+
+		meshloader.clear();
+		meshloader_anim.clear();
+		animloader.clear();
+		txloader.clear();
+		txloader.init();
+
+		animdebug.slot = (uint)-1;
+		stats = {};
 	}
 
 	// the scene owns the camera : it passes this frame's matrices in

@@ -173,6 +173,36 @@ void draw_SYSTEM_console(GameWindow* window)
    }
 }
 
+// ---------------- tab : Scenes ----------------
+void draw_SCENES_console(SceneManager* scenes)
+{
+   using namespace CNSL;
+
+   if (ImGui::BeginTabItem("Scenes"))
+   {
+      section("Scene");
+      kv("active", "%s", SceneManager::label(scenes->current_kind));
+      uint bodies = scenes->scene.phys.num_bodies ? scenes->scene.phys.num_bodies - 1 : 0;
+      kv("contents", "%u props | %u bodies | %u joints",
+         scenes->scene.num_props, bodies, scenes->scene.phys.num_joints);
+
+      const char* names[SCENE_KIND_COUNT];
+      for (uint k = 0; k < SCENE_KIND_COUNT; k++) names[k] = SceneManager::label(k);
+
+      int pick = (int)scenes->requested_kind;
+      ImGui::SetNextItemWidth(ui(220));
+      if (ImGui::Combo("scene", &pick, names, SCENE_KIND_COUNT))
+         scenes->request((uint)pick);
+      ImGui::TextDisabled("switching reloads the scene");
+
+      section("Debug");
+      ImGui::TextDisabled("%s", SceneManager::label(scenes->current_kind));
+      scenes->draw_debug();
+
+      ImGui::EndTabItem();
+   }
+}
+
 // ---------------- tab 2 : Render ----------------
 // the g-buffer inspector : deferred pipeline targets, one at a time, picked from a
 // dropdown. given its own function so render concerns stay separable
@@ -1273,7 +1303,7 @@ void draw_ANIM_console(GameRenderer* rndr)
 }
 
 // ---------------- tab : Player ----------------
-void draw_PLAYER_console(GameScene* scene, GameRenderer* rndr)
+void draw_PLAYER_console(Scene* scene, GameRenderer* rndr)
 {
    using namespace CNSL;
 
@@ -1300,11 +1330,15 @@ void draw_PLAYER_console(GameScene* scene, GameRenderer* rndr)
       kv("kick", "%.2f %.2f %.2f", player->kick.x, player->kick.y, player->kick.z);
 
       // drive the gun from here too : handy without grabbing the mouse
-      if (ImGui::SmallButton("fire"))    player->fire(rndr, &scene->phys);
-      ImGui::SameLine();
-      if (ImGui::SmallButton("reload"))  player->start_action(rndr, GUN_RELOAD, GUN_RELOAD_TIME);
-      ImGui::SameLine();
-      if (ImGui::SmallButton("inspect")) player->start_action(rndr, GUN_INSPECT, GUN_INSPECT_TIME);
+      if (player->gun_mesh)
+      {
+         if (ImGui::SmallButton("fire"))    player->fire(rndr, &scene->phys);
+         ImGui::SameLine();
+         if (ImGui::SmallButton("reload"))  player->start_action(rndr, GUN_RELOAD, GUN_RELOAD_TIME);
+         ImGui::SameLine();
+         if (ImGui::SmallButton("inspect")) player->start_action(rndr, GUN_INSPECT, GUN_INSPECT_TIME);
+      }
+      else ImGui::TextDisabled("no view model in this scene");
 
       section("Bullets");
       uint live_rounds = player->bullets_alive();
@@ -1537,13 +1571,15 @@ void draw_MAIN_console(GameConsole* console)
 
 // material names, projected onto their spheres : the only text the scene gets.
 // props without a label (everything except the material grid) are skipped
-void draw_world_labels(GameScene* scene, GameWindow* window)
+void draw_world_labels(Scene* scene, GameWindow* window)
 {
+   if (!scene->show_labels) return;
+
    ImDrawList* dl = ImGui::GetBackgroundDrawList(); // over the frame, under the console
 
    for (uint i = 0; i < scene->num_props; i++)
    {
-      GameScene::Prop& p = scene->props[i];
+      Scene::Prop& p = scene->props[i];
       if (!p.label[0]) continue;
 
       // just above the prop, so the sphere itself stays readable
@@ -1566,12 +1602,15 @@ void draw_world_labels(GameScene* scene, GameWindow* window)
    }
 }
 
-void draw_console(GameConsole* console, GameRenderer* rndr, GameWindow* window, GameScene* scene)
+void draw_console(GameConsole* console, GameRenderer* rndr, GameWindow* window, SceneManager* scenes)
 {
    using namespace CNSL;
 
+   Scene* scene = &scenes->scene;
+
    // the scene's annotations : drawn whether or not the panel is up
    draw_world_labels(scene, window);
+   scenes->draw_ux(window);
 
    // F1 hides the whole panel : the scene plays unobstructed
    static bool visible = true;
@@ -1610,6 +1649,7 @@ void draw_console(GameConsole* console, GameRenderer* rndr, GameWindow* window, 
 
    ImGui::BeginTabBar("Console Tabs", ImGuiTabBarFlags_None);
    draw_SYSTEM_console(window);
+   draw_SCENES_console(scenes);
    draw_RENDER_console(rndr, window, &scene->camera);
    draw_PHYS_console(&scene->phys);
    draw_PLAYER_console(scene, rndr);

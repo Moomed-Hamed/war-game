@@ -4,6 +4,226 @@
 	-   Window & Input      -
  * ------------------------- */
 
+// fonts : the UI face and the two HUD faces. the default 13px atlas cannot be
+// upscaled cleanly, so every face is rasterized at the size it draws at
+ImFont* ui_font         = NULL;
+ImFont* hud_font_small  = NULL;
+ImFont* hud_font_big    = NULL;
+
+// ---- lighting ------------------------------------------------------------
+// everything the deferred pass reads from the scene. directions are the
+// direction light travels; the shader flips them to get surface -> light.
+struct Lighting
+{
+	vec3  sun_direction;
+	vec3  sun_color;
+	float sun_power;
+	float sun_disk;      // the bright spot in the procedural sky
+
+	vec3  rim_direction;
+	vec3  rim_color;
+	float rim_power;
+
+	float exposure;
+	float fog_density;
+	float multiscatter;
+	float ao_strength;
+
+	vec3  zenith, haze, glow, ground;
+	vec3  ambient_up, ambient_side, ambient_down;
+};
+
+enum LightingPreset
+{
+	LIGHT_DAY = 0,
+	LIGHT_OVERCAST,
+	LIGHT_NOON,
+	LIGHT_SUNSET,
+	LIGHT_NIGHT,
+	LIGHT_STUDIO,
+	LIGHT_PRESET_COUNT
+};
+
+const char* LIGHTING_PRESET_NAMES[LIGHT_PRESET_COUNT] = {
+	"day", "overcast", "noon", "sunset", "night", "studio",
+};
+
+Lighting lighting_day()
+{
+	Lighting l = {};
+
+	l.sun_direction = normalize(vec3(-0.36f, -0.84f, -0.30f));
+	l.sun_color     = vec3(1.00f, 0.86f, 0.68f);
+	l.sun_power     = 4.0f;
+	l.sun_disk      = 1.0f;
+
+	l.rim_direction = normalize(vec3(0.58f, -0.22f, 0.60f));
+	l.rim_color     = vec3(0.50f, 0.64f, 0.92f);
+	l.rim_power     = 0.60f;
+
+	l.exposure      = 1.0f;
+	l.fog_density   = 0.0070f;
+	l.multiscatter  = 0.35f;
+	l.ao_strength   = 1.1f;
+
+	l.zenith = vec3(0.100f, 0.155f, 0.290f);
+	l.haze   = vec3(0.300f, 0.315f, 0.345f);
+	l.glow   = vec3(0.720f, 0.420f, 0.220f);
+	l.ground = vec3(0.045f, 0.042f, 0.038f);
+
+	l.ambient_up   = vec3(0.500f, 0.575f, 0.730f);
+	l.ambient_side = vec3(0.255f, 0.270f, 0.310f);
+	l.ambient_down = vec3(0.075f, 0.070f, 0.062f);
+
+	return l;
+}
+
+Lighting lighting_overcast()
+{
+	Lighting l = lighting_day();
+
+	l.sun_direction = normalize(vec3(-0.18f, -0.94f, -0.28f));
+	l.sun_color     = vec3(0.70f, 0.75f, 0.84f);
+	l.sun_power     = 1.7f;
+	l.sun_disk      = 0.08f;
+
+	l.rim_color     = vec3(0.48f, 0.55f, 0.65f);
+	l.rim_power     = 0.25f;
+
+	l.exposure      = 1.05f;
+	l.fog_density   = 0.010f;
+
+	l.zenith = vec3(0.290f, 0.320f, 0.380f);
+	l.haze   = vec3(0.520f, 0.540f, 0.570f);
+	l.glow   = vec3(0.580f, 0.580f, 0.580f);
+	l.ground = vec3(0.120f, 0.120f, 0.120f);
+
+	l.ambient_up   = vec3(0.550f, 0.580f, 0.640f);
+	l.ambient_side = vec3(0.300f, 0.320f, 0.360f);
+	l.ambient_down = vec3(0.100f, 0.100f, 0.100f);
+
+	return l;
+}
+
+Lighting lighting_noon()
+{
+	Lighting l = lighting_day();
+
+	l.sun_direction = normalize(vec3(-0.15f, -0.98f, -0.10f));
+	l.sun_color     = vec3(1.00f, 0.97f, 0.90f);
+	l.sun_power     = 4.6f;
+
+	l.rim_power     = 0.35f;
+	l.fog_density   = 0.0035f;
+
+	l.zenith = vec3(0.080f, 0.220f, 0.520f);
+	l.haze   = vec3(0.380f, 0.520f, 0.700f);
+	l.glow   = vec3(0.550f, 0.650f, 0.800f);
+	l.ground = vec3(0.050f, 0.050f, 0.045f);
+
+	l.ambient_up   = vec3(0.460f, 0.600f, 0.860f);
+	l.ambient_side = vec3(0.220f, 0.280f, 0.380f);
+	l.ambient_down = vec3(0.080f, 0.090f, 0.100f);
+
+	return l;
+}
+
+Lighting lighting_sunset()
+{
+	Lighting l = lighting_day();
+
+	l.sun_direction = normalize(vec3(-0.82f, -0.20f, -0.34f));
+	l.sun_color     = vec3(1.00f, 0.55f, 0.26f);
+	l.sun_power     = 3.4f;
+	l.sun_disk      = 1.3f;
+
+	l.rim_color     = vec3(0.30f, 0.42f, 0.85f);
+	l.rim_power     = 0.55f;
+
+	l.exposure      = 1.15f;
+	l.fog_density   = 0.011f;
+
+	l.zenith = vec3(0.055f, 0.085f, 0.200f);
+	l.haze   = vec3(0.280f, 0.200f, 0.220f);
+	l.glow   = vec3(0.950f, 0.420f, 0.160f);
+	l.ground = vec3(0.050f, 0.035f, 0.030f);
+
+	l.ambient_up   = vec3(0.360f, 0.300f, 0.420f);
+	l.ambient_side = vec3(0.220f, 0.170f, 0.200f);
+	l.ambient_down = vec3(0.060f, 0.045f, 0.040f);
+
+	return l;
+}
+
+Lighting lighting_night()
+{
+	Lighting l = lighting_day();
+
+	l.sun_direction = normalize(vec3(0.35f, -0.72f, 0.42f));
+	l.sun_color     = vec3(0.45f, 0.58f, 0.92f);
+	l.sun_power     = 0.9f;
+	l.sun_disk      = 0.50f;
+
+	l.rim_color     = vec3(0.20f, 0.30f, 0.60f);
+	l.rim_power     = 0.35f;
+
+	l.exposure      = 1.4f;
+	l.fog_density   = 0.006f;
+
+	l.zenith = vec3(0.012f, 0.020f, 0.055f);
+	l.haze   = vec3(0.035f, 0.045f, 0.075f);
+	l.glow   = vec3(0.100f, 0.130f, 0.220f);
+	l.ground = vec3(0.008f, 0.008f, 0.012f);
+
+	l.ambient_up   = vec3(0.120f, 0.150f, 0.260f);
+	l.ambient_side = vec3(0.060f, 0.070f, 0.110f);
+	l.ambient_down = vec3(0.015f, 0.015f, 0.020f);
+
+	return l;
+}
+
+Lighting lighting_studio()
+{
+	Lighting l = lighting_day();
+
+	l.sun_direction = normalize(vec3(-0.40f, -0.85f, -0.35f));
+	l.sun_color     = vec3(1.00f, 0.97f, 0.92f);
+	l.sun_power     = 3.6f;
+	l.sun_disk      = 0.35f;
+
+	l.rim_direction = normalize(vec3(0.45f, -0.35f, 0.62f));
+	l.rim_color     = vec3(0.55f, 0.65f, 0.95f);
+	l.rim_power     = 0.85f;
+
+	l.exposure      = 1.0f;
+	l.fog_density   = 0.0f;
+	l.ao_strength   = 1.2f;
+
+	l.zenith = vec3(0.018f, 0.020f, 0.026f);
+	l.haze   = vec3(0.045f, 0.048f, 0.055f);
+	l.glow   = vec3(0.060f, 0.060f, 0.070f);
+	l.ground = vec3(0.010f, 0.010f, 0.012f);
+
+	l.ambient_up   = vec3(0.220f, 0.230f, 0.260f);
+	l.ambient_side = vec3(0.110f, 0.115f, 0.130f);
+	l.ambient_down = vec3(0.030f, 0.030f, 0.035f);
+
+	return l;
+}
+
+Lighting lighting_preset(uint kind)
+{
+	switch (kind)
+	{
+		case LIGHT_OVERCAST: return lighting_overcast();
+		case LIGHT_NOON:     return lighting_noon();
+		case LIGHT_SUNSET:   return lighting_sunset();
+		case LIGHT_NIGHT:    return lighting_night();
+		case LIGHT_STUDIO:   return lighting_studio();
+		default:             return lighting_day();
+	}
+}
+
 struct Button
 {
 	char is_pressed;
@@ -259,7 +479,7 @@ struct GameWindow
 	void begin_frame();
 	void end_frame();
 
-	void draw_gbuf(vec3 view_position, mat4 proj_view);
+	void draw_gbuf(vec3 view_position, mat4 proj_view, const Lighting* lighting);
 
 	void shutdown();
 };
@@ -413,6 +633,24 @@ void GameWindow::init(uint screen_width, uint screen_height)
 	io.FontGlobalScale = ui_scale;
 	ImGui::GetStyle().ScaleAllSizes(ui_scale);
 
+	// fonts : one TTF at UI size, plus the two HUD sizes the overlay draws at.
+	// the console and the widgets use ui_font; the HUD picks its own face.
+	const char* font_path = "assets/fonts/Roboto-Medium.ttf";
+	FILE* font_file = fopen(font_path, "rb");
+	if (font_file)
+	{
+		fclose(font_file);
+		ui_font        = io.Fonts->AddFontFromFileTTF(font_path, 14.f);
+		hud_font_small = io.Fonts->AddFontFromFileTTF(font_path, 16.f * ui_scale);
+		hud_font_big   = io.Fonts->AddFontFromFileTTF(font_path, 40.f * ui_scale);
+		io.FontDefault = ui_font;
+	}
+	else
+	{
+		io.Fonts->AddFontDefault();
+		console->add_entry("font missing : assets/fonts/Roboto-Medium.ttf", FIXME, WNDW);
+	}
+
 	// Setup Platform/Renderer backends
 	ImGui_ImplGlfw_InitForOpenGL(instance, true);
 	ImGui_ImplOpenGL3_Init("#version 130");
@@ -552,7 +790,7 @@ void GameWindow::end_frame()
 
 	timer.start(); // begin timing next frame
 }
-void GameWindow::draw_gbuf(vec3 view_position, mat4 proj_view)
+void GameWindow::draw_gbuf(vec3 view_position, mat4 proj_view, const Lighting* lighting)
 {
 	glBindFramebuffer(GL_FRAMEBUFFER, 0); // Framebuffer 0 = the screen
 	glBindVertexArray(gbuf.VAO);
@@ -565,6 +803,40 @@ void GameWindow::draw_gbuf(vec3 view_position, mat4 proj_view)
 
 	// the occlusion taps project world points back onto this screen
 	glUniformMatrix4fv(glGetUniformLocation(gbuf.shader.id, "proj_view"), 1, GL_FALSE, (float*)&proj_view);
+
+	// per-scene lighting
+	static Lighting fallback = lighting_day();
+	const Lighting& l = lighting ? *lighting : fallback;
+
+	vec3 sun_dir = l.sun_direction;
+	vec3 rim_dir = l.rim_direction;
+	if (dot(sun_dir, sun_dir) < 1e-6f) sun_dir = vec3(-0.36f, -0.84f, -0.30f);
+	if (dot(rim_dir, rim_dir) < 1e-6f) rim_dir = vec3(0.58f, -0.22f, 0.60f);
+	sun_dir = normalize(sun_dir);
+	rim_dir = normalize(rim_dir);
+
+	gbuf.shader.set_vec3 ("sun_direction", sun_dir);
+	gbuf.shader.set_vec3 ("sun_color",     l.sun_color);
+	gbuf.shader.set_float("sun_power",     l.sun_power);
+	gbuf.shader.set_float("sun_disk",      l.sun_disk);
+
+	gbuf.shader.set_vec3 ("rim_direction", rim_dir);
+	gbuf.shader.set_vec3 ("rim_color",     l.rim_color);
+	gbuf.shader.set_float("rim_power",     l.rim_power);
+
+	gbuf.shader.set_float("exposure",      l.exposure);
+	gbuf.shader.set_float("fog_density",   l.fog_density);
+	gbuf.shader.set_float("multiscatter",  l.multiscatter);
+	gbuf.shader.set_float("ao_strength",   l.ao_strength);
+
+	gbuf.shader.set_vec3("zenith", l.zenith);
+	gbuf.shader.set_vec3("haze",   l.haze);
+	gbuf.shader.set_vec3("glow",   l.glow);
+	gbuf.shader.set_vec3("ground", l.ground);
+
+	gbuf.shader.set_vec3("ambient_up",   l.ambient_up);
+	gbuf.shader.set_vec3("ambient_side", l.ambient_side);
+	gbuf.shader.set_vec3("ambient_down", l.ambient_down);
 
 	glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, gbuf.rendertarget.position_tx);
 	glActiveTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_2D, gbuf.rendertarget.normal_tx  );

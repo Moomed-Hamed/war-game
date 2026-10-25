@@ -31,8 +31,9 @@ int main()
 	GameRenderer* renderer = Alloc(GameRenderer, 1);
 	renderer->init();
 
-	GameScene* scene = Alloc(GameScene, 1);
-	scene->init(renderer);
+	Scene* scene = NULL;
+	SceneManager* scenes = Alloc(SceneManager, 1);
+	scenes->init(renderer);
 
 	window->timer.start();
 	while (window->instance)
@@ -40,13 +41,15 @@ int main()
 		window->begin_frame(); // poll input, swap GL buffers
 		if (window->instance == NULL) break; // out of samsara
 
-		scene->update(window, renderer);           // input -> camera -> instances
+		scenes->update(window, renderer); // builds a requested scene before updating it
+		scene = &scenes->scene;
+
 		renderer->draw(window, scene->proj_view);  // static + skinned pass into the gbuf
-		window->draw_gbuf(scene->camera.position, scene->proj_view); // lighting
+		window->draw_gbuf(scene->camera.position, scene->proj_view, &scene->lighting); // lighting
 		scene->phys.draw_debug(scene->proj_view);  // collider wireframes, toggled in the Phys tab
 		renderer->draw_skeleton(scene->proj_view); // rig overlay, toggled in the Anim tab
 
-		draw_console(console, renderer, window, scene);
+		draw_console(console, renderer, window, scenes);
 		ImGui::Render();
 		ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 

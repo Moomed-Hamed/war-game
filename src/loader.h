@@ -194,6 +194,13 @@ struct MeshLoader
 		snprintf(msg, MAX_LOG_MSG_LENGTH, "load_mesh_data_no_uv : mesh id [%d] not found", mesh_id);
 		console->add_entry(msg, FIXME, RNDR);
 	}
+
+	// forget every cached path : ids restart at 1 for the next scene
+	void clear()
+	{
+		num_loaded = 0;
+		memset(meshes, 0, sizeof(meshes));
+	}
 };
 
 // Animated Meshes
@@ -396,6 +403,13 @@ struct MeshLoaderAnim
 		snprintf(msg, MAX_LOG_MSG_LENGTH, "[ANIM] load_mesh_data_no_uv : mesh id [%d] not found", mesh_id);
 		console->add_entry(msg, FIXME, RNDR);
 	}
+
+	// forget every cached path : ids restart at 1 for the next scene
+	void clear()
+	{
+		num_loaded = 0;
+		memset(meshes, 0, sizeof(meshes));
+	}
 };
 
 // Animation Keyframes & Skeleton
@@ -496,6 +510,21 @@ struct AnimLoader
 			players[i].control.speed = 1.f;
 			players[i].control.loop  = true; // NSDMI default, skipped by calloc just like speed
 		}
+	}
+
+	// drop every clip and player, freeing the keyframes the loader owns
+	void clear()
+	{
+		for (uint i = 0; i < MAX_ANIMATIONS; i++)
+		{
+			for (uint b = 0; b < MAX_ANIM_BONES; b++) free(clips[i].keyframes[b]);
+			clips[i] = {};
+			clip_paths[i][0] = 0;
+		}
+
+		memset(players, 0, sizeof(players));
+		num_players = 0;
+		init(); // reseed the defaults value-init skips
 	}
 
 	// load a clip into a free slot : skeleton (parents + ibm) + keyframes.
@@ -951,6 +980,14 @@ struct TextureLoader
 		snprintf(msg, MAX_LOG_MSG_LENGTH, "Loaded Texture : [%s], Size : [%d] bytes", path, width * height * num_channels);
 		console->add_entry(msg, SUCCESS, RNDR);
 		return textures[i].id;
+	}
+	// delete every texture and forget the slots : init() reloads the default
+	void clear()
+	{
+		for (uint i = 0; i < num_textures; i++)
+			glDeleteTextures(1, &textures[i].handle);
+		num_textures = 0;
+		memset(textures, 0, sizeof(textures));
 	}
 	void bind(uint id, GLuint active_texture = 0)
 	{
