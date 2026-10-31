@@ -379,6 +379,17 @@ struct DrawBuffer
 			mesh_info[i].num_instances = 0;
 	}
 
+	// drop every mesh appended after a mark : a live edit re-adds its meshes at the
+	// same slots without leaving the old ones in the buffer
+	void rewind(uint mesh_count, uint geom_bytes, uint indx_bytes)
+	{
+		if (mesh_count > num_meshes) return;
+		for (uint i = mesh_count; i < num_meshes; i++) mesh_info[i] = {};
+		num_meshes = mesh_count;
+		geom_size  = geom_bytes;
+		indx_size  = indx_bytes;
+	}
+
 	// release the gpu objects : the buffer must be init()ed again before use
 	void shutdown()
 	{
@@ -956,6 +967,17 @@ struct GameRenderer
 			glBindVertexArray(db.vao);
 			shader.bind();
 			glUniformMatrix4fv(glGetUniformLocation(shader.id, "proj_view"), 1, GL_FALSE, (float*)&proj_view);
+
+			// the water material reads these; non-water instances ignore the branch
+			glUniform3f(glGetUniformLocation(shader.id, "foam_color"),
+			            window->water_foam_color.x, window->water_foam_color.y,
+			            window->water_foam_color.z);
+			glUniform1f(glGetUniformLocation(shader.id, "foam_roughness"),
+			            window->water_foam_roughness);
+			glUniform1i(glGetUniformLocation(shader.id, "water_normal_map"), 1);
+			glUniform1f(glGetUniformLocation(shader.id, "water_detail"), window->water_detail);
+			glUniform1f(glGetUniformLocation(shader.id, "water_detail_tiles"), window->water_detail_tiles);
+			if (window->water_normal_tx) txloader.bind(window->water_normal_tx, 1);
 
 			drawlists[mode].update(&db);
 			draw_pass(&db, &drawlists[mode]);

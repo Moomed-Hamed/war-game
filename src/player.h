@@ -110,8 +110,9 @@ struct Player
 		console->add_entry("Player spawned : F swaps to the fly camera", SUCCESS, PHYS);
 	}
 
-	// one frame : input -> movement -> camera -> weapon -> projectiles
-	void update(GameWindow* window, GameRenderer* renderer, Physics* phys)
+	// one frame : input -> movement -> camera -> weapon -> projectiles. armed is
+	// false while the scene drives instead of walking, so the gun stays holstered
+	void update(GameWindow* window, GameRenderer* renderer, Physics* phys, bool armed = true)
 	{
 		ImGuiIO& io = ImGui::GetIO();
 		float dt = window->dtime;
@@ -137,7 +138,7 @@ struct Player
 		}
 
 		move(window, phys); // every frame : the eyes and the gun ride the capsule
-		weapon(window, renderer, phys, io, look, dt);
+		if (armed) weapon(window, renderer, phys, io, look, dt);
 		update_bullets(phys, dt);
 	}
 

@@ -981,6 +981,109 @@ struct TextureLoader
 		console->add_entry(msg, SUCCESS, RNDR);
 		return textures[i].id;
 	}
+	// empty R8 texture, filled by upload_dynamic : the water foam field
+	uint create_dynamic(const char* path, int width, int height)
+	{
+		for (uint i = 0; i < num_textures; i++)
+			if (strcmp(textures[i].path, path) == 0)
+				return textures[i].id;
+
+		if (num_textures >= MAX_TEXTURES)
+		{
+			console->add_entry("TextureLoader : MAX_TEXTURE limit reached", FIXME, RNDR);
+			return 0;
+		}
+
+		uint i = num_textures;
+		glActiveTexture(GL_TEXTURE0);
+		glGenTextures(1, &textures[i].handle);
+		glBindTexture(GL_TEXTURE_2D, textures[i].handle);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, width, height, 0, GL_RED, GL_UNSIGNED_BYTE, NULL);
+
+		textures[i].id = num_textures;
+		textures[i].width  = width;
+		textures[i].height = height;
+		snprintf(textures[i].path, sizeof(textures[i].path), "%s", path);
+		num_textures++;
+
+		char msg[MAX_LOG_MSG_LENGTH];
+		snprintf(msg, MAX_LOG_MSG_LENGTH, "Dynamic Texture : [%s], %d x %d", path, width, height);
+		console->add_entry(msg, SUCCESS, RNDR);
+		return textures[i].id;
+	}
+
+	void upload_dynamic(uint id, const unsigned char* pixels, int width, int height)
+	{
+		for (uint i = 0; i < num_textures; i++)
+		{
+			if (textures[i].id == id)
+			{
+				glBindTexture(GL_TEXTURE_2D, textures[i].handle);
+				glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+				glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height,
+				                GL_RED, GL_UNSIGNED_BYTE, pixels);
+				glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+				return;
+			}
+		}
+	}
+
+	// two channel dynamic texture : the short-chop normal map
+	uint create_dynamic_rg(const char* path, int width, int height)
+	{
+		for (uint i = 0; i < num_textures; i++)
+			if (strcmp(textures[i].path, path) == 0)
+				return textures[i].id;
+
+		if (num_textures >= MAX_TEXTURES)
+		{
+			console->add_entry("TextureLoader : MAX_TEXTURE limit reached", FIXME, RNDR);
+			return 0;
+		}
+
+		uint i = num_textures;
+		glActiveTexture(GL_TEXTURE0);
+		glGenTextures(1, &textures[i].handle);
+		glBindTexture(GL_TEXTURE_2D, textures[i].handle);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RG8, width, height, 0, GL_RG, GL_UNSIGNED_BYTE, NULL);
+
+		textures[i].id = num_textures;
+		textures[i].width  = width;
+		textures[i].height = height;
+		snprintf(textures[i].path, sizeof(textures[i].path), "%s", path);
+		num_textures++;
+
+		char msg[MAX_LOG_MSG_LENGTH];
+		snprintf(msg, MAX_LOG_MSG_LENGTH, "Dynamic Texture : [%s], %d x %d", path, width, height);
+		console->add_entry(msg, SUCCESS, RNDR);
+		return textures[i].id;
+	}
+
+	void upload_dynamic_rg(uint id, const unsigned char* pixels, int width, int height)
+	{
+		for (uint i = 0; i < num_textures; i++)
+		{
+			if (textures[i].id == id)
+			{
+				glBindTexture(GL_TEXTURE_2D, textures[i].handle);
+				glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+				glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height,
+				                GL_RG, GL_UNSIGNED_BYTE, pixels);
+				glGenerateMipmap(GL_TEXTURE_2D);
+				glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+				return;
+			}
+		}
+	}
+
 	// delete every texture and forget the slots : init() reloads the default
 	void clear()
 	{

@@ -578,7 +578,7 @@ void draw_PHYS_console(Physics* phys)
          ImGui::TextColored(shape_colors[s], "%u %s", shape_counts[s], shape_names[s]);
       }
 
-      // vehicle : live numbers read straight off the hinges (only when built)
+      // vehicle : live numbers read straight off the raycast car (only when built)
       if (phys->vehicle.chassis_id)
       {
          section("Vehicle");
@@ -586,27 +586,27 @@ void draw_PHYS_console(Physics* phys)
          kv("speed", "%.2f m/s  |  %.1f km/h", speed, speed * 3.6f);
          kv("steer", "%.1f deg", phys->vehicle_steer() * 180.f / PI);
          kv("wheel", "%.2f rev", phys->vehicle_spin() / (2.f * PI));
-         kv("arrows", "spin %.0f | steer %.0f", phys->vehicle.spin_cmd, phys->vehicle.steer_cmd);
+         kv("input", "engine %.0f | steer %.0f deg", phys->vehicle.spin_cmd,
+            phys->vehicle.steer_cmd * 180.f / PI);
 
-         if (ImGui::BeginTable("physwheels", 4,
-            TABLE_FLAGS))
+         if (phys->vehicle.car && ImGui::BeginTable("physwheels", 4, TABLE_FLAGS))
          {
             ImGui::TableSetupColumn("axle",      ImGuiTableColumnFlags_WidthFixed, ui(56));
-            ImGui::TableSetupColumn("id",        ImGuiTableColumnFlags_WidthFixed, ui(28));
-            ImGui::TableSetupColumn("spin rev",  ImGuiTableColumnFlags_WidthFixed, ui(66));
+            ImGui::TableSetupColumn("contact",   ImGuiTableColumnFlags_WidthFixed, ui(46));
+            ImGui::TableSetupColumn("susp m",    ImGuiTableColumnFlags_WidthFixed, ui(52));
             ImGui::TableSetupColumn("steer deg", ImGuiTableColumnFlags_WidthFixed, ui(66));
             ImGui::TableHeadersRow();
 
-            for (uint i = 0; i < 4; i++)
+            for (int i = 0; i < 4; i++)
             {
-               btHinge2Constraint* h = phys->vehicle.hinges[i];
+               const btWheelInfo& w = phys->vehicle.car->getWheelInfo(i);
                ImGui::TableNextRow();
                ImGui::TableNextColumn(); ImGui::Text("%s %u", i < 2 ? "front" : "rear", i % 2 + 1);
-               ImGui::TableNextColumn(); ImGui::Text("%u", phys->vehicle.wheel_ids[i]);
-               ImGui::TableNextColumn(); ImGui::Text("%.2f", h->getAngle2() / (2.f * PI));
+               ImGui::TableNextColumn(); ImGui::Text("%s", w.m_raycastInfo.m_isInContact ? "yes" : "no");
+               ImGui::TableNextColumn(); ImGui::Text("%.2f", w.m_raycastInfo.m_suspensionLength);
                ImGui::TableNextColumn();
-               if (i < 2) ImGui::Text("%.1f", h->getAngle1() * 180.f / PI);
-               else       ImGui::TextDisabled("-"); // rear axle : no steering motor
+               if (i < 2) ImGui::Text("%.1f", w.m_steering * 180.f / PI);
+               else       ImGui::TextDisabled("-");
             }
             ImGui::EndTable();
          }
@@ -1613,9 +1613,8 @@ void draw_console(GameConsole* console, GameRenderer* rndr, GameWindow* window, 
    scenes->draw_ux(window);
 
    // F1 hides the whole panel : the scene plays unobstructed
-   static bool visible = true;
-   if (window->keys.F1.is_pressed && !window->keys.F1.was_pressed) visible = !visible;
-   if (!visible) return;
+   if (window->keys.F1.is_pressed && !window->keys.F1.was_pressed) ux_panel_visible = !ux_panel_visible;
+   if (!ux_panel_visible) return;
 
    // full-height side slab : top to bottom of the window, width scaled to it,
    // scrollable (the Assets tab overflows a short window)
@@ -1624,9 +1623,8 @@ void draw_console(GameConsole* console, GameRenderer* rndr, GameWindow* window, 
       | ImGuiWindowFlags_NoMove
       | ImGuiWindowFlags_NoTitleBar;
 
-   float panel_w = ui(620.f);
-   float max_w = window->screen_width * 0.45f; // never eats the whole scene on narrow windows
-   if (panel_w > max_w) panel_w = max_w;
+   float panel_w = ux_panel_width(window); // shared with the scene's projection:
+                                           // never eats the whole scene on narrow windows
 
    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.f); // edge to edge slab
    ImGui::SetNextWindowPos(ImVec2(0, 0));

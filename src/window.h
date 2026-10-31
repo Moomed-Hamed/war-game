@@ -468,6 +468,12 @@ struct GameWindow
 	float frame_ms_work; // cpu/gpu cost of this frame, display waits excluded
 	float swap_wait_ms;  // how long glfwSwapBuffers blocked this frame (vsync)
 
+	// foam shading + short-chop normal map : filled by whichever scene owns the sea
+	vec3  water_foam_color;
+	float water_foam_roughness;
+	uint  water_normal_tx;
+	float water_detail, water_detail_tiles;
+
 	// deferred rendering
 	struct {
 		RenderTarget rendertarget;
@@ -534,6 +540,10 @@ void GameWindow::init(uint screen_width, uint screen_height)
 {
 	timer.init();
 	frame_milliseconds_target = 1000.f / 120.f; // software cap : ms per frame
+	water_foam_color = vec3(.82f, .88f, .90f);
+	water_foam_roughness = .55f;
+	water_detail = .70f;
+	water_detail_tiles = 12.f;
 
 	timeBeginPeriod(1); // 1ms scheduler granularity so the cap sleep is accurate
 	init_keyboard(&keys);
