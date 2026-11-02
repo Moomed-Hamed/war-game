@@ -1,4 +1,7 @@
 #include "drawer.h"
+#include "BulletSoftBody/btSoftBodyHelpers.h"
+#include "BulletSoftBody/btSoftBodyRigidBodyCollisionConfiguration.h"
+#include "BulletSoftBody/btDefaultSoftBodySolver.h"
 
 /* ------------------------- *
 	-       Physics         -
@@ -8,7 +11,7 @@
 // same rule as mesh ids) ; setUserIndex carries the handle into raycasts.
 // transforms read straight from bullet, never mirrored into a cache.
 
-const uint MAX_BODIES = 64;
+const uint MAX_BODIES = 32768;
 
 // feel : props grip the floor and give a little when they land
 const float PHYS_FRICTION    = .7f;
@@ -28,166 +31,23 @@ struct Phys_Body
 	uint wire_mesh; // 0 = shared unit wire, else a per-body capsule wire
 };
 
-// collider wireframes : unit box/sphere/cylinder edges instanced at every
-// body's transform, capsules get an exact per-body wire. own shader, own
-// vao - the renderer never hears about it
+// debug wires over the scene : collider shapes, constraint frames and a scene
+// ray. own shader, own vao - the renderer never hears about it
 struct Phys_Debug
 {
-	bool enabled;
-	DrawBuffer lines;     // unit shapes + one instance slot per body
-	ShaderProgram shader; // same wire shaders as the renderer's overlay
-	uint box_mesh, sphere_mesh, cylinder_mesh, cone_mesh;
-	uint unit_mesh[PHYS_CONE + 1]; // shape tag -> shared unit wire
-	uint next_wire_mesh;  // next id for a per-body capsule wire
+	bool enabled;     // collider wires
+	bool constraints; // joint anchors, pivots and axes
+	bool rays;        // the scene's interaction ray and its hit point
+	uint next_wire_mesh; // next id for a per-body capsule wire (shared overlay)
 
-	void init()
-	{
-		shader.create("assets/shaders/wire.vert", "assets/shaders/wire.frag");
-		lines.init(); // 1MB default : this buffer barely uses it
+	// the interaction ray is filled by a scene each frame
+	bool ray_active, ray_hit, ray_target;
+	vec3 ray_a, ray_b, ray_point;
 
-		// unit box : 8 corners, 12 edges (an edge joins corners differing by one bit)
-		Mesh_Data box = {};
-		box.num_vertices = 8;
-		box.num_indices  = 24;
-		box.positions = Alloc(vec3, 8);
-		box.normals   = Alloc(vec3, 8);
-		box.uvs       = Alloc(vec2, 8);
-		box.indices   = Alloc(uint, 24);
 
-		for (uint i = 0; i < 8; i++)
-		{
-			box.positions[i] = vec3((i & 1) ? 1.f : -1.f, (i & 2) ? 1.f : -1.f, (i & 4) ? 1.f : -1.f);
-			box.normals[i]   = vec3(0, 1, 0);
-		}
+	void init() { next_wire_mesh = 20; } // ids 1..9 belong to the shared overlay
+	void shutdown() {}
 
-		uint e = 0;
-		for (uint i = 0; i < 8; i++)
-			for (uint bit = 1; bit < 8; bit *= 2)
-			{
-				uint j = i ^ bit;
-				if (i < j) { box.indices[e++] = i; box.indices[e++] = j; }
-			}
-
-		box_mesh = 1;
-		lines.append_geometry(box_mesh, box);
-		box.release();
-
-		// unit sphere : ring + column edges of a coarse uv sphere
-		uint slices = 16, stacks = 12;
-		Mesh_Data src = MeshFactory::generate_uv_sphere(1.f, slices, stacks);
-		Mesh_Data ball = {};
-		ball.num_vertices = src.num_vertices;
-		ball.num_indices  = stacks * slices * 8; // 4 edges per quad
-		ball.positions = Alloc(vec3, src.num_vertices);
-		ball.normals   = Alloc(vec3, src.num_vertices);
-		ball.uvs       = Alloc(vec2, src.num_vertices);
-		ball.indices   = Alloc(uint, ball.num_indices);
-
-		for (uint i = 0; i < src.num_vertices; i++)
-		{
-			ball.positions[i] = src.positions[i];
-			ball.normals[i]   = src.normals[i];
-			ball.uvs[i]       = src.uvs[i];
-		}
-
-		e = 0;
-		for (uint i = 0; i < stacks; i++)
-			for (uint j = 0; j < slices; j++)
-			{
-				uint upper = i * (slices + 1) + j;
-				uint lower = upper + slices + 1;
-
-				ball.indices[e++] = upper;     ball.indices[e++] = upper + 1; // ring edge
-				ball.indices[e++] = lower;     ball.indices[e++] = lower + 1; // ring edge
-				ball.indices[e++] = upper;     ball.indices[e++] = lower;     // column edge
-				ball.indices[e++] = upper + 1; ball.indices[e++] = lower + 1; // column edge
-			}
-
-		src.release();
-		sphere_mesh = 2;
-		lines.append_geometry(sphere_mesh, ball);
-		ball.release();
-
-		// unit cylinder : radius 1, half-height 1. rings only live in the xz plane,
-		// so non-uniform instance scaling stays exact and it can share one mesh
-		uint cyl_slices = 16;
-		Mesh_Data cyl = {};
-		cyl.num_vertices = 2 * (cyl_slices + 1);
-		cyl.num_indices  = cyl_slices * 6; // ring edges (x2) + verticals
-		cyl.positions = Alloc(vec3, cyl.num_vertices);
-		cyl.normals   = Alloc(vec3, cyl.num_vertices);
-		cyl.uvs       = Alloc(vec2, cyl.num_vertices);
-		cyl.indices   = Alloc(uint, cyl.num_indices);
-
-		for (uint ring = 0; ring < 2; ring++)
-			for (uint j = 0; j <= cyl_slices; j++)
-			{
-				float theta = 2.f * PI * j / cyl_slices;
-				cyl.positions[ring * (cyl_slices + 1) + j] =
-					vec3(cosf(theta), ring ? -1.f : 1.f, sinf(theta));
-			}
-
-		e = 0;
-		for (uint j = 0; j < cyl_slices; j++)
-		{
-			uint top = j, bottom = cyl_slices + 1 + j;
-
-			cyl.indices[e++] = top;    cyl.indices[e++] = top + 1;    // top ring
-			cyl.indices[e++] = bottom; cyl.indices[e++] = bottom + 1; // bottom ring
-			cyl.indices[e++] = top;    cyl.indices[e++] = bottom;     // vertical
-		}
-
-		cylinder_mesh = 3;
-		lines.append_geometry(cylinder_mesh, cyl);
-		cyl.release();
-
-		// unit cone : base ring at y -0.5, apex at y +0.5 (radius 1, height 1)
-		uint cone_slices = 16;
-		Mesh_Data cone = {};
-		cone.num_vertices = cone_slices + 1;
-		cone.num_indices  = cone_slices * 4; // base ring edges + one edge to the apex
-		cone.positions = Alloc(vec3, cone.num_vertices);
-		cone.normals   = Alloc(vec3, cone.num_vertices);
-		cone.uvs       = Alloc(vec2, cone.num_vertices);
-		cone.indices   = Alloc(uint, cone.num_indices);
-
-		for (uint j = 0; j < cone_slices; j++)
-		{
-			float theta = 2.f * PI * j / cone_slices;
-			cone.positions[j] = vec3(cosf(theta), -.5f, sinf(theta));
-		}
-		cone.positions[cone_slices] = vec3(0, .5f, 0); // apex
-
-		e = 0;
-		for (uint j = 0; j < cone_slices; j++)
-		{
-			uint next = (j + 1) % cone_slices;
-			cone.indices[e++] = j; cone.indices[e++] = next;        // base ring
-			cone.indices[e++] = j; cone.indices[e++] = cone_slices; // to the apex
-		}
-
-		cone_mesh = 4;
-		lines.append_geometry(cone_mesh, cone);
-		cone.release();
-
-		unit_mesh[PHYS_BOX]      = box_mesh;
-		unit_mesh[PHYS_SPHERE]   = sphere_mesh;
-		unit_mesh[PHYS_CYLINDER] = cylinder_mesh;
-		unit_mesh[PHYS_CONE]     = cone_mesh;
-
-		next_wire_mesh = 5; // per-body capsule wires take it from here
-	}
-
-	// release the overlay's gpu objects with the physics world that owns them
-	void shutdown()
-	{
-		lines.shutdown();
-		shader.destroy();
-	}
-
-	// an exact wire for one capsule body : non-uniform scaling would squash the
-	// caps, so each body gets its own mesh (radius + cylinder height, same
-	// convention as bullet and the mesh factory)
 	uint append_capsule_wire(float radius, float height)
 	{
 		uint slices = 16, cap_segs = 3;
@@ -235,7 +95,7 @@ struct Phys_Debug
 			}
 
 		uint mesh_id = next_wire_mesh++;
-		lines.append_geometry(mesh_id, wire);
+		debug_draw.lines.append_geometry(mesh_id, wire);
 		wire.release();
 		return mesh_id;
 	}
@@ -268,8 +128,9 @@ struct Phys_Vehicle
 
 // joints the scene built. bullet owns the constraints themselves, this is the
 // list the ux reads : limits are radians and mean different things per kind
-enum { PHYS_HINGE = 1, PHYS_CONETWIST, PHYS_HINGE2 };
-const uint MAX_JOINTS = 32;
+enum { PHYS_HINGE = 1, PHYS_CONETWIST, PHYS_HINGE2,
+       PHYS_POINT, PHYS_SLIDER, PHYS_FIXED };
+const uint MAX_JOINTS = 512;
 
 struct Phys_Joint
 {
@@ -291,15 +152,16 @@ btTransform joint_frame(float s, vec3 euler, vec3 at)
 struct Physics
 {
 	// world guts : allocated in init(), lives for the process (engine style)
-	btDefaultCollisionConfiguration* config;
+	btSoftBodyRigidBodyCollisionConfiguration* config;
 	btCollisionDispatcher* dispatcher;
 	btBroadphaseInterface* broadphase;
 	btSequentialImpulseConstraintSolver* solver;
-	btDiscreteDynamicsWorld* world;
+	btDefaultSoftBodySolver* soft_solver;
+	btSoftRigidDynamicsWorld* world;
 
 	Phys_Body bodies[MAX_BODIES]; // [0] reserved : phys_id 0 = none
 	uint num_bodies;
-	Phys_Debug debug; // collider wireframes over the scene
+	Phys_Debug debug; // collider, constraint and ray wires over the scene
 	Phys_Vehicle vehicle; // the scene car, driven from update_vehicle()
 	Phys_Joint joints[MAX_JOINTS]; // tracked joints, read by the ux tab
 	uint num_joints;
@@ -309,12 +171,18 @@ struct Physics
 		num_bodies = 1;
 		num_joints = 0;
 
-		config     = new btDefaultCollisionConfiguration();
-		dispatcher = new btCollisionDispatcher(config);
-		broadphase = new btDbvtBroadphase();
-		solver     = new btSequentialImpulseConstraintSolver();
-		world      = new btDiscreteDynamicsWorld(dispatcher, broadphase, solver, config);
+		config      = new btSoftBodyRigidBodyCollisionConfiguration();
+		dispatcher  = new btCollisionDispatcher(config);
+		broadphase  = new btDbvtBroadphase();
+		solver      = new btSequentialImpulseConstraintSolver();
+		soft_solver = new btDefaultSoftBodySolver();
+		world       = new btSoftRigidDynamicsWorld(dispatcher, broadphase, solver,
+		                                          config, soft_solver);
 		world->setGravity(btVector3(0, -9.80665f, 0));
+		world->getWorldInfo().m_gravity = btVector3(0, -9.80665f, 0);
+		world->getWorldInfo().air_density = 1.2f;
+		world->getWorldInfo().water_density = 0.f;
+		world->getWorldInfo().m_sparsesdf.Initialize();
 
 		debug.init();
 
@@ -336,6 +204,15 @@ struct Physics
 		delete vehicle.raycaster;
 		vehicle.raycaster = NULL;
 
+		// soft bodies first : they can hold contact references to rigid bodies
+		btSoftBodyArray& soft = world->getSoftBodyArray();
+		for (int i = soft.size() - 1; i >= 0; i--)
+		{
+			btSoftBody* sb = soft[i];
+			world->removeSoftBody(sb);
+			delete sb;
+		}
+
 		for (int i = world->getNumConstraints() - 1; i >= 0; i--)
 		{
 			btTypedConstraint* c = world->getConstraint(i);
@@ -356,11 +233,12 @@ struct Physics
 
 		debug.shutdown();
 
-		delete world;      world = NULL;
-		delete solver;     solver = NULL;
-		delete broadphase; broadphase = NULL;
-		delete dispatcher; dispatcher = NULL;
-		delete config;     config = NULL;
+		delete world;       world = NULL;
+		delete soft_solver; soft_solver = NULL;
+		delete solver;      solver = NULL;
+		delete broadphase;  broadphase = NULL;
+		delete dispatcher;  dispatcher = NULL;
+		delete config;      config = NULL;
 
 		memset(bodies, 0, sizeof(bodies));
 		memset(joints, 0, sizeof(joints));
@@ -373,10 +251,20 @@ struct Physics
 	// each axis. returns phys_id (0 = failed, error already logged)
 	uint add_body(uint shape, vec3 pos, vec3 dims, float mass, vec3 tilt = vec3(0))
 	{
-		if (num_bodies >= MAX_BODIES)
+		// recycle slots freed by streaming : the high-water count only grows when
+		// there is no hole left
+		uint slot = 0;
+		for (uint i = 1; i < num_bodies; i++)
+			if (!bodies[i].body) { slot = i; break; }
+
+		if (!slot)
 		{
-			console->add_entry("Physics body slots full (MAX_BODIES)", FIXME, PHYS);
-			return 0;
+			if (num_bodies >= MAX_BODIES)
+			{
+				console->add_entry("Physics body slots full (MAX_BODIES)", FIXME, PHYS);
+				return 0;
+			}
+			slot = num_bodies++;
 		}
 
 		btCollisionShape* collision_shape = NULL;
@@ -418,15 +306,31 @@ struct Physics
 		body->setFriction(mass > 0 ? PHYS_FRICTION : GROUND_FRICTION);
 		if (mass > 0) body->setRestitution(PHYS_RESTITUTION);
 
-		body->setUserIndex(num_bodies); // handle rides inside bullet : raycasts read it back
+		body->setUserIndex(slot); // handle rides inside bullet : raycasts read it back
 		world->addRigidBody(body);
 
-		bodies[num_bodies] = { body, shape, dims, mass };
-		bodies[num_bodies].spawn_rot = start.getRotation();
-		bodies[num_bodies].spawn_pos = pos;
-		bodies[num_bodies].wire_mesh = (shape == PHYS_CAPSULE)
+		bodies[slot] = { body, shape, dims, mass };
+		bodies[slot].spawn_rot = start.getRotation();
+		bodies[slot].spawn_pos = pos;
+		bodies[slot].wire_mesh = (shape == PHYS_CAPSULE)
 			? debug.append_capsule_wire(dims.x, dims.y) : 0; // 0 = shared unit shape
-		return num_bodies++;
+		return slot;
+	}
+
+	// drop a body and free its slot for the next streaming add
+	void remove_body(uint phys_id)
+	{
+		if (phys_id == 0 || phys_id >= num_bodies) return;
+
+		Phys_Body& b = bodies[phys_id];
+		if (!b.body) return;
+
+		world->removeRigidBody(b.body);
+		if (b.body->getMotionState()) delete b.body->getMotionState();
+		if (b.body->getCollisionShape()) delete b.body->getCollisionShape();
+		delete b.body;
+
+		b = {};
 	}
 
 	uint add_box(vec3 pos, vec3 half_extents, float mass, vec3 tilt = vec3(0))
@@ -623,10 +527,11 @@ struct Physics
 	// impulse drives the joint toward motor_speed. the handle lets a scene
 	// retune the motor or limits after the joint exists
 	btHingeConstraint* add_hinge(btRigidBody& a, btRigidBody& b, btTransform fa, btTransform fb,
-	                             float lo, float hi, float motor_speed = 0.f, float motor_impulse = 0.f)
+	                             float lo, float hi, float motor_speed = 0.f,
+	                             float motor_impulse = 0.f, bool limited = true)
 	{
 		btHingeConstraint* j = new btHingeConstraint(a, b, fa, fb);
-		j->setLimit(lo, hi);
+		if (limited) j->setLimit(lo, hi);
 		if (motor_impulse > 0.f) j->enableAngularMotor(true, motor_speed, motor_impulse);
 		world->addConstraint(j, true); // no self-collision across the joint
 		add_joint(PHYS_HINGE, a, b, lo, hi);
@@ -640,6 +545,67 @@ struct Physics
 		j->setLimit(swing, swing, twist);
 		world->addConstraint(j, true);
 		add_joint(PHYS_CONETWIST, a, b, swing, twist);
+	}
+
+	btPoint2PointConstraint* add_point(btRigidBody& a, btRigidBody& b,
+	                                   btVector3 pa, btVector3 pb)
+	{
+		btPoint2PointConstraint* j = new btPoint2PointConstraint(a, b, pa, pb);
+		j->m_setting.m_impulseClamp = 8.f;
+		world->addConstraint(j, true);
+		add_joint(PHYS_POINT, a, b, 0.f, 0.f);
+		return j;
+	}
+
+	btSliderConstraint* add_slider(btRigidBody& a, btRigidBody& b,
+	                               btTransform fa, btTransform fb,
+	                               float lo, float hi)
+	{
+		btSliderConstraint* j = new btSliderConstraint(a, b, fa, fb, true);
+		j->setLowerLinLimit(lo);
+		j->setUpperLinLimit(hi);
+		j->setLowerAngLimit(0.f);
+		j->setUpperAngLimit(0.f);
+		world->addConstraint(j, true);
+		add_joint(PHYS_SLIDER, a, b, lo, hi);
+		return j;
+	}
+
+	// real Bullet soft body patch. the caller pins nodes afterwards with
+	// setMass(index, 0); the patch is already in the soft-rigid world.
+	btSoftBody* add_soft_patch(btVector3 c00, btVector3 c10, btVector3 c01,
+	                           btVector3 c11, int rx, int ry, float mass)
+	{
+		btSoftBody* sb = btSoftBodyHelpers::CreatePatch(world->getWorldInfo(),
+		                                                c00, c10, c01, c11,
+		                                                rx, ry, 0, true, .01f);
+		if (!sb) return NULL;
+
+		sb->setTotalMass(mass, true);
+		sb->m_cfg.piterations = 8;
+		sb->m_cfg.viterations = 3;
+		sb->m_cfg.diterations = 4;
+		sb->m_cfg.kDF = .22f;
+		sb->m_cfg.kDP = .003f;
+		sb->m_cfg.kLF = .05f;
+		// CreatePatch has no clusters, so rigid collision must use the SDF path.
+		// CL_RS only works for clustered bodies and silently ignores the sphere.
+		sb->m_cfg.collisions = btSoftBody::fCollision::SDF_RS |
+		                       btSoftBody::fCollision::VF_SS;
+		sb->generateBendingConstraints(2, sb->appendMaterial());
+		sb->getCollisionShape()->setMargin(.04f);
+		sb->getCollisionShape()->setUserPointer((void*)sb);
+		world->addSoftBody(sb);
+		return sb;
+	}
+
+	btFixedConstraint* add_fixed(btRigidBody& a, btRigidBody& b,
+	                             btTransform fa, btTransform fb)
+	{
+		btFixedConstraint* j = new btFixedConstraint(a, b, fa, fb);
+		world->addConstraint(j, true);
+		add_joint(PHYS_FIXED, a, b, 0.f, 0.f);
+		return j;
 	}
 
 	// remember a joint for the ux tab : every body carries its phys_id as user index
@@ -843,6 +809,23 @@ struct Physics
 		return true;
 	}
 
+	// move a body outright (doors, interior transitions) : zeroed and awake, so
+	// the next step starts from the new pose instead of carrying old momentum
+	void set_body_pose(uint phys_id, vec3 pos)
+	{
+		if (phys_id == 0 || phys_id >= num_bodies || !bodies[phys_id].body) return;
+
+		btRigidBody* b = bodies[phys_id].body;
+		btTransform t = b->getWorldTransform();
+		t.setOrigin(btVector3(pos.x, pos.y, pos.z));
+
+		if (b->getMotionState()) b->getMotionState()->setWorldTransform(t);
+		b->setWorldTransform(t);
+		b->setLinearVelocity(btVector3(0, 0, 0));
+		b->setAngularVelocity(btVector3(0, 0, 0));
+		b->activate();
+	}
+
 	// raw readouts for the ux body table (statics included)
 	vec3 get_position(uint phys_id)
 	{
@@ -938,6 +921,16 @@ struct Physics
 		b->applyCentralImpulse(btVector3(impulse.x, impulse.y, impulse.z));
 	}
 
+	// continuous force, used by the wind on the flag / cloth
+	void apply_force(uint phys_id, vec3 force)
+	{
+		if (phys_id == 0 || phys_id >= num_bodies || !bodies[phys_id].body) return;
+		btRigidBody* b = bodies[phys_id].body;
+		if (b->getMass() == 0) return;
+		b->activate(true);
+		b->applyCentralForce(btVector3(force.x, force.y, force.z));
+	}
+
 	// nudge every dynamic body awake : watch the whole scene stir and re-settle
 	void wake_all()
 	{
@@ -976,77 +969,106 @@ struct Physics
 				reset(i);
 	}
 
-	// colliders as wireframes over the scene : every body, current transform
-	void draw_debug(mat4 proj_view)
+	// append colliders, joint frames and the scene ray to the shared overlay
+	void append_debug()
 	{
-		if (!debug.enabled) return;
-
-		// after lighting the backbuffer depth is nobody's : start clean
-		glBindFramebuffer(GL_FRAMEBUFFER, 0);
-		glClear(GL_DEPTH_BUFFER_BIT);
-
-		// fresh instance stream : one CONTIGUOUS run per shape (the draw reads
-		// num_instances from base_instance, so shapes can't interleave)
-		debug.lines.clear_instances();
-
-		for (uint shape = PHYS_BOX; shape <= PHYS_CONE; shape++)
+		if (debug.enabled)
 		{
-			for (uint i = 1; i < num_bodies; i++)
+			for (uint shape = PHYS_BOX; shape <= PHYS_CONE; shape++)
 			{
-				if (!bodies[i].body || bodies[i].shape != shape) continue;
-
-				float m[16];
-				bodies[i].body->getWorldTransform().getOpenGLMatrix(m);
-				mat4 model = mat4(
-					vec4(m[0],  m[1],  m[2],  m[3]),
-					vec4(m[4],  m[5],  m[6],  m[7]),
-					vec4(m[8],  m[9],  m[10], m[11]),
-					vec4(m[12], m[13], m[14], m[15]));
-
-				// unit wires scale to fit ; capsule wires are pre-sized per body
-				uint mesh;
-				if (shape == PHYS_CAPSULE) mesh = bodies[i].wire_mesh;
-				else
+				for (uint i = 1; i < num_bodies; i++)
 				{
-					model = glm::scale(model, bodies[i].dims);
-					mesh  = debug.unit_mesh[shape];
-				}
+					if (!bodies[i].body || bodies[i].shape != shape) continue;
 
-				Instance inst = INSTANCE_DEFAULT; // the wire shader ignores the material
-				inst.model = model;
-				debug.lines.append_instances(mesh, 1, &inst);
+					float m[16];
+					bodies[i].body->getWorldTransform().getOpenGLMatrix(m);
+					mat4 model = mat4(
+						vec4(m[0],  m[1],  m[2],  m[3]),
+						vec4(m[4],  m[5],  m[6],  m[7]),
+						vec4(m[8],  m[9],  m[10], m[11]),
+						vec4(m[12], m[13], m[14], m[15]));
+
+					// unit wires scale to fit ; capsule wires are pre-sized per body
+					uint mesh;
+					switch (shape)
+					{
+						case PHYS_SPHERE:   mesh = debug_draw.sphere_mesh;   break;
+						case PHYS_CYLINDER: mesh = debug_draw.cylinder_mesh; break;
+						case PHYS_CONE:     mesh = debug_draw.cone_mesh;     break;
+						case PHYS_CAPSULE:  mesh = bodies[i].wire_mesh;      break;
+						default:            mesh = debug_draw.box_mesh;      break;
+					}
+
+					if (shape != PHYS_CAPSULE) model = glm::scale(model, bodies[i].dims);
+
+					// colour says what the body is doing : static / awake / asleep
+					vec4 color = vec4(.52f, .64f, .76f, 1.f);
+					if (bodies[i].mass > 0.f)
+						color = is_awake(i) ? vec4(.20f, 1.f, .40f, 1.f)
+						                    : vec4(.95f, .72f, .25f, 1.f);
+
+					debug_draw.append_shape(mesh, model, color);
+				}
 			}
 		}
 
-		glBindVertexArray(debug.lines.vao);
-		debug.shader.bind();
-		glUniformMatrix4fv(glGetUniformLocation(debug.shader.id, "proj_view"), 1, GL_FALSE, (float*)&proj_view);
-		glUniform4f(glGetUniformLocation(debug.shader.id, "color"), 0.2f, 1.f, 0.4f, 1.f);
-
-		draw_debug_shape(debug.box_mesh);
-		draw_debug_shape(debug.sphere_mesh);
-		draw_debug_shape(debug.cylinder_mesh);
-		draw_debug_shape(debug.cone_mesh);
-
-		// capsule wires are per-body meshes, one tiny draw each
-		for (uint i = 1; i < num_bodies; i++)
-			if (bodies[i].body && bodies[i].shape == PHYS_CAPSULE)
-				draw_debug_shape(bodies[i].wire_mesh);
-	}
-
-	// one shape's line draw, straight from the buffer's bookkeeping
-	void draw_debug_shape(uint mesh)
-	{
-		for (uint i = 0; i < MAX_MESHES; i++)
+		if (debug.constraints)
 		{
-			if (debug.lines.mesh_info[i].mesh_id != mesh)
-				continue;
+			const vec4 constraint_color = vec4(1.f, .25f, .85f, 1.f);
 
-			auto& mi = debug.lines.mesh_info[i];
-			if (mi.num_instances)
-				glDrawElementsInstancedBaseVertexBaseInstance(GL_LINES, mi.num_indices, GL_UNSIGNED_INT,
-					(void*)mi.base_index, mi.num_instances, mi.base_vertex, mi.base_instance);
-			return;
+			for (int i = 0; i < world->getNumConstraints(); i++)
+			{
+				btTypedConstraint* c = world->getConstraint(i);
+				btTransform fa, fb;
+				bool framed = false;
+
+				if (c->getConstraintType() == HINGE_CONSTRAINT_TYPE)
+				{
+					btHingeConstraint* h = static_cast<btHingeConstraint*>(c);
+					fa = h->getFrameOffsetA();
+					fb = h->getFrameOffsetB();
+					framed = true;
+				}
+				else if (c->getConstraintType() == CONETWIST_CONSTRAINT_TYPE)
+				{
+					btConeTwistConstraint* t = static_cast<btConeTwistConstraint*>(c);
+					fa = t->getFrameOffsetA();
+					fb = t->getFrameOffsetB();
+					framed = true;
+				}
+				if (!framed) continue;
+
+				btTransform ta = c->getRigidBodyA().getCenterOfMassTransform();
+				btTransform tb = c->getRigidBodyB().getCenterOfMassTransform();
+
+				btVector3 pa = ta * fa.getOrigin();
+				btVector3 pb = tb * fb.getOrigin();
+				vec3 va(pa.x(), pa.y(), pa.z());
+				vec3 vb(pb.x(), pb.y(), pb.z());
+
+				debug_draw.append_segment(va, vb, constraint_color);
+				debug_draw.append_cross(va, .06f, constraint_color);
+				debug_draw.append_cross(vb, .06f, constraint_color);
+
+				// local z is the hinge / twist axis in both constraint types
+				btVector3 axis = ta.getBasis() * fa.getBasis().getColumn(2);
+				vec3 av(axis.x(), axis.y(), axis.z());
+				if (length(av) > 1e-5f)
+				{
+					vec3 at = normalize(av);
+					debug_draw.append_segment(va - at * .35f, va + at * .35f, constraint_color);
+				}
+			}
+		}
+
+		if (debug.rays && debug.ray_active)
+		{
+			vec4 color = vec4(1.f, .15f, .12f, 1.f); // miss
+			if (debug.ray_target)   color = vec4(.20f, 1.f, .40f, 1.f);
+			else if (debug.ray_hit) color = vec4(1.f, .65f, .20f, 1.f);
+
+			debug_draw.append_segment(debug.ray_a, debug.ray_b, color);
+			if (debug.ray_hit) debug_draw.append_cross(debug.ray_point, .07f, color);
 		}
 	}
 };

@@ -1,0 +1,11 @@
+foam_pattern.jpg
+===============
+
+Source : ambientCG, Foam001 (opacity map)
+         https://ambientcg.com/view?id=Foam001
+
+License : CC0 1.0 Universal (public domain dedication)
+          https://creativecommons.org/publicdomain/zero/1.0/
+
+The image is the asset's 1K opacity/foam lace pattern. It is sampled as a
+grayscale mask and blended over the procedural whitecap field.

@@ -15,49 +15,93 @@ layout (location = 2) out vec4 pixel_albedo;
 
 layout (binding = 0) uniform sampler2D texture_data;
 
-// water : persistent foam field + short-chop normal cascade
-uniform vec3  foam_color;
-uniform float foam_roughness;
-uniform sampler2D water_normal_map;
-uniform float water_detail;
-uniform float water_detail_tiles;
+uniform float night; // 0 = day, 1 = night : emitters only glow at night
 
 // material : comes in flat from the instance (geom.vert / anim.vert)
 flat in vec4 mat_a; // albedo rgb + metallic
-flat in vec4 mat_b; // roughness, ao, texture-albedo flag, material mode
+flat in vec4 mat_b; // roughness, ao, texture-albedo flag
+
+float hash21(vec2 p)
+{
+	p = fract(p * vec2(123.34, 456.21));
+	p += dot(p, p + 45.32);
+	return fract(p.x * p.y);
+}
+
+float vnoise(vec2 p)
+{
+	vec2 i = floor(p);
+	vec2 f = fract(p);
+	f = f * f * (3.0 - 2.0 * f);
+	float a = hash21(i);
+	float b = hash21(i + vec2(1.0, 0.0));
+	float c = hash21(i + vec2(0.0, 1.0));
+	float d = hash21(i + vec2(1.0, 1.0));
+	return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+}
 
 void main()
 {
-	vec3 base = mat_a.rgb;
-	vec3 normal = normalize(vs_out.normal);
-	float roughness = mat_b.r;
+	// albedo is display space, the lighting pass decodes the g-buffer. the flag picks
+	// between the texture tinted by the material and the material colour alone.
+	// mat_b.b > 1.5 marks a procedural fabric surface : soft bodies use their
+	// grid uv for a woven thread pattern instead of a texture.
+	float ao = mat_b.g;
+	vec3 base;
 
-	// mode 1 : water. the texture is a per-pixel foam field, not a tile mask
-	if (mat_b.a > .5)
+	if (mat_b.b > 1.5)
 	{
-		// short chop : two scroll-free scales of the simulated normal cascade
 		vec2 uv = vs_out.uv;
-		vec2 d1 = texture(water_normal_map, uv * water_detail_tiles).rg * 2.0 - 1.0;
-		vec2 d2 = texture(water_normal_map, uv.yx * (water_detail_tiles * 1.63)
-		                  + vec2(.37, .11)).rg * 2.0 - 1.0;
+		vec2 q = uv * vec2(26.0, 34.0);
+		float aa = fwidth(q.x) + fwidth(q.y);
+		float detail = 1.0 - smoothstep(.55, 1.6, aa);
 
-		normal = normalize(normal + vec3(d1.x + d2.x, 0.0, d1.y + d2.y) * water_detail);
+		// warp/weft plus a twill diagonal, faded with distance to stop aliasing
+		float warp = .5 + .5 * sin(q.x * 6.28318 + .35 * sin(q.y * 2.1));
+		float weft = .5 + .5 * sin(q.y * 6.28318 + .35 * sin(q.x * 2.1));
+		float twill = .5 + .5 * sin((q.x + q.y) * 3.14159);
+		float weave = mix(.5, .35 * warp + .35 * weft + .30 * twill, detail);
 
-		float foam = texture(texture_data, uv).r;
-		foam = smoothstep(.12, .88, foam);
+		float fibre = vnoise(uv * vec2(55.0, 75.0));
+		float slub = vnoise(uv * vec2(9.0, 13.0));
 
-		base = mix(mat_a.rgb, foam_color, foam);
-		roughness = mix(mat_b.r, foam_roughness, foam);
+		vec3 cloth = mat_a.rgb;
+		cloth *= .84 + .16 * weave;
+		cloth *= .93 + .07 * fibre;
+		cloth *= .94 + .06 * slub;
+
+		// subtle herringbone tonal stripe
+		float herring = step(.5, fract((uv.x + uv.y) * 18.0 +
+		                              .5 * sin(uv.y * 12.0)));
+		cloth = mix(cloth, cloth * 1.10, herring * detail * .22);
+
+		// folded hem and a fine stitched line just inside it
+		float edge = min(min(uv.x, 1.0 - uv.x), min(uv.y, 1.0 - uv.y));
+		float hem = 1.0 - smoothstep(0.0, .032, edge);
+		cloth = mix(cloth, cloth * .44, hem);
+
+		float stitch = smoothstep(.040, .044, edge) *
+		               (1.0 - smoothstep(.050, .054, edge));
+		cloth = mix(cloth, vec3(.66, .58, .42), stitch * .55);
+
+		// lining on the back side : soft bodies are rendered double-sided
+		if (!gl_FrontFacing) cloth *= .66;
+
+		base = cloth;
+		ao *= .88 + .12 * weave;
+		ao *= mix(.76, 1.0, smoothstep(0.0, .05, edge));
 	}
 	else
 	{
-		// albedo is display space, the lighting pass decodes the g-buffer. the flag picks
-		// between the texture tinted by the material and the material colour alone
 		vec3 tex = texture(texture_data, vs_out.uv * 4.f).rgb;
 		base = mix(mat_a.rgb, tex * mat_a.rgb, mat_b.b);
 	}
 
+	// mat_b.w flags an emitter : the excess above 1 in the ao channel becomes
+	// the emissive strength in the lighting pass (lamp heads, light panels)
+	if (mat_b.w > .5) ao = 1.0 + mat_b.w * night;
+
 	pixel_position = vec4(vs_out.world_position, mat_a.a); // metalness
-	pixel_normal   = vec4(normal, roughness);
-	pixel_albedo   = vec4(base, mat_b.g);                  // ambient occlusion
+	pixel_normal   = vec4(normalize(vs_out.normal), mat_b.r);
+	pixel_albedo   = vec4(base, ao);                       // ambient occlusion
 }

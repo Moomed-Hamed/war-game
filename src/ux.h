@@ -4,6 +4,20 @@
    ---  User Xperience   ---
  * ------------------------- */
 
+enum Game_Screen
+{
+	GAME_SCREEN_MENU = 0,
+	GAME_SCREEN_PLAYING,
+	GAME_SCREEN_PAUSED
+};
+
+static int   game_screen = GAME_SCREEN_MENU;
+static bool  game_options_open;
+static bool  game_scene_select_open;
+static bool  game_exit_requested;
+static float game_master_volume = 1.f;
+static bool  game_vsync;
+
 namespace CNSL { // console
 
    const char* severity_messages[5] = {
@@ -195,6 +209,9 @@ void draw_SCENES_console(SceneManager* scenes)
          scenes->request((uint)pick);
       ImGui::TextDisabled("switching reloads the scene");
 
+      section("Day / night");
+      scene_day_cycle_ui(&scenes->scene);
+
       section("Debug");
       ImGui::TextDisabled("%s", SceneManager::label(scenes->current_kind));
       scenes->draw_debug();
@@ -219,22 +236,26 @@ static void draw_gbuffer_panel(GameWindow* window)
    ImGui::SameLine();
    ImGui::Text("| %u x %u", window->screen_width, window->screen_height);
 
-   static const char* gbuf_labels[4] = {
+   static const char* gbuf_labels[6] = {
       "position [RGBA32F]  pos+metallic",
       "normal   [RGBA16F]  nrm+roughness",
       "albedo   [RGBA8]    color+AO",
       "depth    [DEPTH24]",
+      "lit      [RGBA16F]  linear HDR",
+      "copy     [RGBA16F]  under the water",
    };
-   GLuint gbuf_tex[4] = {
+   GLuint gbuf_tex[6] = {
       window->gbuf.rendertarget.position_tx,
       window->gbuf.rendertarget.normal_tx,
       window->gbuf.rendertarget.albedo_tx,
       window->gbuf.rendertarget.depth_tx,
+      window->hdr.lit.color_tx,
+      window->hdr.scene_copy.color_tx,
    };
 
    static int gbuf_pick = 0;
    ImGui::SetNextItemWidth(ui(300));
-   ImGui::Combo("target", &gbuf_pick, gbuf_labels, 4);
+   ImGui::Combo("target", &gbuf_pick, gbuf_labels, 6);
 
    // one image at full panel width, true window aspect. uv flipped because
    // render-to-texture is upside down versus imgui
@@ -525,6 +546,70 @@ void draw_RENDER_console(GameRenderer* rndr, GameWindow* window, Camera* camera)
    }
 }
 
+// ---------------- tab : Debug ----------------
+void draw_DEBUG_console(GameRenderer* rndr, Scene* scene)
+{
+   using namespace CNSL;
+
+   if (ImGui::BeginTabItem("Debug"))
+   {
+      section("Physics");
+      ImGui::Checkbox("collider wires", &scene->phys.debug.enabled);
+      ImGui::SameLine();
+      ImGui::Checkbox("constraint wires", &scene->phys.debug.constraints);
+      ImGui::SameLine();
+      ImGui::Checkbox("interaction ray", &scene->phys.debug.rays);
+      ImGui::TextDisabled("green awake | amber asleep | steel static | magenta constraints");
+
+      section("Animation");
+      ImGui::Checkbox("skeleton", &rndr->animdebug.enabled);
+      ImGui::SameLine();
+      ImGui::Checkbox("bones", &rndr->animdebug.bones);
+      ImGui::SameLine();
+      ImGui::Checkbox("parent links", &rndr->animdebug.links);
+      ImGui::SameLine();
+      ImGui::Checkbox("joint axes", &rndr->animdebug.axes);
+      ImGui::TextDisabled("bone tint follows the chain/index ramp");
+
+      section("Lighting");
+      ImGui::Checkbox("light volumes", &debug_draw.lights);
+      ImGui::SameLine();
+      ImGui::Checkbox("spot direction", &debug_draw.light_directions);
+
+      uint points = 0, cones = 0;
+      for (uint i = 0; i < scene->num_lights; i++)
+         if (scene->lights[i].shape == LIGHT_CONE) cones++; else points++;
+      ImGui::Text("%u point  |  %u spot  |  %s", points, cones,
+                  scene->local_lights ? "volumes on" : "volumes off");
+      ImGui::TextDisabled("wire tint follows each light's colour");
+
+      section("Rendering");
+      ImGui::Checkbox("sun shadows", &rndr->shadow.enabled);
+      ImGui::SameLine();
+      ImGui::Checkbox("camera frustum", &debug_draw.camera);
+      ImGui::SameLine();
+      ImGui::Checkbox("world axes", &debug_draw.axes);
+      ImGui::TextDisabled("axes : X red | Y green | Z blue | frustum cyan");
+
+      section("Scene");
+      ImGui::Text("%u props  |  %u actors  |  %u lights", scene->num_props,
+                  scene->num_actors, scene->num_lights);
+
+      if (ImGui::Button("all debug off"))
+      {
+         scene->phys.debug.enabled = false;
+         scene->phys.debug.constraints = false;
+         scene->phys.debug.rays = false;
+         rndr->animdebug.enabled = false;
+         debug_draw.lights = false;
+         debug_draw.camera = false;
+         debug_draw.axes = false;
+      }
+
+      ImGui::EndTabItem();
+   }
+}
+
 // ---------------- tab : Phys ----------------
 void draw_PHYS_console(Physics* phys)
 {
@@ -544,12 +629,16 @@ void draw_PHYS_console(Physics* phys)
       };
 
       // joint kinds : hinge, cone twist, hinge2 (the car's wheels)
-      static const char* joint_names[] = { "none", "hinge", "cone", "hinge2" };
+      static const char* joint_names[] = { "none", "hinge", "cone", "hinge2",
+                                           "point", "slider", "fixed" };
       static const ImVec4 joint_colors[] = {
          ImVec4(1, 1, 1, 1),
          ImVec4(0.70f, 0.76f, 0.88f, 1), // hinge  : pale slate
          ImVec4(0.80f, 0.70f, 0.86f, 1), // cone   : soft mauve
          ImVec4(0.86f, 0.78f, 0.56f, 1), // hinge2 : soft ochre
+         ImVec4(0.72f, 0.86f, 0.80f, 1), // point  : mint
+         ImVec4(0.90f, 0.66f, 0.54f, 1), // slider : clay
+         ImVec4(0.82f, 0.80f, 0.62f, 1), // fixed  : sand
       };
 
       // one tally feeds every readout on this tab
@@ -653,8 +742,12 @@ void draw_PHYS_console(Physics* phys)
       if (ImGui::SmallButton("wake all")) phys->wake_all();
       ImGui::SameLine();
       if (ImGui::SmallButton("reset all")) phys->reset_all();
+
+      ImGui::Checkbox("collider wires", &phys->debug.enabled);
       ImGui::SameLine();
-      ImGui::Checkbox("collider wireframes", &phys->debug.enabled);
+      ImGui::Checkbox("constraint wires", &phys->debug.constraints);
+      ImGui::SameLine();
+      ImGui::Checkbox("ray debug", &phys->debug.rays);
 
       if (ImGui::BeginTable("physbodies", 6,
          TABLE_FLAGS))
@@ -1323,7 +1416,7 @@ void draw_PLAYER_console(Scene* scene, GameRenderer* rndr)
       uint action = (player->action <= 3) ? player->action : 3; // defensive index
       kv("action", "%s", action_names[action]);
       kv("time left", "%.2f s", player->action_time);
-      kv("ammo", "%u / %u", player->ammo, GUN_MAG);
+      kv("ammo", "%u / %u", player->ammo, player->mag_size);
       kv("shots", "%u fired, %u hit", player->fired, player->hits);
       kv("mesh / player", "%u / %u", player->gun_mesh, player->gun_player);
       kv("sway", "%.3f %.3f", player->sway.x, player->sway.y);
@@ -1334,9 +1427,11 @@ void draw_PLAYER_console(Scene* scene, GameRenderer* rndr)
       {
          if (ImGui::SmallButton("fire"))    player->fire(rndr, &scene->phys);
          ImGui::SameLine();
-         if (ImGui::SmallButton("reload"))  player->start_action(rndr, GUN_RELOAD, GUN_RELOAD_TIME);
+         if (ImGui::SmallButton("reload"))
+            player->start_action(rndr, GUN_RELOAD, player->reload_time, player->seg_reload);
          ImGui::SameLine();
-         if (ImGui::SmallButton("inspect")) player->start_action(rndr, GUN_INSPECT, GUN_INSPECT_TIME);
+         if (ImGui::SmallButton("inspect"))
+            player->start_action(rndr, GUN_INSPECT, player->inspect_time, player->seg_inspect);
       }
       else ImGui::TextDisabled("no view model in this scene");
 
@@ -1602,15 +1697,250 @@ void draw_world_labels(Scene* scene, GameWindow* window)
    }
 }
 
+static void game_apply_options()
+{
+	audio.set_master(game_master_volume);
+	glfwSwapInterval(game_vsync ? 1 : 0);
+}
+
+static void game_start_scene(GameWindow* window, SceneManager* scenes, uint kind)
+{
+	scenes->request(kind);
+	game_screen = GAME_SCREEN_PLAYING;
+	game_options_open = false;
+	game_scene_select_open = false;
+	ux_panel_visible = false;
+	window->ui_lock = false;
+	window->set_focus(GAME);
+}
+
+static void game_go_menu(GameWindow* window, SceneManager* scenes)
+{
+	scenes->request(SCENE_MENU);
+	game_screen = GAME_SCREEN_MENU;
+	game_options_open = false;
+	game_scene_select_open = false;
+	ux_panel_visible = false;
+	window->ui_lock = true;
+	window->set_focus(GUI);
+}
+
+static void game_pause(GameWindow* window)
+{
+	game_screen = GAME_SCREEN_PAUSED;
+	game_options_open = false;
+	game_scene_select_open = false;
+	window->ui_lock = true;
+	window->set_focus(GUI);
+}
+
+static void game_resume(GameWindow* window)
+{
+	game_screen = GAME_SCREEN_PLAYING;
+	game_options_open = false;
+	game_scene_select_open = false;
+	window->ui_lock = false;
+	window->set_focus(GAME);
+}
+
+void game_handle_keys(GameWindow* window)
+{
+	if (!(window->keys.ESC.is_pressed && !window->keys.ESC.was_pressed)) return;
+
+	if (game_options_open)
+	{
+		game_options_open = false;
+		return;
+	}
+	if (game_scene_select_open)
+	{
+		game_scene_select_open = false;
+		return;
+	}
+
+	if (game_screen == GAME_SCREEN_PLAYING) game_pause(window);
+	else if (game_screen == GAME_SCREEN_PAUSED) game_resume(window);
+}
+
+static bool menu_button(const char* label, float scale)
+{
+	return ImGui::Button(label, ImVec2(-1.f, 38.f * scale));
+}
+
+static void draw_options_menu(GameWindow* window)
+{
+	float scale = window->screen_height / 1080.f;
+	ImGuiIO& io = ImGui::GetIO();
+	ImGui::GetBackgroundDrawList()->AddRectFilled(
+		ImVec2(0, 0), io.DisplaySize, IM_COL32(6, 8, 12, 190));
+
+	ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * .5f, io.DisplaySize.y * .5f),
+	                        ImGuiCond_Always, ImVec2(.5f, .5f));
+	ImGui::SetNextWindowSize(ImVec2(420.f * scale, 0.f));
+	if (!ImGui::Begin("##options", NULL, ImGuiWindowFlags_NoTitleBar |
+	                  ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+	                  ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_AlwaysAutoResize))
+	{
+		ImGui::End();
+		return;
+	}
+
+	ImGui::SetWindowFontScale(scale);
+	ImGui::TextColored(ImVec4(.90f, .72f, .44f, 1.f), "OPTIONS");
+	ImGui::Separator();
+
+	ImGui::TextDisabled("display");
+	ImGui::SliderFloat("field of view", &game_fov, 50.f, 110.f, "%.0f deg");
+	if (ImGui::Checkbox("vsync", &game_vsync)) game_apply_options();
+	ImGui::TextDisabled("vsync overrides the 120 fps software cap when the display is faster");
+
+	ImGui::Separator();
+	ImGui::TextDisabled("audio");
+	if (ImGui::SliderFloat("master volume", &game_master_volume, 0.f, 1.f, "%.2f"))
+		game_apply_options();
+
+	ImGui::Separator();
+	if (menu_button("back", scale)) game_options_open = false;
+
+	ImGui::End();
+}
+
+static void draw_scene_select(GameWindow* window, SceneManager* scenes)
+{
+	float scale = window->screen_height / 1080.f;
+	ImGuiIO& io = ImGui::GetIO();
+	ImGui::GetBackgroundDrawList()->AddRectFilled(
+		ImVec2(0, 0), io.DisplaySize, IM_COL32(6, 8, 12, 190));
+
+	ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * .5f, io.DisplaySize.y * .5f),
+	                        ImGuiCond_Always, ImVec2(.5f, .5f));
+	ImGui::SetNextWindowSize(ImVec2(420.f * scale, 0.f));
+	if (!ImGui::Begin("##scenes", NULL, ImGuiWindowFlags_NoTitleBar |
+	                  ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+	                  ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_AlwaysAutoResize))
+	{
+		ImGui::End();
+		return;
+	}
+
+	ImGui::SetWindowFontScale(scale);
+	ImGui::TextColored(ImVec4(.90f, .72f, .44f, 1.f), "SCENES");
+	ImGui::Separator();
+
+	for (uint i = 0; i < SCENE_KIND_COUNT; i++)
+	{
+		if (i == SCENE_MENU) continue;
+		if (ImGui::Button(SceneManager::label(i), ImVec2(-1.f, 34.f * scale)))
+			game_start_scene(window, scenes, i);
+	}
+
+	ImGui::Separator();
+	if (menu_button("back", scale)) game_scene_select_open = false;
+	ImGui::End();
+}
+
+static void draw_main_menu(GameWindow* window, SceneManager* scenes)
+{
+	float scale = window->screen_height / 1080.f;
+	ImGuiIO& io = ImGui::GetIO();
+	ImGui::GetBackgroundDrawList()->AddRectFilled(
+		ImVec2(0, 0), io.DisplaySize, IM_COL32(5, 7, 10, 205));
+
+	hud_text_center(ImGui::GetBackgroundDrawList(), 54.f * scale,
+	                io.DisplaySize.x * .5f, io.DisplaySize.y * .22f,
+	                IM_COL32(235, 238, 243, 245), "PROJECT ONE");
+	hud_text_center(ImGui::GetBackgroundDrawList(), 15.f * scale,
+	                io.DisplaySize.x * .5f, io.DisplaySize.y * .22f + 58.f * scale,
+	                IM_COL32(170, 178, 190, 220), "engine / physics / water");
+
+	ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * .5f, io.DisplaySize.y * .52f),
+	                        ImGuiCond_Always, ImVec2(.5f, .5f));
+	ImGui::SetNextWindowSize(ImVec2(400.f * scale, 0.f));
+	if (!ImGui::Begin("##mainmenu", NULL, ImGuiWindowFlags_NoTitleBar |
+	                  ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+	                  ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_AlwaysAutoResize))
+	{
+		ImGui::End();
+		return;
+	}
+
+	ImGui::SetWindowFontScale(scale);
+	if (menu_button("scenes", scale))
+	{
+		game_scene_select_open = true;
+		game_options_open = false;
+	}
+	if (menu_button("options", scale))
+	{
+		game_options_open = true;
+		game_scene_select_open = false;
+	}
+	ImGui::Separator();
+	if (menu_button("exit", scale)) game_exit_requested = true;
+
+	ImGui::End();
+}
+
+static void draw_pause_menu(GameWindow* window, SceneManager* scenes)
+{
+	float scale = window->screen_height / 1080.f;
+	ImGuiIO& io = ImGui::GetIO();
+	ImGui::GetBackgroundDrawList()->AddRectFilled(
+		ImVec2(0, 0), io.DisplaySize, IM_COL32(5, 7, 10, 185));
+
+	ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * .5f, io.DisplaySize.y * .5f),
+	                        ImGuiCond_Always, ImVec2(.5f, .5f));
+	ImGui::SetNextWindowSize(ImVec2(360.f * scale, 0.f));
+	if (!ImGui::Begin("##pause", NULL, ImGuiWindowFlags_NoTitleBar |
+	                  ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+	                  ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_AlwaysAutoResize))
+	{
+		ImGui::End();
+		return;
+	}
+
+	ImGui::SetWindowFontScale(scale);
+	ImGui::TextColored(ImVec4(.90f, .72f, .44f, 1.f), "PAUSED");
+	ImGui::Separator();
+	if (menu_button("resume", scale)) game_resume(window);
+	if (menu_button("options", scale)) game_options_open = true;
+	if (menu_button("scenes", scale)) game_scene_select_open = true;
+	if (menu_button("main menu", scale)) game_go_menu(window, scenes);
+	ImGui::Separator();
+	if (menu_button("exit", scale)) game_exit_requested = true;
+
+	ImGui::End();
+}
+
+void draw_game_menus(GameWindow* window, SceneManager* scenes)
+{
+	if (game_options_open)
+	{
+		draw_options_menu(window);
+		return;
+	}
+	if (game_scene_select_open)
+	{
+		draw_scene_select(window, scenes);
+		return;
+	}
+
+	if (game_screen == GAME_SCREEN_MENU) draw_main_menu(window, scenes);
+	else if (game_screen == GAME_SCREEN_PAUSED) draw_pause_menu(window, scenes);
+}
+
 void draw_console(GameConsole* console, GameRenderer* rndr, GameWindow* window, SceneManager* scenes)
 {
    using namespace CNSL;
 
    Scene* scene = &scenes->scene;
 
-   // the scene's annotations : drawn whether or not the panel is up
-   draw_world_labels(scene, window);
-   scenes->draw_ux(window);
+   // the scene's annotations : only while actually playing
+   if (game_screen == GAME_SCREEN_PLAYING)
+   {
+      draw_world_labels(scene, window);
+      scenes->draw_ux(window);
+   }
 
    // F1 hides the whole panel : the scene plays unobstructed
    if (window->keys.F1.is_pressed && !window->keys.F1.was_pressed) ux_panel_visible = !ux_panel_visible;
@@ -1649,6 +1979,7 @@ void draw_console(GameConsole* console, GameRenderer* rndr, GameWindow* window, 
    draw_SYSTEM_console(window);
    draw_SCENES_console(scenes);
    draw_RENDER_console(rndr, window, &scene->camera);
+   draw_DEBUG_console(rndr, scene);
    draw_PHYS_console(&scene->phys);
    draw_PLAYER_console(scene, rndr);
    draw_ANIM_console(rndr);

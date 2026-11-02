@@ -1,4 +1,4 @@
-#include "shallow.h"
+#include "fluids.h"
 
 /* ------------------------- *
 	-        Scenes         -
@@ -21,6 +21,8 @@ const vec3 GUN_ALBEDO = vec3(0.55f, 0.56f, 0.58f);
 const uint NUM_WEAPONS = 7;      // the weapon row
 const uint WEAPON_VIEW_MODEL = 6; // testpistol : the on-foot view model
 const uint MAX_ACTORS  = 16;     // skinned meshes animating in place
+const uint MAX_PROPS   = 65536;  // scene instances are uploaded once per mesh run
+static float game_fov = 60.f;    // options menu : vertical field of view
 
 // one scene. no state outlives a switch : the manager tears this down and the
 // next builder fills it from scratch. systems are passed in, not inherited
@@ -29,13 +31,18 @@ struct Scene
 	Camera camera;    // the view the world is rendered from
 	mat4   proj_view; // built from the camera every frame in update()
 
+	// studio / preview orbit : independent of the player and preserved across
+	// scene reloads by the preview scene
+	bool   orbit_cam;
+	vec3   orbit_target;
+	float  orbit_yaw, orbit_pitch, orbit_distance;
+
 	// vehicles : a smoothed chase camera read from the car, not the player
 	bool   car_camera;
 	Camera vehicle_view;
 	float  chase_distance, chase_height;
 
 	Physics phys; // owns motion, the props read their pose from it
-	Terrain terrain; // generated height grid for the terrain scene
 	Water   water;   // fft ocean grid for the ocean scene
 	Shallow_Water shallow; // small fd patch for the shallow scene
 
@@ -49,13 +56,15 @@ struct Scene
 		uint phys_id;    // 0 = static decoration
 		uint wheel_index; // vehicles : raycast wheel visual, (uint)-1 = none
 		bool no_uv;      // which static buffer this mesh lives in (mode 1 or mode 3)
+		bool water;      // forward water pass instead of the static buffers
+		uint draw_mode;  // explicit DrawMode, (uint)-1 = derive from no_uv/water
 		vec3 pos;
 		mat3 rot;
 		vec3 scale;
 		vec4 mat_a;     // albedo rgb + metallic
 		vec4 mat_b;     // roughness, ao, texture-albedo flag
 		char label[24]; // drawn over it in the world (empty = none)
-	} props[192];
+	} props[MAX_PROPS];
 	uint num_props;
 
 	// skinned meshes that animate in place : the scene submits one instance each
@@ -68,12 +77,100 @@ struct Scene
 
 	bool show_labels; // debug toggle : world labels on/off
 	bool reload_requested; // scene asks the manager to rebuild it next frame
-	bool terrain_rebuild; // terrain generation changed : refresh grid, collider and meshes
 	bool water_dirty;     // water settings changed : refresh the spectrum or the mesh
 	bool water_spectrum;  // wind, seed or size changed : rebuild h0 as well
 
 	Lighting lighting;      // the deferred pass's per-scene rig
 	uint     lighting_kind; // LightingPreset this scene started from
+	float    shadow_extent; // metres the sun shadow map covers around the camera
+	float    far_plane;     // draw distance for this scene, scaled by its ground size
+	float    fly_speed_scale; // free-camera speed for this scene's world size
+
+	// day/night : slot 0..24, optionally advancing while cycle_playing
+	bool  cycle;
+	bool  cycle_playing;
+	float time_of_day;
+	float time_speed; // hours per second
+
+	// local lights : each one is drawn as a sphere over the g-buffer
+	bool        local_lights;
+	Point_Light lights[MAX_LIGHTS];
+	uint        num_lights;
+
+	void add_light(vec3 position, vec3 color, float radius, float intensity)
+	{
+		if (num_lights >= MAX_LIGHTS)
+		{
+			console->add_entry("light slots full : raise MAX_LIGHTS", FIXME, RNDR);
+			return;
+		}
+
+		Point_Light& l = lights[num_lights++];
+		l.position    = position;
+		l.color       = color;
+		l.radius      = radius;
+		l.intensity   = intensity;
+		l.direction   = vec3(0, -1, 0);
+		l.shape       = LIGHT_SPHERE;
+		l.outer_angle = 0.f;
+		l.inner_angle = 0.f;
+	}
+
+	// a spot light : the volume is a cone from the light head along dir
+	void add_spot_light(vec3 position, vec3 dir, vec3 color, float radius, float intensity,
+	                    float outer_degrees, float inner_degrees)
+	{
+		if (num_lights >= MAX_LIGHTS)
+		{
+			console->add_entry("light slots full : raise MAX_LIGHTS", FIXME, RNDR);
+			return;
+		}
+
+		Point_Light& l = lights[num_lights++];
+		l.position    = position;
+		l.color       = color;
+		l.radius      = radius;
+		l.intensity   = intensity;
+		l.direction   = normalize(dir);
+		l.shape       = LIGHT_CONE;
+		l.outer_angle = outer_degrees * PI / 180.f;
+		l.inner_angle = inner_degrees * PI / 180.f;
+	}
+
+	// two headlights that follow a car body every frame
+	uint headlight_body;
+	int  headlight_light[2];
+
+	void add_vehicle_headlights(uint phys_id)
+	{
+		headlight_body = phys_id;
+		for (uint i = 0; i < 2; i++)
+		{
+			add_spot_light(vec3(0), vec3(0, 0, 1), vec3(1.f, .92f, .76f),
+			               26.f, 8.f, 24.f, 10.f);
+			headlight_light[i] = (int)num_lights - 1;
+		}
+	}
+
+	void update_vehicle_headlights()
+	{
+		if (!headlight_body) return;
+
+		vec3 pos;
+		mat3 rot;
+		if (!phys.get_transform(headlight_body, &pos, &rot)) return;
+
+		vec3 forward = normalize(rot[2]);
+		vec3 right   = normalize(rot[0]);
+		for (uint i = 0; i < 2; i++)
+		{
+			if (headlight_light[i] < 0 || headlight_light[i] >= (int)num_lights) continue;
+
+			Point_Light& l = lights[headlight_light[i]];
+			l.position  = pos + forward * 2.2f + right * (i ? .70f : -.70f) + vec3(0, .55f, 0);
+			l.direction = normalize(forward - vec3(0, .08f, 0));
+		}
+	}
 
 	// one more instance in the world, posed at (pos, yaw, scale)
 	Prop& add_prop(uint mesh_id, vec3 pos, float yaw, float scale)
@@ -85,7 +182,7 @@ struct Scene
 	Prop& add_prop(uint mesh_id, vec3 pos, float yaw, vec3 scale)
 	{
 		// no room : say so and drop the prop, rather than writing past the array
-		if (num_props >= 192)
+		if (num_props >= MAX_PROPS)
 		{
 			static Prop overflow = {};
 			console->add_entry("props full : raise the props[] size", FIXME, RNDR);
@@ -98,6 +195,8 @@ struct Scene
 		p.phys_id = 0;
 		p.wheel_index = (uint)-1;
 		p.no_uv   = false;
+		p.water   = false;
+		p.draw_mode = (uint)-1;
 		p.pos     = pos;
 		p.rot     = mat3(glm::rotate(mat4(1), yaw, vec3(0, 1, 0)));
 		p.scale   = scale;
@@ -127,6 +226,17 @@ struct Scene
 	{
 		lighting_kind = kind;
 		lighting = lighting_preset(kind);
+		cycle = false;
+		cycle_playing = false;
+	}
+
+	// move the clock and rebuild the rig from the sun/moon path
+	void use_time(float hours, bool play = false)
+	{
+		time_of_day = hours;
+		cycle = true;
+		cycle_playing = play;
+		lighting = lighting_from_time(hours);
 	}
 
 	// ---- shared start : wipe the scene, place the camera and the ground.
@@ -139,6 +249,12 @@ struct Scene
 		// build a temporary of the whole struct on the stack
 		memset(this, 0, sizeof(*this));
 		show_labels = true;
+		local_lights = true;
+		shadow_extent = 40.f;
+		far_plane = fmaxf(256.f, ground_size * 2.5f);
+		fly_speed_scale = 1.f;
+		time_of_day = 15.f;
+		time_speed = .5f;
 		use_lighting(LIGHT_DAY);
 
 		camera.position = cam_pos;
@@ -148,12 +264,11 @@ struct Scene
 
 		phys.init();
 
-		// floor : generated grid plane, the shader tiles its uvs (uv * 4)
+		// floor : one generated plane with material-only shading
 		uint resolution = floor_resolution ? floor_resolution
 		                                    : (uint)(ground_size > 1.f ? ground_size : 1.f);
 		uint floor_mesh = renderer->add_mesh(
-			MeshFactory::generate_plane(ground_size, resolution, MeshFactory::PLANE_XZ),
-			"assets/textures/grid.bmp");
+			MeshFactory::generate_plane(ground_size, resolution, MeshFactory::PLANE_XZ));
 		add_prop(floor_mesh, vec3(0, floor_y, 0), 0, 1.f).phys_id = phys.add_ground(ground_half, floor_y);
 	}
 
@@ -216,7 +331,7 @@ struct Scene
 			}
 	}
 
-	// teardown : the world and its collider wires. the renderer clears its own
+	// teardown : the world and its debug wires. the renderer clears its own
 	// buffers and caches from SceneManager
 	void shutdown(GameRenderer*)
 	{
@@ -230,12 +345,34 @@ struct Scene
 	{
 		if (!phys.world) return;
 
-		if (player.flycam) update_fly_camera(&camera, window, window->dtime);
+		if (cycle && cycle_playing)
+		{
+			time_of_day += window->dtime * time_speed;
+			if (time_of_day >= 24.f) time_of_day -= 24.f;
+			lighting = lighting_from_time(time_of_day);
+		}
+
+		if (orbit_cam)
+		{
+			float cp = cosf(orbit_pitch);
+			camera.position = orbit_target + vec3(cp * cosf(orbit_yaw),
+			                                      sinf(orbit_pitch),
+			                                      cp * sinf(orbit_yaw)) * orbit_distance;
+			camera.yaw = orbit_yaw + PI;
+			camera.pitch = -orbit_pitch;
+			camera.update_dir(0, 0, 0);
+		}
+		else if (player.flycam)
+		{
+			update_fly_camera(&camera, window, window->dtime, fly_speed_scale);
+		}
+
 		player.update(window, renderer, &phys, !car_camera);
 
 		// only the chase view drives : walking or flying leaves the car parked
 		phys.update_vehicle(window, car_camera && !player.flycam);
 		phys.step(window->dtime);
+		update_vehicle_headlights();
 
 		// vehicles : the chase camera reads the car, not the player capsule
 		if (car_camera && !player.flycam && phys.vehicle.chassis_id)
@@ -261,12 +398,14 @@ struct Scene
 			}
 		}
 
-		// the player's camera while walking, the car camera, or the free camera
-		Camera& view = player.flycam ? camera
-		             : (car_camera && phys.vehicle.chassis_id ? vehicle_view : player.camera);
+		// the player's camera while walking, the car camera, the free camera or
+		// the studio orbit camera
+		Camera& view = orbit_cam ? camera
+		             : (player.flycam ? camera
+		             : (car_camera && phys.vehicle.chassis_id ? vehicle_view : player.camera));
 
 		// the g-buffer reads this for fog and sky : keep it on the active view
-		if (!player.flycam && !car_camera) camera.position = view.position;
+		if (!orbit_cam && !player.flycam && !car_camera) camera.position = view.position;
 
 		// a little FOV stretch with speed, only in the chase view
 		float speed_fov = 0.f;
@@ -277,8 +416,9 @@ struct Scene
 			if (speed_fov > 8.f) speed_fov = 8.f;
 		}
 
-		float fov = (60.f + player.fov_punch + speed_fov) * PI / 180.f;
-		mat4 proj = glm::perspective(fov, (float)window->screen_width / window->screen_height, 0.1f, 256.f);
+		float fov = (game_fov + player.fov_punch + speed_fov) * PI / 180.f;
+		window->far_plane = far_plane;
+		mat4 proj = glm::perspective(fov, (float)window->screen_width / window->screen_height, 0.1f, window->far_plane);
 
 		// off-axis projection : the camera keeps looking down the world axis, but the
 		// visible strip is centred, so the panel does not hide the subject
@@ -290,7 +430,13 @@ struct Scene
 		// fresh instance streams : each mesh id may only be appended once per frame
 		renderer->clear_instances();
 
-		// props : the body owns the pose of anything dynamic
+		// props : the body owns the pose of anything dynamic. submissions are batched
+		// by mesh so many instances cost one upload per mesh run
+		static Instance prop_batch[512];
+		uint batch_count = 0;
+		uint batch_mesh  = 0;
+		uint batch_mode  = 0;
+
 		for (uint i = 0; i < num_props; i++)
 		{
 			Prop& p = props[i];
@@ -314,9 +460,30 @@ struct Scene
 			Instance inst = { glm::translate(mat4(1), p.pos) * mat4(p.rot) * glm::scale(mat4(1), p.scale),
 			                  p.mat_a, p.mat_b };
 
-			// a prop says which static layout its mesh was built for (mode 1 or mode 3)
-			renderer->buffer(p.no_uv ? MODE_STATIC_NOUV : MODE_STATIC_UV).append_instances(p.mesh_id, 1, &inst);
+			// water leaves the opaque pass; everything else says which layout its mesh
+			// was built for. a prop can also name its draw mode outright
+			uint mode = p.water ? MODE_WATER : (p.no_uv ? MODE_STATIC_NOUV : MODE_STATIC_UV);
+			if (p.draw_mode != (uint)-1) mode = p.draw_mode;
+
+			if (batch_count && (batch_mesh != p.mesh_id || batch_mode != mode))
+			{
+				renderer->buffer(batch_mode).append_instances(batch_mesh, batch_count, prop_batch);
+				batch_count = 0;
+			}
+
+			batch_mesh = p.mesh_id;
+			batch_mode = mode;
+			prop_batch[batch_count++] = inst;
+
+			if (batch_count == 512)
+			{
+				renderer->buffer(batch_mode).append_instances(batch_mesh, batch_count, prop_batch);
+				batch_count = 0;
+			}
 		}
+
+		if (batch_count)
+			renderer->buffer(batch_mode).append_instances(batch_mesh, batch_count, prop_batch);
 
 		// view gun : appended just before the actors, so the shared gun mesh
 		// keeps one contiguous run of instances
@@ -381,8 +548,8 @@ void slice_testpistol(Animation* clip)
 	clip->num_segs = 4;
 }
 
-// the display row and the hub's armory read the same table : mesh, clip, which
-// take starts it, and how long one cycle runs
+// the display row and the player's armory read the same table : mesh, clip,
+// which take starts it, and how long one cycle runs
 struct Weapon_Setup
 {
 	const char* mesh;
@@ -399,6 +566,29 @@ static const Weapon_Setup WEAPON_SETUP[NUM_WEAPONS] = {
 	{ "assets/anim/pistol_colt.mesh_anim", "assets/anim/pistol_colt.anim", 1, 1.6f },
 	{ "assets/anim/bolt_action.mesh_anim", "assets/anim/bolt_action.anim", 0, 1.4f },
 	{ "assets/anim/testpistol.mesh_anim",  "assets/anim/testpistol.anim",  0, 3.6f },
+};
+
+// magazine size and the four action slices for each weapon. some takes are
+// shared (the AK cycle, the bolt action) so the map is not always 0/1/2/3
+struct Weapon_Action
+{
+	uint mag;
+	uint reload, shoot, inspect, idle;
+};
+
+static const Weapon_Action WEAPON_ACTIONS[NUM_WEAPONS] = {
+	{ 17, 0, 1, 2, 3 }, // glock
+	{ 30, 0, 0, 0, 1 }, // ak
+	{ 30, 1, 2, 0, 3 }, // m4
+	{  8, 1, 0, 2, 3 }, // shotgun
+	{  6, 3, 1, 2, 0 }, // colt
+	{  5, 1, 0, 1, 2 }, // bolt action
+	{ 17, 0, 1, 2, 3 }, // test pistol
+};
+
+struct Weapon_Actor_Ref
+{
+	uint mesh, player;
 };
 
 // frame ranges per weapon + a different feel on every segment
@@ -453,85 +643,29 @@ void weapon_slice(uint index, Animation* clip)
 }
 
 // load one weapon actor into the animated buffer and start its cycle
-void weapon_add_actor(Scene* s, GameRenderer* renderer, uint index, vec3 pos,
-                      float yaw, float scale)
+Weapon_Actor_Ref weapon_add_actor(Scene* s, GameRenderer* renderer, uint index, vec3 pos,
+                                  float yaw, float scale)
 {
-	if (index >= NUM_WEAPONS) return;
+	Weapon_Actor_Ref ref = {};
+	if (index >= NUM_WEAPONS) return ref;
 
 	uint mesh = renderer->add_anim_mesh(WEAPON_SETUP[index].mesh);
 	uint clip = 0;
 	renderer->animloader.load(WEAPON_SETUP[index].clip, &clip);
-	if (!mesh || !clip) return;
+	if (!mesh || !clip) return ref;
 
 	weapon_slice(index, &renderer->animloader.clips[clip]);
 
 	uint player = renderer->animloader.play(clip, WEAPON_SETUP[index].seg,
 	                                        WEAPON_SETUP[index].dur);
+	if (player == (uint)-1) return ref;
+
 	renderer->bind_player(mesh, player);
 	s->add_actor(mesh, player, pos, yaw, scale);
-}
 
-// ---- weapons : the row, a range, and knockable targets
-void scene_weapons(Scene* s, GameRenderer* renderer)
-{
-	s->begin(renderer, vec3(0, 2.6f, 10), -PI / 2, -0.13f, 60.f, 30.f);
-	s->use_lighting(LIGHT_OVERCAST);
-
-	struct Weapon { uint mesh, clip, player; vec3 pos; float scale, yaw; } weapons[NUM_WEAPONS] = {};
-
-	// the row sits along the left wall, facing into the range
-	for (uint i = 0; i < NUM_WEAPONS; i++)
-	{
-		Weapon& w = weapons[i];
-		w.mesh = renderer->add_anim_mesh(WEAPON_SETUP[i].mesh);
-		renderer->animloader.load(WEAPON_SETUP[i].clip, &w.clip);
-		if (!w.mesh || !w.clip) continue;
-
-		weapon_slice(i, &renderer->animloader.clips[w.clip]);
-
-		w.player = renderer->animloader.play(w.clip, WEAPON_SETUP[i].seg, WEAPON_SETUP[i].dur);
-		if (w.mesh) renderer->bind_player(w.mesh, w.player);
-
-		// row runs along z on the left wall, raised near eye level
-		w.pos = vec3(-14, 1.6f, (i - (NUM_WEAPONS - 1) * 0.5f) * 4.f);
-		w.scale = 4.f;
-		w.yaw = PI / 2 + ((i % 2) ? 0.17f : -0.17f);
-
-		s->add_actor(w.mesh, w.player, w.pos, w.yaw, w.scale);
-	}
-
-	// range : three targets at 10 / 20 / 30 m from the spawn, marked, plus a backstop
-	uint target_mesh = renderer->add_mesh(MeshFactory::generate_cube(1.f), "assets/textures/checker.bmp");
-	float target_x[3] = { -5, 0, 5 };
-	float target_z[3] = { -2, -12, -22 };
-	for (uint i = 0; i < 3; i++)
-	{
-		Scene::Prop& target = s->add_prop(target_mesh, vec3(target_x[i], .75f, target_z[i]), 0,
-		                                  vec3(1.4f, 1.5f, .3f));
-		target.phys_id = s->phys.add_box(target.pos, vec3(.7f, .75f, .15f), 1.f);
-	}
-
-	uint marker_mesh = renderer->add_mesh(MeshFactory::generate_cube(1.f));
-	for (uint i = 0; i < 3; i++)
-	{
-		Scene::Prop& marker = s->add_prop(marker_mesh, vec3(-9, 1.5f, target_z[i]), 0, vec3(.15f, 3.f, .15f));
-		marker.phys_id = s->phys.add_box(marker.pos, vec3(.075f, 1.5f, .075f), 0);
-		snprintf(marker.label, sizeof(marker.label), "%d m", 10 * (int)(i + 1));
-	}
-
-	Scene::Prop& backstop = s->add_prop(target_mesh, vec3(0, 5, -29), 0, vec3(36.f, 10.f, .5f));
-	backstop.phys_id = s->phys.add_box(backstop.pos, vec3(18.f, 5.f, .25f), 0);
-
-	// ammo crate near the firing line
-	uint ammo_mesh = renderer->add_mesh("assets/meshes/ammo.mesh_uv");
-	Scene::Prop& ammo = s->add_prop(ammo_mesh, vec3(2, 2.5f, 5), 0.3f, 2.f);
-	ammo.phys_id = s->phys.add_box(ammo.pos, vec3(.15f, .1f, .15f), .5f);
-
-	// player : the row's test pistol is also the view model
-	s->player.init(renderer, &s->phys, vec3(0, 5, 8),
-	               weapons[WEAPON_VIEW_MODEL].mesh, weapons[WEAPON_VIEW_MODEL].clip);
-
-	s->finish(renderer, "weapons");
+	ref.mesh = mesh;
+	ref.player = player;
+	return ref;
 }
 
 // the hero sphere's live material : the builder fills the handle, the debug
@@ -553,6 +687,49 @@ void render_default_material()
 	render_controls.hero_ao        = 1.f;
 }
 
+// main menu backdrop : a quiet voxel stage behind the overlay
+void scene_menu(Scene* s, GameRenderer* renderer)
+{
+	s->begin(renderer, vec3(0.f, 2.6f, 9.f), -PI / 2.f, -.10f, 32.f, 16.f, 8, 0.f);
+	s->show_labels = false;
+	s->shadow_extent = 32.f;
+	s->far_plane = 220.f;
+	s->use_lighting(LIGHT_STUDIO);
+
+	Scene::Prop& floor = s->props[0];
+	floor.mat_a = vec4(.045f, .050f, .058f, 0.f);
+	floor.mat_b = vec4(.82f, 1.f, 0.f, 0.f);
+
+	uint cube = renderer->add_mesh(MeshFactory::generate_cube(1.f));
+	static const vec3 colours[6] = {
+		vec3(.34f, .48f, .38f), vec3(.46f, .38f, .28f), vec3(.28f, .34f, .44f),
+		vec3(.52f, .34f, .30f), vec3(.42f, .40f, .34f), vec3(.30f, .42f, .44f)
+	};
+
+	for (int i = 0; i < 6; i++)
+	{
+		float x = ((float)i - 2.5f) * 1.30f;
+		float h = .55f + (float)((i * 7) % 5) * .28f;
+		Scene::Prop& block = s->add_prop(cube, vec3(x, h * .5f, -1.5f), 0.f,
+		                                 vec3(1.05f, h, 1.05f));
+		block.mat_a = vec4(colours[i], 0.f);
+		block.mat_b = vec4(.72f, 1.f, 0.f, 0.f);
+	}
+
+	s->finish(renderer, "menu");
+}
+
+void scene_menu_ux(Scene* s, GameWindow* window)
+{
+	(void)s; (void)window;
+}
+
+void scene_menu_debug(Scene* s)
+{
+	(void)s;
+	ImGui::TextDisabled("main menu backdrop");
+}
+
 // ---- render : a studio lab for materials, the metal/roughness matrix and texture
 void scene_render(Scene* s, GameRenderer* renderer)
 {
@@ -561,6 +738,7 @@ void scene_render(Scene* s, GameRenderer* renderer)
 	render_default_material();
 
 	s->begin(renderer, vec3(0, 2.4f, 10.f), -PI / 2, -0.10f, 30.f, 15.f);
+	s->shadow_extent = 30.f;
 	s->use_lighting(LIGHT_STUDIO);
 
 	// neutral floor : the grid is a developer texture, not part of the lab
@@ -652,6 +830,21 @@ void scene_render(Scene* s, GameRenderer* renderer)
 	hero.mat_b = vec4(render_controls.hero_roughness, render_controls.hero_ao, 0.f, 0.f);
 	snprintf(hero.label, sizeof(hero.label), "hero");
 
+	// local-light stress row : eight volumes over the material line. each sphere
+	// is the light's reach, so the cost rises with screen coverage, not count
+	for (uint i = 0; i < 8; i++)
+	{
+		float t = (float)i / 7.f;
+		vec3 color = vec3(1.f - t, .25f + t * .55f, t);
+		vec3 at = vec3(-7.f + t * 14.f, 2.6f, -3.2f);
+
+		s->add_light(at, color, 5.5f, 3.2f);
+
+		Scene::Prop& bulb = s->add_prop(sphere_mesh, at, 0, .11f);
+		bulb.mat_a = vec4(color, 0.f);
+		bulb.mat_b = vec4(.25f, 1.f, 0.f, 0.f);
+	}
+
 	s->player.init(renderer, &s->phys, vec3(0.f, 2.2f, 10.f), 0, 0);
 	s->finish(renderer, "render");
 
@@ -660,115 +853,12 @@ void scene_render(Scene* s, GameRenderer* renderer)
 		if (strcmp(s->props[i].label, "hero") == 0)
 			render_controls.hero_prop = i;
 }
-
-// terrain : the generation and strata settings persist across a reload, the band
-// handles let the debug tab retint a mesh without rebuilding it
-static Terrain_Config terrain_config;
-
-struct Terrain_View
-{
-	uint mesh[TERRAIN_BAND_COUNT]; // band mesh ids : stable across a live rebuild
-	uint prop[TERRAIN_BAND_COUNT]; // prop indices, for live material edits
-	uint body;                     // heightfield body, replaced in place
-
-	// where the band meshes start in the static buffer, so a rebuild can drop
-	// them and upload the new triangles into the same space
-	uint mesh_mark, geom_mark, indx_mark;
-};
-
-static Terrain_View terrain_view = {};
-
-// build the generated island + collider into the current scene. a caller that
-// edited the heights first passes generate = false and its own band colours
-void terrain_build_content(Scene* s, GameRenderer* renderer, const Terrain_Config& config,
-                           bool generate = true)
-{
-	if (generate) terrain_generate(&s->terrain, config);
-
-	DrawBuffer& buffer = renderer->buffer(MODE_STATIC_UV);
-	terrain_view.mesh_mark = buffer.num_meshes;
-	terrain_view.geom_mark = buffer.geom_size;
-	terrain_view.indx_mark = buffer.indx_size;
-
-	// one mesh and one material per stratum : water, sand, grass, rock, snow.
-	// every band gets an id even when empty, so a rebuild never has to move props
-	for (uint band = 0; band < TERRAIN_BAND_COUNT; band++)
-	{
-		uint mesh_id = renderer->add_mesh(terrain_build_band(&s->terrain, band));
-		Scene::Prop& p = s->add_prop(mesh_id, vec3(0), 0, 1.f);
-		terrain_band_material(config, band, &p.mat_a, &p.mat_b);
-		terrain_view.mesh[band] = mesh_id;
-		terrain_view.prop[band] = (uint)-1;
-	}
-
-	terrain_view.body = s->phys.add_heightfield(s->terrain.heights, s->terrain.resolution,
-	                                            s->terrain.size, s->terrain.min_height,
-	                                            s->terrain.max_height);
-}
-
-void terrain_resolve_props(Scene* s)
-{
-	for (uint band = 0; band < TERRAIN_BAND_COUNT; band++)
-	{
-		if (!terrain_view.mesh[band]) continue;
-		for (uint i = 0; i < s->num_props; i++)
-			if (s->props[i].mesh_id == terrain_view.mesh[band])
-				terrain_view.prop[band] = i;
-	}
-}
-
-// ---- terrain : a generated island with a matching bullet heightfield
-void scene_terrain(Scene* s, GameRenderer* renderer)
-{
-	// far enough back that the island fits the strip beside the console, not the
-	// whole window; F drops to the player for a ground-level look
-	s->begin(renderer, vec3(0, 88.f, 162.f), -PI / 2, -0.50f, 200.f, 100.f);
-	s->use_lighting(LIGHT_STUDIO);
-
-	// the flat ground under the island
-	Scene::Prop& floor = s->props[0];
-	floor.mat_a = vec4(.10f, .12f, .08f, 0.f);
-	floor.mat_b = vec4(.95f, 1.f, 0.f, 0.f);
-
-	terrain_build_content(s, renderer, terrain_config);
-
-	float spawn_h = terrain_height(&s->terrain, 0.f, 20.f);
-	s->player.init(renderer, &s->phys, vec3(0.f, spawn_h + 2.f, 20.f), 0, 0);
-	s->player.flycam = true; // inspect the terrain first; F switches to the capsule
-	s->finish(renderer, "terrain");
-	terrain_resolve_props(s);
-}
-
-// live terrain edit : regenerate the grid, replace the collider and refill the
-// band meshes at their original slots. mesh ids stay put, so props need no work
-void terrain_rebuild(Scene* s, GameRenderer* renderer)
-{
-	terrain_generate(&s->terrain, terrain_config);
-
-	terrain_view.body = s->phys.set_heightfield(terrain_view.body,
-		s->terrain.heights, s->terrain.resolution, s->terrain.size,
-		s->terrain.min_height, s->terrain.max_height);
-
-	DrawBuffer& buffer = renderer->buffer(MODE_STATIC_UV);
-	buffer.rewind(terrain_view.mesh_mark, terrain_view.geom_mark, terrain_view.indx_mark);
-
-	for (uint band = 0; band < TERRAIN_BAND_COUNT; band++)
-	{
-		if (!terrain_view.mesh[band]) continue;
-		Mesh_Data mesh = terrain_build_band(&s->terrain, band);
-		buffer.append_geometry(terrain_view.mesh[band], mesh, 0);
-		mesh.release();
-	}
-
-	s->terrain_rebuild = false;
-}
-
 /* ------------------------- *
 	-         Water         -
  * ------------------------- */
 
 const float WATER_LEVEL = 1.6f;  // mean surface height, metres
-const uint  WATER_TILES = 5;     // one patch repeated into a sea
+const uint  WATER_TILES = 9;     // one patch repeated into a sea
 
 static Water_Config water_config;
 
@@ -802,8 +892,8 @@ static Shallow_View shallow_view = {};
 
 void water_apply_materials(Scene* s)
 {
-	vec4 water_a = vec4(water_config.albedo, water_config.metallic);
-	vec4 water_b = vec4(water_config.roughness, 1.f, 0.f, 1.f); // mode 1 : foam field
+	vec4 water_a = vec4(water_config.albedo, water_view.level); // a = mean surface height
+	vec4 water_b = vec4(water_config.roughness, 1.f, 0.f, 1.f); // open sea : foam field
 
 	for (uint i = 1; i < s->num_props; i++)
 	{
@@ -837,7 +927,7 @@ void water_place_tiles(Scene* s)
 }
 
 // build the fft sea into the current scene : water mesh + tile props. the
-// caller owns finish()/prop resolution so the hub can share this too
+// caller owns finish()/prop resolution so other water scenes can share this
 void water_build_content(Scene* s, GameRenderer* renderer, float level)
 {
 	water_build_spectrum(&s->water, water_config);
@@ -845,7 +935,7 @@ void water_build_content(Scene* s, GameRenderer* renderer, float level)
 	water_update(&s->water, water_config, 0.f, true);
 	water_update_detail(&s->water.detail, s->water.time);
 
-	DrawBuffer& buffer = renderer->buffer(MODE_STATIC_UV);
+	DrawBuffer& buffer = renderer->buffer(MODE_WATER);
 	water_view.mesh_mark = buffer.num_meshes;
 	water_view.geom_mark = buffer.geom_size;
 	water_view.indx_mark = buffer.indx_size;
@@ -862,7 +952,7 @@ void water_build_content(Scene* s, GameRenderer* renderer, float level)
 	renderer->txloader.upload_dynamic_rg(water_view.detail_tx, s->water.detail.normals,
 	                                     s->water.detail.n, s->water.detail.n);
 
-	water_view.water_mesh = renderer->add_mesh(water_build_mesh(&s->water), "foam_field");
+	water_view.water_mesh = renderer->add_mesh_water(water_build_mesh(&s->water), "foam_field");
 
 	float tile = water_config.size;
 	float origin = -((float)(WATER_TILES - 1) * .5f) * tile;
@@ -871,7 +961,7 @@ void water_build_content(Scene* s, GameRenderer* renderer, float level)
 		for (uint i = 0; i < WATER_TILES; i++)
 		{
 			vec3 pos = vec3(origin + i * tile, level, origin + j * tile);
-			s->add_prop(water_view.water_mesh, pos, 0, 1.f);
+			s->add_prop(water_view.water_mesh, pos, 0, 1.f).water = true;
 		}
 	}
 
@@ -891,7 +981,7 @@ void water_resolve_props(Scene* s)
 	water_apply_materials(s);
 }
 
-// evolve the sim and refresh its two dynamic textures. no geometry, so the hub
+// evolve the sim and refresh its two dynamic textures. no geometry, so water
 // can call this before it appends every dynamic mesh at one shared mark
 bool water_simulate(Scene* s, GameRenderer* renderer, float dt)
 {
@@ -920,7 +1010,7 @@ bool water_simulate(Scene* s, GameRenderer* renderer, float dt)
 
 void water_append_geometry(Scene* s, GameRenderer* renderer)
 {
-	DrawBuffer& buffer = renderer->buffer(MODE_STATIC_UV);
+	DrawBuffer& buffer = renderer->buffer(MODE_WATER);
 	Mesh_Data mesh = water_build_mesh(&s->water);
 	buffer.append_geometry(water_view.water_mesh, mesh, water_view.water_tx);
 	mesh.release();
@@ -928,25 +1018,38 @@ void water_append_geometry(Scene* s, GameRenderer* renderer)
 
 // per frame water uniforms : the deferred pass reads the foam tint and the
 // short-chop normal map from the window, whichever scene owns the sea
-void water_bind_window(GameWindow* window)
+void water_bind_window(GameWindow* window, float time)
 {
 	window->water_foam_color     = water_config.foam_albedo;
 	window->water_foam_roughness = water_config.foam_roughness;
 	window->water_normal_tx      = water_view.detail_tx;
 	window->water_detail         = water_config.detail;
-	window->water_detail_tiles   = water_config.size / 16.f;
+	window->water_sss            = water_config.sss;
+	window->water_time           = time;
+}
+
+// the shallow patch has no second cascade : its mesh normals are the whole wave
+void shallow_bind_window(GameWindow* window, float time)
+{
+	window->water_foam_color     = vec3(.82f, .88f, .90f);
+	window->water_foam_roughness = .55f;
+	window->water_normal_tx      = 0;
+	window->water_detail         = 0.f;
+	window->water_sss            = shallow_config.sss;
+	window->water_time           = time;
 }
 
 // ---- water : one fft patch tiled into open sea
 void scene_water(Scene* s, GameRenderer* renderer)
 {
 	s->begin(renderer, vec3(0, 8.f, 30.f), -PI / 2, -0.12f, 240.f, 120.f, 8, -5.f);
-	s->use_lighting(LIGHT_SUNSET);
+	s->shadow_extent = 60.f;
+	s->use_lighting(LIGHT_CARIBBEAN);
 
-	// seabed : dark and deep enough that the troughs never reach it
+	// seabed : a sandy shelf, far enough down that the troughs never reach it
 	Scene::Prop& floor = s->props[0];
-	floor.mat_a = vec4(.025f, .035f, .032f, 0.f);
-	floor.mat_b = vec4(.95f, 1.f, 0.f, 0.f);
+	floor.mat_a = vec4(.12f, .14f, .10f, 0.f);
+	floor.mat_b = vec4(.92f, 1.f, 0.f, 0.f);
 
 	s->player.init(renderer, &s->phys, vec3(0, WATER_LEVEL + 3.f, 22.f), 0, 0);
 	s->player.flycam = true; // inspect the surface first
@@ -965,7 +1068,7 @@ void water_scene_update(Scene* s, GameRenderer* renderer, float dt)
 
 	if (changed)
 	{
-		DrawBuffer& buffer = renderer->buffer(MODE_STATIC_UV);
+		DrawBuffer& buffer = renderer->buffer(MODE_WATER);
 		buffer.rewind(water_view.mesh_mark, water_view.geom_mark, water_view.indx_mark);
 		water_append_geometry(s, renderer);
 	}
@@ -980,7 +1083,7 @@ void shallow_apply_material(Scene* s)
 	if (shallow_view.prop >= s->num_props) return;
 	Scene::Prop& p = s->props[shallow_view.prop];
 	p.pos.y = shallow_view.level;
-	p.mat_a = vec4(shallow_config.albedo, shallow_config.metallic);
+	p.mat_a = vec4(shallow_config.albedo, shallow_view.level);
 	p.mat_b = vec4(shallow_config.roughness, 1.f, 0.f, 0.f);
 }
 
@@ -991,15 +1094,16 @@ void shallow_build_content(Scene* s, GameRenderer* renderer, vec3 center, float 
 	shallow_drop(&s->shallow, 0.f, 0.f, shallow_config.drop_strength);
 	shallow_view.level = level;
 
-	DrawBuffer& buffer = renderer->buffer(MODE_STATIC_UV);
+	DrawBuffer& buffer = renderer->buffer(MODE_WATER);
 	shallow_view.mesh_mark = buffer.num_meshes;
 	shallow_view.geom_mark = buffer.geom_size;
 	shallow_view.indx_mark = buffer.indx_size;
 
-	shallow_view.water_mesh = renderer->add_mesh(shallow_build_mesh(&s->shallow));
+	shallow_view.water_mesh = renderer->add_mesh_water(shallow_build_mesh(&s->shallow));
 	Scene::Prop& water = s->add_prop(shallow_view.water_mesh,
 	                                 vec3(center.x, level, center.z), 0, 1.f);
-	water.mat_a = vec4(shallow_config.albedo, shallow_config.metallic);
+	water.water = true;
+	water.mat_a = vec4(shallow_config.albedo, level);
 	water.mat_b = vec4(shallow_config.roughness, 1.f, 0.f, 0.f);
 }
 
@@ -1023,7 +1127,7 @@ bool shallow_simulate(Scene* s, float dt)
 
 void shallow_append_geometry(Scene* s, GameRenderer* renderer)
 {
-	DrawBuffer& buffer = renderer->buffer(MODE_STATIC_UV);
+	DrawBuffer& buffer = renderer->buffer(MODE_WATER);
 	Mesh_Data mesh = shallow_build_mesh(&s->shallow);
 	buffer.append_geometry(shallow_view.water_mesh, mesh, 0);
 	mesh.release();
@@ -1033,10 +1137,11 @@ void shallow_append_geometry(Scene* s, GameRenderer* renderer)
 void scene_shallow(Scene* s, GameRenderer* renderer)
 {
 	s->begin(renderer, vec3(0, 5.5f, 9.f), -PI / 2, -0.35f, 20.f, 10.f, 4, .5f);
-	s->use_lighting(LIGHT_DAY);
+	s->shadow_extent = 20.f;
+	s->use_lighting(LIGHT_CARIBBEAN);
 
 	Scene::Prop& floor = s->props[0];
-	floor.mat_a = vec4(.34f, .30f, .23f, 0.f);
+	floor.mat_a = vec4(.46f, .40f, .30f, 0.f);
 	floor.mat_b = vec4(.92f, 1.f, 0.f, 0.f);
 
 	uint cube = renderer->add_mesh(MeshFactory::generate_cube(1.f));
@@ -1053,8 +1158,8 @@ void scene_shallow(Scene* s, GameRenderer* renderer)
 	for (uint i = 0; i < 4; i++)
 	{
 		Scene::Prop& wall = s->add_prop(cube, walls[i].pos, 0, walls[i].scale);
-		wall.mat_a = vec4(.27f, .26f, .24f, 0.f);
-		wall.mat_b = vec4(.86f, 1.f, 0.f, 0.f);
+		wall.mat_a = vec4(.38f, .36f, .30f, 0.f);
+		wall.mat_b = vec4(.84f, 1.f, 0.f, 0.f);
 		s->phys.add_box(wall.pos, walls[i].scale * .5f, 0);
 	}
 
@@ -1076,431 +1181,9 @@ void shallow_scene_update(Scene* s, GameRenderer* renderer, float dt)
 		return;
 	}
 
-	DrawBuffer& buffer = renderer->buffer(MODE_STATIC_UV);
+	DrawBuffer& buffer = renderer->buffer(MODE_WATER);
 	buffer.rewind(shallow_view.mesh_mark, shallow_view.geom_mark, shallow_view.indx_mark);
 	shallow_append_geometry(s, renderer);
-	shallow_apply_material(s);
-}
-
-/* ------------------------- *
-	-          Hub          -
- * ------------------------- */
-
-// the hub's island is its own generation : the terrain scene's settings stay
-// untouched when either scene reloads
-static Terrain_Config hub_terrain_config;
-static bool hub_config_ready = false;
-
-const float HUB_CISTERN_Z = -24.f;  // basin centre
-const float HUB_CISTERN_LIFT = .55f; // water above the yard
-
-const float HUB_VALLEY_Z0 = -30.f; // yard end of the sea valley
-const float HUB_VALLEY_Z1 = -63.f; // waterline end
-const float HUB_VALLEY_H1 = .40f;  // valley floor at the water
-const float HUB_SHORE_Z   = -56.f; // where the road meets the sea
-
-struct Hub_View
-{
-	uint mesh_mark, geom_mark, indx_mark; // where the two simulated surfaces start
-	float plateau;                        // the flat yard height
-};
-
-static Hub_View hub_view = {};
-
-void hub_prepare_config()
-{
-	if (hub_config_ready) return;
-	hub_config_ready = true;
-
-	hub_terrain_config.resolution = 177;
-	hub_terrain_config.size       = 128.f;
-	hub_terrain_config.height     = 15.f;
-	hub_terrain_config.seed       = 19440606u;
-	hub_terrain_config.octaves    = 6;
-	hub_terrain_config.frequency  = .017f;
-	hub_terrain_config.lacunarity = 2.05f;
-	hub_terrain_config.gain       = .52f;
-
-	hub_terrain_config.water_at = .06f;
-	hub_terrain_config.sand_at  = .20f;
-	hub_terrain_config.grass_at = .75f; // the yard sits on grass, high ground on rock
-	hub_terrain_config.rock_at  = 1.10f; // rock to the top : no snow on this coast
-
-	hub_terrain_config.sand_albedo  = vec3(.50f, .44f, .30f);
-	hub_terrain_config.grass_albedo = vec3(.14f, .22f, .09f);
-	hub_terrain_config.rock_albedo  = vec3(.25f, .24f, .22f);
-}
-
-void hub_apply_lighting(Scene* s)
-{
-	s->use_lighting(LIGHT_SUNSET);
-
-	// the sun sits low over the water, ahead of the yard : warm tops, long
-	// silhouettes and a specular path back to the camera
-	s->lighting.sun_direction = normalize(vec3(.10f, -.42f, .90f));
-
-	// a cool fill from behind the camera keeps the yard readable against that sun
-	s->lighting.rim_direction = normalize(vec3(-.15f, -.45f, -.88f));
-	s->lighting.rim_color     = vec3(.42f, .50f, .62f);
-	s->lighting.rim_power     = 1.05f;
-}
-
-void hub_build_terrain(Scene* s, GameRenderer* renderer)
-{
-	hub_prepare_config();
-	terrain_generate(&s->terrain, hub_terrain_config);
-
-	const float cx = 0.f, cz = -8.f;
-	const float half_x = 30.f, half_z = 24.f;
-
-	float plateau = terrain_average_height(&s->terrain, cx, cz, half_x, half_z);
-	if (plateau < WATER_LEVEL + 3.2f) plateau = WATER_LEVEL + 3.2f;
-
-	terrain_flatten(&s->terrain, cx, cz, half_x, half_z, plateau, .35f);
-
-	// a valley from the yard down to the waterline : the sea stays in view
-	// instead of sitting behind whatever hill the seed placed to the south
-	terrain_ramp(&s->terrain, 0.f, HUB_VALLEY_Z0, HUB_VALLEY_Z1, 8.f, .55f,
-	             plateau, HUB_VALLEY_H1);
-
-	terrain_update_levels(&s->terrain, hub_terrain_config);
-
-	// the fft sea owns the water surface : a flat terrain-water shelf would sit
-	// above it, so the water band is left empty and the sand runs into the sea
-	s->terrain.water_level = -4.f;
-
-	hub_view.plateau = plateau;
-	terrain_build_content(s, renderer, hub_terrain_config, false);
-}
-
-void hub_add_road(Scene* s, uint path_mesh, float p)
-{
-	const vec4 road_a = vec4(.125f, .110f, .085f, 0.f);
-	const vec4 road_b = vec4(.94f, 1.f, 0.f, 0.f);
-
-	// a gravel lane from the gate to the yard, then down the valley to the water
-	Scene::Prop& path = s->add_prop(path_mesh, vec3(0.f, p + .03f, -8.f), 0,
-	                                vec3(6.f, 1.f, 44.f));
-	path.mat_a = road_a;
-	path.mat_b = road_b;
-
-	float shore_h = p + (HUB_VALLEY_H1 - p) *
-	                ((HUB_VALLEY_Z0 - HUB_SHORE_Z) / (HUB_VALLEY_Z0 - HUB_VALLEY_Z1));
-	float drop_z = HUB_VALLEY_Z0 - HUB_SHORE_Z;
-	float drop_h = p - shore_h;
-	float slope_len = sqrtf(drop_z * drop_z + drop_h * drop_h);
-	float slope_angle = -atanf(drop_h / drop_z);
-
-	Scene::Prop& slope = s->add_prop(path_mesh,
-	                                 vec3(0.f, (p + shore_h) * .5f + .04f,
-	                                      (HUB_VALLEY_Z0 + HUB_SHORE_Z) * .5f), 0,
-	                                 vec3(5.5f, 1.f, slope_len));
-	slope.rot = mat3(glm::rotate(mat4(1), slope_angle, vec3(1, 0, 0)));
-	slope.mat_a = road_a;
-	slope.mat_b = road_b;
-}
-
-void hub_add_armory(Scene* s, GameRenderer* renderer, uint cube_mesh, float p)
-{
-	const vec3 wall_a = vec3(.185f, .190f, .185f);
-	const vec4 wall_b = vec4(.84f, 1.f, 0.f, 0.f);
-
-	// back wall and overhang : a covered rack along the west edge
-	Scene::Prop& wall = s->add_prop(cube_mesh, vec3(-18.6f, p + 2.2f, -14.f), 0,
-	                                vec3(.5f, 4.4f, 23.f));
-	wall.mat_a = vec4(wall_a, 0.f);
-	wall.mat_b = wall_b;
-	wall.phys_id = s->phys.add_box(wall.pos, vec3(.25f, 2.2f, 11.5f), 0);
-
-	Scene::Prop& roof = s->add_prop(cube_mesh, vec3(-16.4f, p + 4.35f, -14.f), 0,
-	                                vec3(5.4f, .25f, 23.f));
-	roof.mat_a = vec4(.105f, .110f, .105f, 0.f);
-	roof.mat_b = vec4(.78f, 1.f, 0.f, 0.f);
-	roof.phys_id = s->phys.add_box(roof.pos, vec3(2.7f, .125f, 11.5f), 0);
-
-	Scene::Prop& shelf = s->add_prop(cube_mesh, vec3(-16.4f, p + .65f, -14.f), 0,
-	                                 vec3(2.4f, .18f, 22.f));
-	shelf.mat_a = vec4(.085f, .088f, .085f, 0.f);
-	shelf.mat_b = vec4(.72f, 1.f, 0.f, 0.f);
-	shelf.phys_id = s->phys.add_box(shelf.pos, vec3(1.2f, .09f, 11.f), 0);
-
-	for (uint i = 0; i < WEAPON_VIEW_MODEL; i++)
-	{
-		float yaw = PI / 2 + ((i % 2) ? .12f : -.12f);
-		weapon_add_actor(s, renderer, i, vec3(-16.f, p + 2.05f, -4.f - (float)i * 3.f),
-		                 yaw, 3.4f);
-	}
-}
-
-void hub_add_supply(Scene* s, uint cube_mesh, uint cylinder_mesh, uint ammo_mesh, float p)
-{
-	const vec4 crate_a = vec4(.155f, .165f, .120f, 0.f);
-	const vec4 crate_b = vec4(.86f, 1.f, 0.f, 0.f);
-
-	// supply : a dynamic stack the player and the car can knock over
-	struct Crate { vec3 pos; float yaw; };
-	const Crate crates[5] = {
-		{ vec3(12.0f, p + .5f, -8.0f),  .10f },
-		{ vec3(13.2f, p + .5f, -8.2f), -.08f },
-		{ vec3(12.6f, p + 1.5f, -8.1f), .20f },
-		{ vec3(12.1f, p + .5f, -9.4f), -.14f },
-		{ vec3(13.3f, p + .5f, -9.5f),  .06f },
-	};
-
-	for (uint i = 0; i < 5; i++)
-	{
-		Scene::Prop& crate = s->add_prop(cube_mesh, crates[i].pos, crates[i].yaw, 1.f);
-		crate.mat_a = crate_a;
-		crate.mat_b = crate_b;
-		crate.phys_id = s->phys.add_box(crate.pos, vec3(.5f), 8.f,
-		                                vec3(0.f, crates[i].yaw, 0.f));
-	}
-
-	// ammo crates : small, loose, and light enough to shove
-	vec3 ammo_spots[2] = { vec3(12.6f, p + 2.12f, -8.1f), vec3(15.4f, p + .45f, -12.0f) };
-	for (uint i = 0; i < 2; i++)
-	{
-		Scene::Prop& ammo = s->add_prop(ammo_mesh, ammo_spots[i], .3f * (float)i, 1.4f);
-		ammo.mat_a = vec4(.30f, .27f, .18f, .10f);
-		ammo.mat_b = vec4(.70f, 1.f, 0.f, 0.f);
-		ammo.phys_id = s->phys.add_box(ammo.pos, vec3(.15f, .10f, .15f), .6f);
-	}
-
-	// fuel drums
-	vec3 drums[3] = {
-		vec3(16.0f, p + .65f, -10.1f),
-		vec3(17.3f, p + .65f, -10.6f),
-		vec3(16.7f, p + .65f, -11.9f),
-	};
-
-	for (uint i = 0; i < 3; i++)
-	{
-		Scene::Prop& drum = s->add_prop(cylinder_mesh, drums[i], .2f * (float)i,
-		                                vec3(1.2f, 1.2f, 1.2f));
-		drum.mat_a = vec4(.22f, .13f, .075f, .45f);
-		drum.mat_b = vec4(.64f, 1.f, 0.f, 0.f);
-		drum.phys_id = s->phys.add_cylinder(drum.pos, vec3(.6f, .6f, .6f), 6.f);
-	}
-}
-
-void hub_add_signal(Scene* s, uint cube_mesh, uint sphere_mesh, float p)
-{
-	// one polished sphere : the material work shown in the world
-	Scene::Prop& plinth = s->add_prop(cube_mesh, vec3(18.f, p + 1.0f, -18.f), 0,
-	                                  vec3(2.2f, 2.0f, 2.2f));
-	plinth.mat_a = vec4(.175f, .180f, .175f, .55f);
-	plinth.mat_b = vec4(.58f, 1.f, 0.f, 0.f);
-	plinth.phys_id = s->phys.add_box(plinth.pos, vec3(1.1f, 1.f, 1.1f), 0);
-
-	Scene::Prop& signal = s->add_prop(sphere_mesh, vec3(18.f, p + 3.0f, -18.f), 0, .95f);
-	signal.mat_a = vec4(.72f, .73f, .75f, 1.f);
-	signal.mat_b = vec4(.06f, 1.f, 0.f, 0.f);
-}
-
-void hub_add_palms(Scene* s, uint palm_mesh, float p)
-{
-	vec3 palms[4] = {
-		vec3(-26.f, 0.f,   6.f), vec3(26.f, 0.f,   6.f),
-		vec3(-26.f, 0.f, -29.f), vec3(26.f, 0.f, -29.f),
-	};
-
-	for (uint i = 0; i < 4; i++)
-	{
-		vec3 at = vec3(palms[i].x, p, palms[i].z);
-		Scene::Prop& palm = s->add_prop(palm_mesh, at, (float)i * 1.7f, 1.8f);
-		palm.phys_id = s->phys.add_box(at + vec3(0, 3.2f, 0), vec3(.22f, 3.2f, .22f), 0);
-	}
-}
-
-void hub_add_cistern(Scene* s, uint cube_mesh, float p)
-{
-	const float cz = HUB_CISTERN_Z;
-	const float level = p + HUB_CISTERN_LIFT;
-
-	Scene::Prop& floor = s->add_prop(cube_mesh, vec3(0.f, p + .05f, cz), 0,
-	                                 vec3(8.4f, .10f, 8.4f));
-	floor.mat_a = vec4(.16f, .16f, .15f, 0.f);
-	floor.mat_b = vec4(.90f, 1.f, 0.f, 0.f);
-
-	struct Wall { vec3 pos, scale; };
-	const Wall walls[4] = {
-		{ vec3(0.f, level, cz + 4.3f), vec3(9.2f, 1.3f, .6f) },
-		{ vec3(0.f, level, cz - 4.3f), vec3(9.2f, 1.3f, .6f) },
-		{ vec3( 4.3f, level, cz), vec3(.6f, 1.3f, 9.2f) },
-		{ vec3(-4.3f, level, cz), vec3(.6f, 1.3f, 9.2f) },
-	};
-
-	for (uint i = 0; i < 4; i++)
-	{
-		Scene::Prop& wall = s->add_prop(cube_mesh, walls[i].pos, 0, walls[i].scale);
-		wall.mat_a = vec4(.255f, .245f, .225f, 0.f);
-		wall.mat_b = vec4(.86f, 1.f, 0.f, 0.f);
-		wall.phys_id = s->phys.add_box(wall.pos, walls[i].scale * .5f, 0);
-	}
-}
-
-void hub_add_vehicle(Scene* s, uint cube_mesh, uint wheel_mesh, float p)
-{
-	// parked at the yard, pointed at the sea. C switches to the chase view
-	vec3 car_spawn = vec3(7.f, p + 1.2f, 3.f);
-	if (!s->phys.add_vehicle(car_spawn, PI)) return;
-
-	Scene::Prop& chassis = s->add_prop(cube_mesh, car_spawn, PI, vec3(2.f, 1.f, 4.f));
-	chassis.phys_id = s->phys.vehicle.chassis_id;
-	chassis.mat_a = vec4(.24f, .08f, .055f, .18f);
-	chassis.mat_b = vec4(.34f, 1.f, 0.f, 0.f);
-
-	for (uint i = 0; i < 4; i++)
-	{
-		Scene::Prop& wheel = s->add_prop(wheel_mesh, car_spawn, 0, 1.f);
-		wheel.wheel_index = i;
-		wheel.mat_a = vec4(.028f, .028f, .032f, 0.f);
-		wheel.mat_b = vec4(.88f, 1.f, 0.f, 0.f);
-	}
-}
-
-void hub_add_player(Scene* s, GameRenderer* renderer, float p)
-{
-	// on foot with the test pistol. the bullet mesh is added before the
-	// simulated surfaces, so the shared dynamic mark stays behind them
-	uint gun_mesh = renderer->add_anim_mesh(WEAPON_SETUP[WEAPON_VIEW_MODEL].mesh);
-	uint gun_clip = 0;
-	renderer->animloader.load(WEAPON_SETUP[WEAPON_VIEW_MODEL].clip, &gun_clip);
-	if (gun_mesh && gun_clip)
-		weapon_slice(WEAPON_VIEW_MODEL, &renderer->animloader.clips[gun_clip]);
-
-	s->player.init(renderer, &s->phys, vec3(0.f, p + 1.3f, 10.f), gun_mesh, gun_clip);
-	s->chase_distance = 8.f;
-	s->chase_height   = 3.4f;
-}
-
-void hub_add_signs(Scene* s, float p)
-{
-	struct Sign { vec3 pos; const char* text; };
-	const Sign signs[4] = {
-		{ vec3(-16.f, p + 5.2f, -14.f), "ARMORY" },
-		{ vec3(  0.f, p + 2.3f, HUB_CISTERN_Z), "CISTERN" },
-		{ vec3( 14.f, p + 3.1f,  -9.f), "SUPPLY" },
-		{ vec3( 18.f, p + 4.4f, -18.f), "SIGNAL" },
-	};
-
-	for (uint i = 0; i < 4; i++)
-	{
-		Scene::Prop& sign = s->add_prop(0, signs[i].pos, 0, 1.f);
-		snprintf(sign.label, sizeof(sign.label), "%s", signs[i].text);
-	}
-}
-
-void scene_hub(Scene* s, GameRenderer* renderer)
-{
-	// a catch floor far below : the island's heightfield is the real ground
-	s->begin(renderer, vec3(0, 12.f, 20.f), -PI / 2, -.12f, 512.f, 256.f, 4, -30.f);
-	s->props[0].mesh_id = 0;
-	hub_apply_lighting(s);
-
-	hub_build_terrain(s, renderer);
-	float p = hub_view.plateau;
-
-	// shared base meshes
-	uint cube_mesh     = renderer->add_mesh(MeshFactory::generate_cube(1.f));
-	uint cylinder_mesh = renderer->add_mesh(MeshFactory::generate_cylinder(.5f, 1.f, 20));
-	uint wheel_mesh    = renderer->add_mesh(MeshFactory::generate_cylinder(.5f, .4f, 24));
-	uint sphere_mesh   = renderer->add_mesh("assets/meshes/sphere.mesh_uv");
-	uint ammo_mesh     = renderer->add_mesh("assets/meshes/ammo.mesh_uv");
-	uint palm_mesh     = renderer->add_mesh("assets/meshes/palm_tree.mesh_uv");
-	uint path_mesh     = renderer->add_mesh(MeshFactory::generate_plane(1.f, 1,
-	                                                                    MeshFactory::PLANE_XZ));
-
-	hub_add_road(s, path_mesh, p);
-	hub_add_armory(s, renderer, cube_mesh, p);
-	hub_add_supply(s, cube_mesh, cylinder_mesh, ammo_mesh, p);
-	hub_add_signal(s, cube_mesh, sphere_mesh, p);
-	hub_add_palms(s, palm_mesh, p);
-	hub_add_cistern(s, cube_mesh, p);
-
-	hub_add_vehicle(s, cube_mesh, wheel_mesh, p);
-	hub_add_player(s, renderer, p);
-
-	// dynamic surfaces share one mark : a rewind drops both, then they are
-	// appended in the same order, so their mesh slots never move
-	DrawBuffer& buffer = renderer->buffer(MODE_STATIC_UV);
-	hub_view.mesh_mark = buffer.num_meshes;
-	hub_view.geom_mark = buffer.geom_size;
-	hub_view.indx_mark = buffer.indx_size;
-
-	water_build_content(s, renderer, WATER_LEVEL);
-	shallow_build_content(s, renderer, vec3(0.f, 0.f, HUB_CISTERN_Z),
-	                      p + HUB_CISTERN_LIFT);
-
-	water_view.mesh_mark = shallow_view.mesh_mark = hub_view.mesh_mark;
-	water_view.geom_mark = shallow_view.geom_mark = hub_view.geom_mark;
-	water_view.indx_mark = shallow_view.indx_mark = hub_view.indx_mark;
-
-	hub_add_signs(s, p);
-
-	s->finish(renderer, "hub");
-	terrain_resolve_props(s);
-	water_resolve_props(s);
-	shallow_resolve_props(s);
-
-	s->water_dirty = false;
-	s->water_spectrum = false;
-	s->shallow.dirty = false;
-}
-
-void hub_seat_camera(Scene* s)
-{
-	vec3 pos;
-	mat3 rot;
-	if (!s->phys.vehicle.chassis_id ||
-	    !s->phys.get_transform(s->phys.vehicle.chassis_id, &pos, &rot)) return;
-
-	vec3 forward = rot[2];
-	forward.y = 0.f;
-	if (length(forward) < .01f) forward = vec3(0, 0, 1);
-	else forward = normalize(forward);
-
-	vec3 target = pos + forward * 3.f + vec3(0, 1.f, 0);
-	s->vehicle_view.position = pos - forward * s->chase_distance +
-	                           vec3(0, s->chase_height, 0);
-	s->vehicle_view.front = normalize(target - s->vehicle_view.position);
-	s->vehicle_view.up = vec3(0, 1, 0);
-}
-
-void scene_hub_key(Scene* s, GameWindow* window)
-{
-	if (window->focus_status != GAME) return;
-	if (ImGui::GetIO().WantCaptureKeyboard) return;
-
-	if (window->keys.C.is_pressed && !window->keys.C.was_pressed)
-	{
-		s->car_camera = !s->car_camera;
-		if (s->car_camera)
-		{
-			s->player.flycam = false;
-			hub_seat_camera(s);
-		}
-	}
-}
-
-// the sea and the cistern both live in the static buffer : one rewind covers
-// whichever of them changed, then both are appended again at their own ids
-void hub_scene_update(Scene* s, GameRenderer* renderer, float dt)
-{
-	bool water_changed   = water_simulate(s, renderer, dt);
-	bool shallow_changed = shallow_simulate(s, dt);
-
-	if (water_changed || shallow_changed)
-	{
-		DrawBuffer& buffer = renderer->buffer(MODE_STATIC_UV);
-		buffer.rewind(hub_view.mesh_mark, hub_view.geom_mark, hub_view.indx_mark);
-		water_append_geometry(s, renderer);
-		shallow_append_geometry(s, renderer);
-	}
-
-	if (water_config.size != water_view.tile_size) water_place_tiles(s);
-
-	water_apply_materials(s);
 	shallow_apply_material(s);
 }
 
@@ -1555,6 +1238,11 @@ void scene_shallow_ux(Scene* s, GameWindow* window)
 	hud_text_center(dl, 13.f * scale, cx, window->screen_height - 42.f * scale, dim,
 	                "WASD fly  |  mouse look  |  T console  |  drops + damping under Scenes");
 }
+const uint PHYSICS_TRIGGER_COUNT = 3;
+const int  PHYS_FLAG_COLS = 16;
+const int  PHYS_FLAG_ROWS = 10;
+const int  PHYS_CLOTH_N   = 20;
+const int  PHYS_CURTAIN_N = 14;
 
 // live hinge and motor controls : the builder fills the handles, the debug
 // tab edits the values and pushes them into the constraints
@@ -1567,17 +1255,68 @@ struct Physics_Controls
 
 	uint arm_body, rotor_body, door_body;
 	uint chain_end, cradle_first, ccd_on, ccd_off;
+	uint cradle_last, stack_top, domino_last, bag_body, seesaw_body;
+	uint ramp_ball, cloth_sphere, shape_cone;
+	uint slider_body, fixed_anchor, fixed_body;
+
+	// real Bullet soft bodies : patch nodes are pinned with setMass(...,0)
+	btSoftBody* flag_body;
+	btSoftBody* cloth_body;
+	btSoftBody* curtain_body;
+	int flag_tip_index;
+	int cloth_center_index;
+	float cloth_min_y;
+	vec3 flag_tip_start, flag_base_start, cloth_center_start, ramp_ball_start;
+	vec3 slider_start, fixed_start_a, fixed_start_b, cradle_last_start;
+
+	// interaction test : a ray hits the cap, E latches it in
+	uint button_body, button_prop;
+	vec3 button_base;
+	bool button_on, button_target;
+	float button_press;
+
+	// player trigger exhibits
+	uint trigger_prop[PHYSICS_TRIGGER_COUNT];
+	bool trigger_on[PHYSICS_TRIGGER_COUNT];
 
 	float arm_limit, arm_push, arm_damping;
 	float seesaw_limit;
 	float rotor_speed, rotor_impulse;
 	float door_speed, door_impulse, door_open_angle, door_damping, door_target;
 	float gravity;
+	float flag_wind;
 	int   solver_iters;
 	bool  rotor_on, door_on;
 };
 
 static Physics_Controls physics_controls;
+
+// unit-test status : -1 pending, 0 fail, 1 pass
+enum Physics_Test {
+	PT_SHAPES = 0, PT_STACK, PT_DOMINOES, PT_HINGE, PT_CONE,
+	PT_CHAIN, PT_SEESAW, PT_MOTOR, PT_CCD, PT_CRADLE,
+	PT_RAMP, PT_FLAGPOLE, PT_CLOTH, PT_SLIDER, PT_FIXED,
+	PT_COUNT
+};
+
+static const char* PHYSICS_TEST_NAMES[PT_COUNT] = {
+	"shapes settle", "stack stable", "dominoes topple", "hinge swings",
+	"cone hang", "chain links", "see-saw tilts", "motor turns",
+	"ccd stops", "cradle transfers", "ramp rolls", "flag pole",
+	"soft cloth", "slider travel", "fixed joint",
+};
+
+static int   physics_test_state[PT_COUNT];
+static float physics_test_clock;
+static bool  physics_tests_evaluated;
+
+struct Physics_Soft_View
+{
+	uint flag_mesh, cloth_mesh, curtain_mesh;
+	uint mesh_mark, geom_mark, indx_mark;
+};
+
+static Physics_Soft_View physics_soft_view;
 
 // a hair of clearance : the motor should not be born against its closed stop
 const float DOOR_CLOSED_LIMIT = -.01f;
@@ -1590,7 +1329,7 @@ void physics_default_settings()
 	physics_controls.seesaw_limit = .3f;
 
 	physics_controls.rotor_speed = 3.f;
-	physics_controls.rotor_impulse = 8.f;
+	physics_controls.rotor_impulse = 60.f;
 	physics_controls.rotor_on = true;
 
 	physics_controls.door_speed = 2.f;
@@ -1601,6 +1340,7 @@ void physics_default_settings()
 	physics_controls.door_on = false;
 
 	physics_controls.gravity = 9.8f;
+	physics_controls.flag_wind = 4.0f;
 	physics_controls.solver_iters = 10;
 }
 
@@ -1617,9 +1357,9 @@ void physics_apply_settings(Scene* s)
 
 	if (physics_controls.rotor)
 	{
-		physics_controls.rotor->enableMotor(physics_controls.rotor_on);
-		physics_controls.rotor->setMotorTargetVelocity(physics_controls.rotor_speed);
-		physics_controls.rotor->setMaxMotorImpulse(physics_controls.rotor_impulse);
+		physics_controls.rotor->enableAngularMotor(physics_controls.rotor_on,
+		                                           physics_controls.rotor_speed,
+		                                           physics_controls.rotor_impulse);
 	}
 
 	if (physics_controls.door)
@@ -1632,7 +1372,11 @@ void physics_apply_settings(Scene* s)
 	// a motor does not wake a sleeping body : do it while the motor is driving
 	if (physics_controls.rotor_body && physics_controls.rotor_body < s->phys.num_bodies &&
 	    physics_controls.rotor_on && physics_controls.rotor_speed != 0.f)
-		s->phys.bodies[physics_controls.rotor_body].body->activate(true);
+	{
+		btRigidBody* b = s->phys.bodies[physics_controls.rotor_body].body;
+		b->setActivationState(DISABLE_DEACTIVATION);
+		b->activate(true);
+	}
 
 	if (physics_controls.door_body && physics_controls.door_body < s->phys.num_bodies &&
 	    physics_controls.door_on && physics_controls.door_target != 0.f)
@@ -1652,13 +1396,16 @@ void physics_apply_settings(Scene* s)
 enum Physics_Station {
 	PST_SHAPES = 0, PST_STACK, PST_DOMINOES, PST_RAGDOLL,
 	PST_HINGE, PST_CONE, PST_CHAIN, PST_SEESAW,
-	PST_MOTOR, PST_CRADLE, PST_RAMP, PST_CCD, PST_DOOR, PST_COUNT
+	PST_MOTOR, PST_CRADLE, PST_RAMP, PST_CCD, PST_DOOR,
+	PST_SLIDER, PST_FIXED, PST_FLAGPOLE, PST_CLOTH, PST_CURTAIN,
+	PST_COUNT
 };
 
 static const char* PHYSICS_STATIONS[PST_COUNT] = {
 	"shapes", "stack", "dominoes", "ragdoll",
 	"hinge", "cone twist", "chain", "see-saw",
 	"motor", "newton's cradle", "ramp", "ccd", "door",
+	"slider", "fixed", "flagpole", "soft cloth", "walk curtain",
 };
 
 static const vec3 PHYSICS_SIGN_AT[PST_COUNT] = {
@@ -1667,11 +1414,376 @@ static const vec3 PHYSICS_SIGN_AT[PST_COUNT] = {
 	vec3(0.f, 6.f, -6.f),    vec3(7.f, 3.f, -6.f),    vec3(14.f, 4.f, -6.f),
 	vec3(-9.f, 5.8f, -16.f), vec3(-1.f, 4.f, -16.f),  vec3(9.f, 5.f, -16.f),
 	vec3(15.85f, 4.2f, -16.f),
+	vec3(-14.f, 3.2f, -27.f), vec3(-5.f, 3.2f, -27.f),
+	vec3(4.5f, 8.4f, -27.f),  vec3(12.f, 4.8f, -27.f),
+	vec3(19.f, 4.8f, -33.f),
 };
+
+struct Physics_Trigger
+{
+	vec3  pos;    // floor centre
+	float radius;
+};
+
+static const Physics_Trigger PHYSICS_TRIGGERS[PHYSICS_TRIGGER_COUNT] = {
+	{ vec3(-9.75f, 0.f, 10.f), 1.75f },
+	{ vec3(-6.00f, 0.f, 10.f), 1.75f },
+	{ vec3(-2.25f, 0.f, 10.f), 1.75f },
+};
+
+const vec4 ACTIVE_OFF = vec4(.55f, .045f, .030f, 0.f); // red
+const vec4 ACTIVE_ON  = vec4(.035f, .52f, .095f, 0.f); // green
 
 void station_label(uint station)
 {
 	ImGui::TextDisabled("%u  %s", station + 1, PHYSICS_STATIONS[station]);
+}
+
+void physics_add_button(Scene* s, uint cube_mesh, uint cylinder_mesh)
+{
+	// console : base, panel, then a cap that sits just proud of the panel
+	Scene::Prop& base = s->add_prop(cube_mesh, vec3(4.5f, .35f, 9.f), 0,
+	                                vec3(1.2f, .7f, 1.2f));
+	base.mat_a = vec4(.11f, .115f, .12f, 0.f);
+	base.mat_b = vec4(.55f, 1.f, 0.f, 0.f);
+	base.phys_id = s->phys.add_box(base.pos, vec3(.6f, .35f, .6f), 0);
+
+	Scene::Prop& panel = s->add_prop(cube_mesh, vec3(4.5f, 1.55f, 9.f), 0,
+	                                 vec3(1.4f, 1.7f, .2f));
+	panel.mat_a = vec4(.06f, .065f, .07f, 0.f);
+	panel.mat_b = vec4(.50f, 1.f, 0.f, 0.f);
+	panel.phys_id = s->phys.add_box(panel.pos, vec3(.7f, .85f, .1f), 0);
+
+	vec3 cap_at = vec3(4.5f, 1.55f, 9.28f);
+	Scene::Prop& cap = s->add_prop(cylinder_mesh, cap_at, 0, vec3(.45f, .15f, .45f));
+	cap.rot = mat3(glm::rotate(mat4(1), PI / 2, vec3(1, 0, 0)));
+	cap.mat_a = ACTIVE_OFF;
+	cap.mat_b = vec4(.25f, 1.f, 0.f, 0.f);
+	snprintf(cap.label, sizeof(cap.label), "BTN");
+
+	physics_controls.button_body = s->phys.add_box(cap_at, vec3(.3f, .3f, .16f), 0);
+	physics_controls.button_base = cap_at;
+	physics_controls.button_prop = (uint)-1;
+
+	Scene::Prop& sign = s->add_prop(0, vec3(4.5f, 2.9f, 9.f), 0, 1.f);
+	snprintf(sign.label, sizeof(sign.label), "INTERACT");
+}
+
+void physics_add_triggers(Scene* s, uint cube_mesh, uint sphere_mesh, uint cone_mesh)
+{
+	uint meshes[PHYSICS_TRIGGER_COUNT] = { cube_mesh, sphere_mesh, cone_mesh };
+	float scales[PHYSICS_TRIGGER_COUNT] = { 1.1f, .6f, .8f };
+	float heights[PHYSICS_TRIGGER_COUNT] = { 1.45f, 1.50f, 1.55f };
+
+	for (uint i = 0; i < PHYSICS_TRIGGER_COUNT; i++)
+	{
+		vec3 at = PHYSICS_TRIGGERS[i].pos;
+
+		Scene::Prop& plinth = s->add_prop(cube_mesh, at + vec3(0, .45f, 0), 0,
+		                                  vec3(1.2f, .9f, 1.2f));
+		plinth.mat_a = vec4(.08f, .085f, .09f, 0.f);
+		plinth.mat_b = vec4(.62f, 1.f, 0.f, 0.f);
+		plinth.phys_id = s->phys.add_box(plinth.pos, vec3(.6f, .45f, .6f), 0);
+
+		Scene::Prop& shape = s->add_prop(meshes[i], vec3(at.x, heights[i], at.z), 0,
+		                                 scales[i]);
+		shape.mat_a = ACTIVE_OFF;
+		shape.mat_b = vec4(.28f, 1.f, 0.f, 0.f);
+		snprintf(shape.label, sizeof(shape.label), "T%u", i + 1);
+
+		physics_controls.trigger_prop[i] = (uint)-1;
+		physics_controls.trigger_on[i] = false;
+	}
+
+	Scene::Prop& sign = s->add_prop(0, vec3(-6.f, 2.75f, 10.f), 0, 1.f);
+	snprintf(sign.label, sizeof(sign.label), "ACTIVATION");
+}
+
+// tag props back to their handles after finish() has sorted them by mesh
+void physics_resolve_interactive(Scene* s)
+{
+	for (uint i = 0; i < PHYSICS_TRIGGER_COUNT; i++)
+	{
+		char tag[8];
+		snprintf(tag, sizeof(tag), "T%u", i + 1);
+
+		for (uint j = 0; j < s->num_props; j++)
+		{
+			if (strcmp(s->props[j].label, tag) != 0) continue;
+			physics_controls.trigger_prop[i] = j;
+			s->props[j].label[0] = 0;
+			break;
+		}
+	}
+
+	for (uint j = 0; j < s->num_props; j++)
+	{
+		if (strcmp(s->props[j].label, "BTN") != 0) continue;
+		physics_controls.button_prop = j;
+		physics_controls.button_base = s->props[j].pos;
+		physics_controls.button_press = 0.f;
+		s->props[j].label[0] = 0;
+		break;
+	}
+}
+
+bool physics_body_pos(Scene* s, uint id, vec3* out)
+{
+	if (!id || id >= s->phys.num_bodies) return false;
+	btRigidBody* b = s->phys.bodies[id].body;
+	if (!b) return false;
+	btVector3 p = b->getWorldTransform().getOrigin();
+	*out = vec3(p.x(), p.y(), p.z());
+	return true;
+}
+
+bool physics_body_up(Scene* s, uint id, vec3* out)
+{
+	if (!id || id >= s->phys.num_bodies) return false;
+	btRigidBody* b = s->phys.bodies[id].body;
+	if (!b) return false;
+	btVector3 u = b->getWorldTransform().getBasis().getColumn(1);
+	*out = vec3(u.x(), u.y(), u.z());
+	return true;
+}
+
+// a real Bullet soft-body flag : one pinned hoist column, the rest free.
+void physics_add_flag(Scene* s, uint cube_mesh, uint cylinder_mesh)
+{
+	vec3 base = vec3(4.6f, 0.f, -27.f);
+
+	Scene::Prop& pole = s->add_prop(cylinder_mesh, base + vec3(0, 3.6f, 0), 0,
+	                                vec3(.18f, 3.6f, .18f));
+	pole.mat_a = vec4(.42f, .43f, .44f, .55f);
+	pole.mat_b = vec4(.45f, 1.f, 0.f, 0.f);
+	pole.phys_id = s->phys.add_cylinder(base + vec3(0, 3.6f, 0),
+	                                    vec3(.09f, 3.6f, .09f), 0);
+
+	int cols = PHYS_FLAG_COLS, rows = PHYS_FLAG_ROWS;
+	float sx = .22f, sy = .21f;
+	btVector3 c00(base.x + .10f, base.y + 6.8f, base.z + .02f);
+	btVector3 c10(c00.x() + (cols - 1) * sx, c00.y(), c00.z());
+	btVector3 c01(c00.x(), c00.y() - (rows - 1) * sy, c00.z());
+	btVector3 c11(c10.x(), c01.y(), c00.z());
+
+	btSoftBody* sb = s->phys.add_soft_patch(c00, c10, c01, c11, cols, rows, 1.6f);
+	physics_controls.flag_body = sb;
+	if (!sb) return;
+
+	// pin only the vertices attached to the pole : the rest of the flag is free
+	// to billow and flutter in the wind
+	for (int y = 0; y < rows; y++)
+		sb->setMass(y * cols, 0.f);
+
+	btVector3 base_node = sb->m_nodes[0].m_x;
+	physics_controls.flag_base_start = vec3(base_node.x(), base_node.y(), base_node.z());
+
+	physics_controls.flag_tip_index = (rows - 1) * cols + (cols - 1);
+	btVector3 tip = sb->m_nodes[physics_controls.flag_tip_index].m_x;
+	physics_controls.flag_tip_start = vec3(tip.x(), tip.y(), tip.z());
+}
+
+// a suspended soft-body cloth : pinned perimeter, free interior and a heavy
+// rigid sphere dropped onto the centre.
+void physics_add_soft_cloth(Scene* s, uint cube_mesh, uint sphere_mesh)
+{
+	vec3 centre = vec3(11.5f, 2.0f, -27.f);
+	int n = PHYS_CLOTH_N;
+	float step = .14f;
+	float half = (n - 1) * .5f * step;
+
+	btVector3 c00(centre.x - half, centre.y, centre.z - half);
+	btVector3 c10(centre.x + half, centre.y, centre.z - half);
+	btVector3 c01(centre.x - half, centre.y, centre.z + half);
+	btVector3 c11(centre.x + half, centre.y, centre.z + half);
+
+	btSoftBody* sb = s->phys.add_soft_patch(c00, c10, c01, c11, n, n, 3.0f);
+	physics_controls.cloth_body = sb;
+	if (!sb) return;
+
+	for (int y = 0; y < n; y++)
+		for (int x = 0; x < n; x++)
+			if (x == 0 || y == 0 || x == n - 1 || y == n - 1)
+				sb->setMass(y * n + x, 0.f);
+
+	physics_controls.cloth_center_index = (n / 2) * n + n / 2;
+	btVector3 cp = sb->m_nodes[physics_controls.cloth_center_index].m_x;
+	physics_controls.cloth_center_start = vec3(cp.x(), cp.y(), cp.z());
+	physics_controls.cloth_min_y = cp.y();
+
+	Scene::Prop& ball = s->add_prop(sphere_mesh, centre + vec3(0, .70f, 0), 0, .50f);
+	ball.mat_a = vec4(.24f, .26f, .28f, .15f);
+	ball.mat_b = vec4(.36f, 1.f, 0.f, 0.f);
+	ball.phys_id = s->phys.add_sphere(ball.pos, .50f, 2.6f);
+	s->phys.enable_ccd(ball.phys_id);
+	physics_controls.cloth_sphere = ball.phys_id;
+
+	// a thin frame around the suspended perimeter
+	for (int i = 0; i < 4; i++)
+	{
+		bool along_x = (i < 2);
+		float sign = (i & 1) ? 1.f : -1.f;
+		vec3 at = centre + (along_x ? vec3(0, -.12f, sign * half)
+		                            : vec3(sign * half, -.12f, 0));
+		vec3 dims = along_x ? vec3(half + .35f, .12f, .12f)
+		                    : vec3(.12f, .12f, half + .35f);
+		Scene::Prop& beam = s->add_prop(cube_mesh, at, 0, dims * 2.f);
+		beam.mat_a = vec4(.18f, .19f, .20f, .35f);
+		beam.mat_b = vec4(.55f, 1.f, 0.f, 0.f);
+	}
+}
+
+Mesh_Data physics_soft_mesh(btSoftBody* sb, int cols, int rows)
+{
+	Mesh_Data data = {};
+	if (!sb || sb->m_nodes.size() == 0 || sb->m_faces.size() == 0) return data;
+
+	uint nv = (uint)sb->m_nodes.size();
+	uint nf = (uint)sb->m_faces.size();
+
+	data.num_vertices = nv;
+	data.num_indices = nf * 3;
+	data.positions = Alloc(vec3, nv);
+	data.normals = Alloc(vec3, nv);
+	data.uvs = Alloc(vec2, nv);
+	data.indices = Alloc(uint, nf * 3);
+
+	for (uint i = 0; i < nv; i++)
+	{
+		const btVector3& p = sb->m_nodes[i].m_x;
+		data.positions[i] = vec3(p.x(), p.y(), p.z());
+		data.normals[i] = vec3(0.f);
+		float u = cols > 1 ? (float)(i % (uint)cols) / (float)(cols - 1) : 0.f;
+		float v = (cols > 0 && rows > 1) ? (float)(i / (uint)cols) / (float)(rows - 1) : 0.f;
+		data.uvs[i] = vec2(u, v);
+	}
+
+	for (uint i = 0; i < nf; i++)
+	{
+		const btSoftBody::Face& f = sb->m_faces[i];
+		const btSoftBody::Node* base = &sb->m_nodes[0];
+		uint a = (uint)(f.m_n[0] - base);
+		uint b = (uint)(f.m_n[1] - base);
+		uint c = (uint)(f.m_n[2] - base);
+		data.indices[i * 3 + 0] = a;
+		data.indices[i * 3 + 1] = b;
+		data.indices[i * 3 + 2] = c;
+
+		vec3 n = cross(data.positions[b] - data.positions[a],
+		               data.positions[c] - data.positions[a]);
+		data.normals[a] += n;
+		data.normals[b] += n;
+		data.normals[c] += n;
+	}
+
+	for (uint i = 0; i < nv; i++)
+	{
+		float l = length(data.normals[i]);
+		data.normals[i] = l > .0001f ? data.normals[i] / l : vec3(0, 1, 0);
+	}
+
+	return data;
+}
+
+// built after finish() so the soft meshes are the tail of the static buffer and
+// can be replaced in place each frame
+void physics_build_soft_meshes(Scene* s, GameRenderer* renderer)
+{
+	physics_soft_view = {};
+	DrawBuffer& buffer = renderer->buffer(MODE_STATIC_UV);
+	physics_soft_view.mesh_mark = buffer.num_meshes;
+	physics_soft_view.geom_mark = buffer.geom_size;
+	physics_soft_view.indx_mark = buffer.indx_size;
+
+	if (physics_controls.flag_body)
+	{
+		Mesh_Data mesh = physics_soft_mesh(physics_controls.flag_body, PHYS_FLAG_COLS, PHYS_FLAG_ROWS);
+		physics_soft_view.flag_mesh = renderer->add_mesh(mesh);
+		Scene::Prop& p = s->add_prop(physics_soft_view.flag_mesh, vec3(0), 0, 1.f);
+		p.mat_a = vec4(.55f, .15f, .13f, 0.f);
+		p.mat_b = vec4(.86f, 1.f, 2.f, 0.f);
+	}
+
+	if (physics_controls.cloth_body)
+	{
+		Mesh_Data mesh = physics_soft_mesh(physics_controls.cloth_body, PHYS_CLOTH_N, PHYS_CLOTH_N);
+		physics_soft_view.cloth_mesh = renderer->add_mesh(mesh);
+		Scene::Prop& p = s->add_prop(physics_soft_view.cloth_mesh, vec3(0), 0, 1.f);
+		p.mat_a = vec4(.42f, .37f, .29f, 0.f);
+		p.mat_b = vec4(.94f, 1.f, 2.f, 0.f);
+	}
+
+	if (physics_controls.curtain_body)
+	{
+		Mesh_Data mesh = physics_soft_mesh(physics_controls.curtain_body, PHYS_CURTAIN_N, PHYS_CURTAIN_N);
+		physics_soft_view.curtain_mesh = renderer->add_mesh(mesh);
+		Scene::Prop& p = s->add_prop(physics_soft_view.curtain_mesh, vec3(0), 0, 1.f);
+		p.mat_a = vec4(.24f, .34f, .30f, 0.f);
+		p.mat_b = vec4(.96f, 1.f, 2.f, 0.f);
+	}
+}
+
+void physics_update_soft_meshes(GameRenderer* renderer)
+{
+	if (!physics_soft_view.flag_mesh && !physics_soft_view.cloth_mesh &&
+	    !physics_soft_view.curtain_mesh) return;
+
+	DrawBuffer& buffer = renderer->buffer(MODE_STATIC_UV);
+	buffer.rewind(physics_soft_view.mesh_mark, physics_soft_view.geom_mark,
+	              physics_soft_view.indx_mark);
+
+	if (physics_soft_view.flag_mesh)
+	{
+		Mesh_Data mesh = physics_soft_mesh(physics_controls.flag_body, PHYS_FLAG_COLS, PHYS_FLAG_ROWS);
+		buffer.append_geometry(physics_soft_view.flag_mesh, mesh, 0);
+	}
+	if (physics_soft_view.cloth_mesh)
+	{
+		Mesh_Data mesh = physics_soft_mesh(physics_controls.cloth_body, PHYS_CLOTH_N, PHYS_CLOTH_N);
+		buffer.append_geometry(physics_soft_view.cloth_mesh, mesh, 0);
+	}
+	if (physics_soft_view.curtain_mesh)
+	{
+		Mesh_Data mesh = physics_soft_mesh(physics_controls.curtain_body, PHYS_CURTAIN_N, PHYS_CURTAIN_N);
+		buffer.append_geometry(physics_soft_view.curtain_mesh, mesh, 0);
+	}
+}
+
+// a walk-through soft curtain hanging in a doorway
+void physics_add_curtain(Scene* s, uint cube_mesh)
+{
+	vec3 centre = vec3(18.1f, 0.f, -33.f);
+	float half_w = 1.1f;
+	float top = 3.15f;
+	float bottom = .35f;
+
+	for (int i = -1; i <= 1; i += 2)
+	{
+		vec3 at = centre + vec3((float)i * (half_w + .18f), 1.55f, 0.f);
+		Scene::Prop& post = s->add_prop(cube_mesh, at, 0, vec3(.18f, 3.1f, .18f));
+		post.mat_a = vec4(.20f, .21f, .22f, .40f);
+		post.mat_b = vec4(.58f, 1.f, 0.f, 0.f);
+		post.phys_id = s->phys.add_box(at, vec3(.09f, 1.55f, .09f), 0);
+	}
+
+	vec3 bar_at = centre + vec3(0.f, 3.18f, 0.f);
+	Scene::Prop& bar = s->add_prop(cube_mesh, bar_at, 0, vec3(2.6f, .14f, .14f));
+	bar.mat_a = vec4(.20f, .21f, .22f, .40f);
+	bar.mat_b = vec4(.58f, 1.f, 0.f, 0.f);
+	bar.phys_id = s->phys.add_box(bar_at, vec3(1.3f, .07f, .07f), 0);
+
+	btVector3 c00(centre.x - half_w, top, centre.z);
+	btVector3 c10(centre.x + half_w, top, centre.z);
+	btVector3 c01(centre.x - half_w, bottom, centre.z);
+	btVector3 c11(centre.x + half_w, bottom, centre.z);
+
+	btSoftBody* sb = s->phys.add_soft_patch(c00, c10, c01, c11,
+	                                        PHYS_CURTAIN_N, PHYS_CURTAIN_N, 1.2f);
+	physics_controls.curtain_body = sb;
+	if (!sb) return;
+
+	for (int x = 0; x < PHYS_CURTAIN_N; x++)
+		sb->setMass(x, 0.f); // top edge, hanging from the bar
 }
 
 // ---- physics : one labelled station per rigid-body test
@@ -1681,10 +1793,11 @@ void scene_physics(Scene* s, GameRenderer* renderer)
 	physics_default_settings();
 
 	s->begin(renderer, vec3(0, 3.f, 14.f), -PI / 2, -0.16f, 80.f, 40.f);
+	s->shadow_extent = 35.f;
 	s->use_lighting(LIGHT_NOON);
 
 	// shared meshes : every station draws from this small set
-	uint cube_mesh     = renderer->add_mesh(MeshFactory::generate_cube(1.f), "assets/textures/checker.bmp");
+	uint cube_mesh     = renderer->add_mesh(MeshFactory::generate_cube(1.f));
 	uint sphere_mesh   = renderer->add_mesh(MeshFactory::generate_uv_sphere(1.f, 24, 16));
 	uint capsule_mesh  = renderer->add_mesh(MeshFactory::generate_capsule(.5f, 1.4f, 20, 10));
 	uint cylinder_mesh = renderer->add_mesh(MeshFactory::generate_cylinder(.6f, 2.f, 24));
@@ -1697,6 +1810,20 @@ void scene_physics(Scene* s, GameRenderer* renderer)
 		Scene::Prop& sign = s->add_prop(0, PHYSICS_SIGN_AT[i], 0, 1.f);
 		snprintf(sign.label, sizeof(sign.label), "%u  %s", i + 1, PHYSICS_STATIONS[i]);
 	}
+
+	physics_add_button(s, cube_mesh, cylinder_mesh);
+	physics_add_triggers(s, cube_mesh, sphere_mesh, cone_mesh);
+	physics_add_flag(s, cube_mesh, cylinder_mesh);
+	physics_add_soft_cloth(s, cube_mesh, sphere_mesh);
+	physics_add_curtain(s, cube_mesh);
+
+	for (uint i = 0; i < PT_COUNT; i++) physics_test_state[i] = -1;
+	physics_test_clock = 0.f;
+	physics_tests_evaluated = false;
+
+	// constraints and the interaction ray are the scene's debug subject
+	s->phys.debug.constraints = true;
+	s->phys.debug.rays = true;
 
 	// shapes : one of every primitive, dropped from the same height
 	{
@@ -1714,6 +1841,7 @@ void scene_physics(Scene* s, GameRenderer* renderer)
 
 		Scene::Prop& cone = s->add_prop(cone_mesh, vec3(-8.6f, 3.f, 4.f), 0, 1.f);
 		cone.phys_id = s->phys.add_cone(cone.pos, .6f, 1.6f, 1.f);
+		physics_controls.shape_cone = cone.phys_id;
 	}
 
 	// stack : 3-2-1, rows at resting heights
@@ -1726,6 +1854,7 @@ void scene_physics(Scene* s, GameRenderer* renderer)
 	{
 		Scene::Prop& box = s->add_prop(cube_mesh, stack[i], 0, 1.f);
 		box.phys_id = s->phys.add_box(box.pos, vec3(.5f), 1.f);
+		if (i == 5) physics_controls.stack_top = box.phys_id;
 	}
 
 	// dominoes : the starter ball rolls into the first plate
@@ -1739,6 +1868,7 @@ void scene_physics(Scene* s, GameRenderer* renderer)
 		Scene::Prop& domino = s->add_prop(cube_mesh, vec3(2.4f + i * .8f, .9f, 4.f), 0,
 		                                 vec3(.12f, 1.8f, 1.f));
 		domino.phys_id = s->phys.add_box(domino.pos, vec3(.06f, .9f, .5f), .4f);
+		if (i == 5) physics_controls.domino_last = domino.phys_id;
 	}
 
 	// ragdoll : linked capsules on a platform
@@ -1780,6 +1910,7 @@ void scene_physics(Scene* s, GameRenderer* renderer)
 
 		Scene::Prop& bag = s->add_prop(cube_mesh, vec3(-7.f, 2.3f, -6.f), 0, vec3(.8f, 1.4f, .8f));
 		bag.phys_id = s->phys.add_box(bag.pos, vec3(.4f, .7f, .4f), 5.f);
+		physics_controls.bag_body = bag.phys_id;
 
 		s->phys.add_cone(*s->phys.bodies[post.phys_id].body, *s->phys.bodies[bag.phys_id].body,
 		                 joint_frame(1.f, vec3(0, 0, -PI * .5f), vec3(0, 1.5f, .6f)),
@@ -1820,6 +1951,7 @@ void scene_physics(Scene* s, GameRenderer* renderer)
 
 		Scene::Prop& plank = s->add_prop(cube_mesh, vec3(7.f, 1.06f, -6.f), 0, vec3(6.f, .12f, 1.4f));
 		plank.phys_id = s->phys.add_box(plank.pos, vec3(3.f, .06f, .7f), 4.f);
+		physics_controls.seesaw_body = plank.phys_id;
 
 		physics_controls.seesaw = s->phys.add_hinge(
 			*s->phys.bodies[pivot.phys_id].body, *s->phys.bodies[plank.phys_id].body,
@@ -1840,15 +1972,15 @@ void scene_physics(Scene* s, GameRenderer* renderer)
 		Scene::Prop& post = s->add_prop(cube_mesh, vec3(14.f, 1.5f, -6.f), 0, vec3(.3f, 3.f, .3f));
 		post.phys_id = s->phys.add_box(post.pos, vec3(.15f, 1.5f, .15f), 0);
 
-		Scene::Prop& rotor = s->add_prop(cube_mesh, vec3(15.2f, 3.1f, -6.f), 0, vec3(2.4f, .16f, .16f));
+		Scene::Prop& rotor = s->add_prop(cube_mesh, vec3(15.2f, 3.5f, -6.f), 0, vec3(2.4f, .16f, .16f));
 		rotor.phys_id = s->phys.add_box(rotor.pos, vec3(1.2f, .08f, .08f), 2.f);
 		physics_controls.rotor_body = rotor.phys_id;
 
 		physics_controls.rotor = s->phys.add_hinge(
 			*s->phys.bodies[post.phys_id].body, *s->phys.bodies[rotor.phys_id].body,
-			joint_frame(1.f, vec3(-PI * .5f, 0, 0), vec3(0, 1.6f, 0)),
+			joint_frame(1.f, vec3(-PI * .5f, 0, 0), vec3(0, 2.0f, 0)),
 			joint_frame(1.f, vec3(-PI * .5f, 0, 0), vec3(-1.2f, 0, 0)),
-			-1000.f, 1000.f, physics_controls.rotor_speed, physics_controls.rotor_impulse);
+			-PI, PI, physics_controls.rotor_speed, physics_controls.rotor_impulse, false);
 	}
 
 	// door : a motorised hinge with a real travel limit
@@ -1909,8 +2041,13 @@ void scene_physics(Scene* s, GameRenderer* renderer)
 			                  joint_frame(1.f, vec3(0), vec3(x + 9.f, -.1f, 0)),
 			                  joint_frame(1.f, vec3(0), vec3(0, 1.2f, 0)),
 			                  -PI * .99f, PI * .99f);
+			if (i == 4)
+			{
+				physics_controls.cradle_last = bob.phys_id;
+				physics_body_pos(s, bob.phys_id, &physics_controls.cradle_last_start);
+			}
 		}
-		if (first) s->phys.apply_impulse(first, vec3(6.f, 0, 0));
+		if (first) s->phys.apply_impulse(first, vec3(25.f, 0, 0));
 	}
 
 	// ramp : a sphere and a cylinder roll down the inclined plane
@@ -1921,164 +2058,275 @@ void scene_physics(Scene* s, GameRenderer* renderer)
 
 		Scene::Prop& ball = s->add_prop(sphere_mesh, vec3(-4.4f, 2.2f, -16.f), 0, .5f);
 		ball.phys_id = s->phys.add_sphere(ball.pos, .5f, 1.f);
+		physics_controls.ramp_ball = ball.phys_id;
+		physics_body_pos(s, ball.phys_id, &physics_controls.ramp_ball_start);
 
 		Scene::Prop& roller = s->add_prop(cylinder_mesh, vec3(-4.4f, 2.6f, -14.8f), 0, .5f);
 		roller.phys_id = s->phys.add_cylinder(roller.pos, vec3(.3f, .5f, .3f), 1.f);
+	}
+
+	// slider : a crate travels along a linear rail
+	{
+		Scene::Prop& rail = s->add_prop(cube_mesh, vec3(-13.5f, .55f, -27.f), 0,
+		                                vec3(5.4f, .22f, .46f));
+		rail.mat_a = vec4(.18f, .19f, .20f, .30f);
+		rail.mat_b = vec4(.58f, 1.f, 0.f, 0.f);
+		rail.phys_id = s->phys.add_box(rail.pos, vec3(2.7f, .11f, .23f), 0);
+
+		Scene::Prop& crate = s->add_prop(cube_mesh, vec3(-13.5f, 1.25f, -27.f), 0,
+		                                 vec3(.9f, .9f, .9f));
+		crate.mat_a = vec4(.52f, .34f, .20f, .05f);
+		crate.mat_b = vec4(.72f, 1.f, 0.f, 0.f);
+		crate.phys_id = s->phys.add_box(crate.pos, vec3(.45f), 1.4f);
+		physics_controls.slider_body = crate.phys_id;
+		physics_body_pos(s, crate.phys_id, &physics_controls.slider_start);
+
+		s->phys.add_slider(*s->phys.bodies[rail.phys_id].body,
+		                   *s->phys.bodies[crate.phys_id].body,
+		                   joint_frame(1.f, vec3(0), vec3(0, .70f, 0)),
+		                   joint_frame(1.f, vec3(0), vec3(0)),
+		                   -2.2f, 2.2f);
+		s->phys.apply_impulse(crate.phys_id, vec3(2.2f, 0, 0));
+	}
+
+	// fixed : a crate welded to a static anchor
+	{
+		Scene::Prop& anchor = s->add_prop(cube_mesh, vec3(-5.f, .65f, -27.f), 0,
+		                                  vec3(.9f, 1.3f, .9f));
+		anchor.mat_a = vec4(.18f, .20f, .22f, .20f);
+		anchor.mat_b = vec4(.68f, 1.f, 0.f, 0.f);
+		anchor.phys_id = s->phys.add_box(anchor.pos, vec3(.45f, .65f, .45f), 0);
+
+		Scene::Prop& crate = s->add_prop(cube_mesh, vec3(-5.f, 1.80f, -27.f), 0,
+		                                 vec3(1.1f, 1.0f, 1.1f));
+		crate.mat_a = vec4(.34f, .38f, .44f, .08f);
+		crate.mat_b = vec4(.72f, 1.f, 0.f, 0.f);
+		crate.phys_id = s->phys.add_box(crate.pos, vec3(.55f, .5f, .55f), 1.8f);
+		physics_controls.fixed_anchor = anchor.phys_id;
+		physics_controls.fixed_body = crate.phys_id;
+		physics_body_pos(s, anchor.phys_id, &physics_controls.fixed_start_a);
+		physics_body_pos(s, crate.phys_id, &physics_controls.fixed_start_b);
+
+		s->phys.add_fixed(*s->phys.bodies[anchor.phys_id].body,
+		                  *s->phys.bodies[crate.phys_id].body,
+		                  joint_frame(1.f, vec3(0), vec3(0, .65f, 0)),
+		                  joint_frame(1.f, vec3(0), vec3(0, -.5f, 0)));
+		s->phys.apply_impulse(crate.phys_id, vec3(1.2f, 0, 0));
 	}
 
 	physics_apply_settings(s);
 
 	s->player.init(renderer, &s->phys, vec3(0.f, 2.5f, 14.f), 0, 0);
 	s->finish(renderer, "physics");
+	physics_build_soft_meshes(s, renderer);
+	physics_resolve_interactive(s);
 }
 
-// ---- vehicles : the car, two ramps and things to hit
-void scene_vehicles(Scene* s, GameRenderer* renderer)
+// automated checks : run after the simulation has had time to settle. this is
+// the unit-test half of the physics scene; the stations remain inspectable.
+void physics_eval_tests(Scene* s)
 {
-	s->begin(renderer, vec3(0, 10, -18), PI / 2, -0.22f, 240.f, 120.f);
-	s->use_lighting(LIGHT_SUNSET);
+	Physics_Controls& c = physics_controls;
+	vec3 p, u;
 
-	// warm dirt floor : the grid is a developer texture
-	Scene::Prop& floor = s->props[0];
-	floor.mat_a = vec4(.16f, .13f, .10f, 0.f);
-	floor.mat_b = vec4(.92f, 1.f, 0.f, 0.f);
+	physics_test_state[PT_SHAPES] =
+		physics_body_pos(s, c.shape_cone, &p) && p.y < 2.0f && p.y > .15f ? 1 : 0;
 
-	uint plain_mesh   = renderer->add_mesh(MeshFactory::generate_cube(1.f));
-	uint checker_mesh = renderer->add_mesh(MeshFactory::generate_cube(1.f), "assets/textures/checker.bmp");
-	uint road_mesh    = renderer->add_mesh(MeshFactory::generate_plane(1.f, 1, MeshFactory::PLANE_XZ));
-	uint wheel_mesh   = renderer->add_mesh(MeshFactory::generate_cylinder(.5f, .4f, 24));
-	uint cone_mesh    = renderer->add_mesh(MeshFactory::generate_cone(.5f, 1.5f, 24));
+	physics_test_state[PT_STACK] =
+		physics_body_pos(s, c.stack_top, &p) && p.y > 1.9f ? 1 : 0;
 
-	// road, edge lines and start line
-	Scene::Prop& road = s->add_prop(road_mesh, vec3(0, .01f, 54.f), 0, vec3(12.f, 1.f, 128.f));
-	road.mat_a = vec4(.035f, .038f, .045f, 0.f);
-	road.mat_b = vec4(.48f, 1.f, 0.f, 0.f);
-	road.phys_id = s->phys.add_box(road.pos, vec3(6.f, .01f, 64.f), 0);
-	s->phys.bodies[road.phys_id].body->setFriction(1.f);
+	bool domino_down = physics_body_up(s, c.domino_last, &u) && u.y < .88f;
+	physics_test_state[PT_DOMINOES] = domino_down ? 1 : 0;
 
-	for (uint i = 0; i < 2; i++)
+	physics_test_state[PT_HINGE] =
+		physics_body_up(s, c.arm_body, &u) && u.y < .96f ? 1 : 0;
+
+	physics_test_state[PT_CONE] =
+		physics_body_pos(s, c.bag_body, &p) && p.y > 1.1f && p.y < 2.5f ? 1 : 0;
+
+	physics_test_state[PT_CHAIN] =
+		physics_body_pos(s, c.chain_end, &p) && p.y < 3.6f ? 1 : 0;
+
+	physics_test_state[PT_SEESAW] =
+		physics_body_up(s, c.seesaw_body, &u) && fabsf(u.x) > .03f ? 1 : 0;
+
+	bool rotor_moving = false;
+	if (c.rotor_body && c.rotor_body < s->phys.num_bodies &&
+	    s->phys.bodies[c.rotor_body].body)
 	{
-		float x = i ? 6.1f : -6.1f;
-		Scene::Prop& edge = s->add_prop(plain_mesh, vec3(x, .02f, 54.f), 0, vec3(.12f, .02f, 128.f));
-		edge.mat_a = vec4(.82f, .78f, .66f, 0.f);
-		edge.mat_b = vec4(.55f, 1.f, 0.f, 0.f);
+		btRigidBody* b = s->phys.bodies[c.rotor_body].body;
+		rotor_moving = b->getAngularVelocity().length() > .5f;
 	}
+	physics_test_state[PT_MOTOR] = rotor_moving ? 1 : 0;
 
-	Scene::Prop& start_line = s->add_prop(plain_mesh, vec3(0, .02f, 0.f), 0, vec3(12.f, .02f, .25f));
-	start_line.mat_a = vec4(.90f, .86f, .72f, 0.f);
-	start_line.mat_b = vec4(.55f, 1.f, 0.f, 0.f);
+	physics_test_state[PT_CCD] =
+		physics_body_pos(s, c.ccd_on, &p) && p.x < 8.85f ? 1 : 0;
 
-	// jump ramp : low edge at the start side, high edge toward the landing
-	const float tilt = .18f;
-	Scene::Prop& ramp = s->add_prop(plain_mesh, vec3(0, .38f, 40.f), 0, vec3(8.f, .4f, 6.f));
-	ramp.rot = mat3(glm::rotate(mat4(1), -tilt, vec3(1, 0, 0)));
-	ramp.phys_id = s->phys.add_box(ramp.pos, vec3(4.f, .2f, 3.f), 0, vec3(-tilt, 0, 0));
-	s->phys.bodies[ramp.phys_id].body->setFriction(1.f);
-	ramp.mat_a = vec4(.22f, .20f, .16f, 0.f);
-	ramp.mat_b = vec4(.62f, 1.f, 0.f, 0.f);
+	bool cradle_moved = false;
+	if (physics_body_pos(s, c.cradle_last, &p))
+		cradle_moved = length(p - c.cradle_last_start) > .03f;
+	physics_test_state[PT_CRADLE] = cradle_moved ? 1 : 0;
 
-	Scene::Prop& support = s->add_prop(plain_mesh, vec3(0, .36f, 42.4f), 0, vec3(8.f, .72f, .8f));
-	support.mat_a = vec4(.10f, .095f, .08f, 0.f);
-	support.mat_b = vec4(.8f, 1.f, 0.f, 0.f);
+	physics_test_state[PT_RAMP] =
+		physics_body_pos(s, c.ramp_ball, &p) &&
+		length(p - c.ramp_ball_start) > .4f ? 1 : 0;
 
-	// slalom : alternate sides after the jump
-	vec3 cone_spots[5] = {
-		vec3(-2.5f, .75f, 70.f), vec3(2.5f, .75f, 80.f), vec3(-2.5f, .75f, 90.f),
-		vec3(2.5f, .75f, 100.f), vec3(-2.5f, .75f, 108.f),
-	};
-	for (uint i = 0; i < 5; i++)
+	bool flag_moved = false, flag_pinned = false;
+	if (c.flag_body && c.flag_tip_index < c.flag_body->m_nodes.size())
 	{
-		Scene::Prop& cone = s->add_prop(cone_mesh, cone_spots[i], 0, 1.f);
-		cone.phys_id = s->phys.add_cone(cone.pos, .5f, 1.5f, .5f);
-		cone.mat_a = vec4(.90f, .32f, .04f, 0.f);
-		cone.mat_b = vec4(.52f, 1.f, 0.f, 0.f);
+		const btVector3& tip = c.flag_body->m_nodes[c.flag_tip_index].m_x;
+		flag_moved = length(vec3(tip.x(), tip.y(), tip.z()) - c.flag_tip_start) > .04f;
+
+		const btVector3& root = c.flag_body->m_nodes[0].m_x;
+		flag_pinned = length(vec3(root.x(), root.y(), root.z()) - c.flag_base_start) < .04f;
 	}
+	physics_test_state[PT_FLAGPOLE] = (flag_moved && flag_pinned) ? 1 : 0;
 
-	// a crate stack off the left edge
-	vec3 crates[3] = { vec3(-8.5f, .5f, 15.f), vec3(-9.5f, .5f, 15.8f), vec3(-9.f, 1.5f, 15.4f) };
-	for (uint i = 0; i < 3; i++)
-	{
-		Scene::Prop& crate = s->add_prop(checker_mesh, crates[i], 0, 1.f);
-		crate.phys_id = s->phys.add_box(crate.pos, vec3(.5f), 1.f);
-		crate.mat_b = vec4(.6f, 1.f, 1.f, 0.f);
-	}
+	bool ball_caught = false;
+	vec3 ball_at;
+	if (physics_body_pos(s, c.cloth_sphere, &ball_at))
+		ball_caught = ball_at.y > c.cloth_center_start.y - .60f;
+	physics_test_state[PT_CLOTH] =
+		((c.cloth_center_start.y - c.cloth_min_y) > .08f && ball_caught) ? 1 : 0;
 
-	// finish gate
-	for (uint i = 0; i < 2; i++)
-	{
-		float x = i ? 5.5f : -5.5f;
-		Scene::Prop& post = s->add_prop(checker_mesh, vec3(x, 2.f, 112.f), 0, vec3(.4f, 4.f, .4f));
-		post.phys_id = s->phys.add_box(post.pos, vec3(.2f, 2.f, .2f), 0);
-		post.mat_b = vec4(.6f, 1.f, 1.f, 0.f);
-	}
+	physics_test_state[PT_SLIDER] =
+		physics_body_pos(s, c.slider_body, &p) &&
+		fabsf(p.x - c.slider_start.x) > .20f ? 1 : 0;
 
-	Scene::Prop& beam = s->add_prop(checker_mesh, vec3(0, 4.f, 112.f), 0, vec3(11.4f, .4f, .4f));
-	beam.mat_b = vec4(.6f, 1.f, 1.f, 0.f);
+	bool fixed_ok = false;
+	vec3 a, b;
+	if (physics_body_pos(s, c.fixed_anchor, &a) &&
+	    physics_body_pos(s, c.fixed_body, &b))
+		fixed_ok = fabsf(length(b - a) - length(c.fixed_start_b - c.fixed_start_a)) < .12f;
+	physics_test_state[PT_FIXED] = fixed_ok ? 1 : 0;
 
-	// course signs
-	struct Sign { vec3 at; const char* text; };
-	const Sign signs[] = {
-		{ vec3(0, 4.f, 0.f),    "START" },
-		{ vec3(0, 5.f, 40.f),   "JUMP" },
-		{ vec3(0, 5.f, 88.f),   "SLALOM" },
-		{ vec3(0, 5.4f, 112.f), "FINISH" },
-	};
-	for (uint i = 0; i < (uint)(sizeof(signs) / sizeof(signs[0])); i++)
-	{
-		Scene::Prop& sign = s->add_prop(0, signs[i].at, 0, 1.f);
-		snprintf(sign.label, sizeof(sign.label), "%s", signs[i].text);
-	}
+	uint passed = 0;
+	for (uint i = 0; i < PT_COUNT; i++) if (physics_test_state[i] == 1) passed++;
 
-	// the car
-	if (s->phys.add_vehicle(vec3(0, 1.f, 0)))
-	{
-		Scene::Prop& chassis = s->add_prop(plain_mesh, vec3(0), 0, vec3(2.f, 1.f, 4.f));
-		chassis.phys_id = s->phys.vehicle.chassis_id;
-		chassis.mat_a = vec4(.62f, .12f, .08f, .18f);
-		chassis.mat_b = vec4(.30f, 1.f, 0.f, 0.f);
+	char msg[96];
+	snprintf(msg, sizeof(msg), "Physics tests : %u/%u passed", passed, PT_COUNT);
+	console->add_entry(msg, passed == PT_COUNT ? SUCCESS : FIXME, PHYS);
 
-		for (uint i = 0; i < 4; i++)
-		{
-			Scene::Prop& wheel = s->add_prop(wheel_mesh, vec3(0), 0, 1.f);
-			wheel.wheel_index = i;
-			wheel.mat_a = vec4(.03f, .03f, .035f, 0.f);
-			wheel.mat_b = vec4(.88f, 1.f, 0.f, 0.f);
-		}
-	}
-
-	s->player.init(renderer, &s->phys, vec3(-16.f, 2.f, -8.f), 0, 0);
-
-	// chase camera : behind the car, looking down the course
-	s->car_camera = true;
-	s->chase_distance = 6.f;
-	s->chase_height = 2.4f;
-
-	vec3 car_pos;
-	mat3 car_rot;
-	if (s->phys.vehicle.chassis_id &&
-	    s->phys.get_transform(s->phys.vehicle.chassis_id, &car_pos, &car_rot))
-	{
-		vec3 forward = car_rot[2];
-		forward.y = 0.f;
-		if (length(forward) < .01f) forward = vec3(0, 0, 1);
-		else forward = normalize(forward);
-
-		s->vehicle_view.position = car_pos - forward * s->chase_distance + vec3(0, s->chase_height, 0);
-		s->vehicle_view.front = normalize(car_pos + vec3(0, 1.f, 0) - s->vehicle_view.position);
-		s->vehicle_view.up = vec3(0, 1, 0);
-	}
-
-	s->finish(renderer, "vehicles");
+	physics_tests_evaluated = true;
 }
 
-// ---------------------------------------------------------------------------
+// per frame : player triggers, the interaction ray, and the button cap
+void scene_physics_update(Scene* s, GameWindow* window)
+{
+	Physics_Controls& c = physics_controls;
+	vec3 eye = s->player.camera.position;
+
+	physics_test_clock += window->dtime;
+
+	if (c.cloth_body && c.cloth_center_index < c.cloth_body->m_nodes.size())
+	{
+		const btVector3& cp = c.cloth_body->m_nodes[c.cloth_center_index].m_x;
+		if (cp.y() < c.cloth_min_y) c.cloth_min_y = cp.y();
+	}
+
+	if (!physics_tests_evaluated && physics_test_clock > 2.6f)
+		physics_eval_tests(s);
+
+	// motors do not wake their own bodies in Bullet, so a long-running motor
+	// would otherwise fall asleep after the default deactivation time
+	if (c.rotor_body && c.rotor_on && c.rotor_body < s->phys.num_bodies &&
+	    s->phys.bodies[c.rotor_body].body)
+		s->phys.bodies[c.rotor_body].body->activate(true);
+
+	if (c.door_body && c.door_on && c.door_body < s->phys.num_bodies &&
+	    s->phys.bodies[c.door_body].body)
+		s->phys.bodies[c.door_body].body->activate(true);
+
+	// flag wind : a gust along +z so the soft flag ripples without leaving
+	// the camera's viewing plane
+	if (c.flag_body)
+	{
+		float gust = c.flag_wind * (1.f + .18f * sinf(physics_test_clock * 2.2f));
+		c.flag_body->setWindVelocity(btVector3(0.f, c.flag_wind * .22f, gust));
+	}
+
+	for (uint i = 0; i < PHYSICS_TRIGGER_COUNT; i++)
+	{
+		const Physics_Trigger& t = PHYSICS_TRIGGERS[i];
+		float dx = eye.x - t.pos.x;
+		float dz = eye.z - t.pos.z;
+		bool on = dx * dx + dz * dz <= t.radius * t.radius &&
+		          fabsf(eye.y - 1.35f) < 2.2f;
+
+		if (on == c.trigger_on[i]) continue;
+		c.trigger_on[i] = on;
+
+		if (c.trigger_prop[i] < s->num_props)
+			s->props[c.trigger_prop[i]].mat_a = on ? ACTIVE_ON : ACTIVE_OFF;
+	}
+
+	c.button_target = false;
+	s->phys.debug.ray_active = false;
+	s->phys.debug.ray_hit = false;
+	s->phys.debug.ray_target = false;
+
+	if (!s->player.flycam && s->player.body)
+	{
+		vec3 from = s->player.camera.position + s->player.camera.front * .5f;
+		vec3 to = from + s->player.camera.front * 4.5f;
+		Physics::Phys_Ray ray = s->phys.raycast(from, to);
+
+		bool hit = ray.hit && ray.body_id != s->player.body;
+		bool target = hit && ray.body_id == c.button_body;
+
+		s->phys.debug.ray_active = true;
+		s->phys.debug.ray_hit = hit;
+		s->phys.debug.ray_target = target;
+		s->phys.debug.ray_a = from;
+		s->phys.debug.ray_b = to;
+		s->phys.debug.ray_point = ray.point;
+		c.button_target = target;
+
+		ImGuiIO& io = ImGui::GetIO();
+		bool use = window->focus_status == GAME && !io.WantCaptureKeyboard &&
+		           window->keys.E.is_pressed && !window->keys.E.was_pressed;
+
+		if (target && use) c.button_on = !c.button_on;
+	}
+
+	float press_target = c.button_on ? 1.f : 0.f;
+	c.button_press += (press_target - c.button_press) * (1.f - expf(-14.f * window->dtime));
+
+	if (c.button_prop < s->num_props)
+	{
+		Scene::Prop& cap = s->props[c.button_prop];
+		cap.pos = c.button_base + vec3(0.f, 0.f, -.055f * c.button_press);
+		cap.mat_a = c.button_on ? ACTIVE_ON : ACTIVE_OFF;
+	}
+}
+// ---- render : title, current rig, and the lab legend
+void scene_render_ux(Scene* s, GameWindow* window)
+{
+	ImDrawList* dl = ImGui::GetBackgroundDrawList();
+	float scale = window->screen_height / 1080.f;
+	float cx = window->screen_width * .5f;
+
+	ImU32 title = IM_COL32(235, 238, 243, 225);
+	ImU32 dim   = IM_COL32(170, 178, 190, 200);
+
+	const char* preset = (s->lighting_kind < LIGHT_PRESET_COUNT)
+		? LIGHTING_PRESET_NAMES[s->lighting_kind] : "-";
+
+	char sub[96];
+	snprintf(sub, sizeof(sub), "%s  |  10 materials  |  8 local lights  |  5x5 metal / roughness", preset);
+
+	hud_text_center(dl, 24.f * scale, cx, 36.f * scale, title, "RENDER");
+	hud_text_center(dl, 14.f * scale, cx, 70.f * scale, dim, sub);
+	hud_text_center(dl, 13.f * scale, cx, window->screen_height - 42.f * scale, dim,
+	                "F fly to inspect  |  T console  |  hero material + lighting under Scenes");
+}
+// ---- physics : title, counts and the controls
 // HUD helpers : scene UX draws on the background list, over the world and
 // under the console panel. all sizes scale from the 1080p design base.
-// ---------------------------------------------------------------------------
-
 ImFont* hud_font_of(float size)
 {
-	if (size >= 20.f && hud_font_big) return hud_font_big;
+	float big_at = 20.f * ImGui::GetIO().FontGlobalScale;
+	if (size >= big_at && hud_font_big) return hud_font_big;
 	if (hud_font_small) return hud_font_small;
 	return ImGui::GetFont();
 }
@@ -2120,341 +2368,111 @@ void hud_crosshair(ImDrawList* dl, float cx, float cy, float scale, ImU32 color)
 	dl->AddCircleFilled(ImVec2(cx, cy), 1.5f * scale, color);
 }
 
-// ---- hub : title, the walk/drive hint and the live vehicle or ammo readout
-void scene_hub_ux(Scene* s, GameWindow* window)
-{
-	ImDrawList* dl = ImGui::GetBackgroundDrawList();
-	float scale = window->screen_height / 1080.f;
-
-	float panel = ux_panel_visible ? ux_panel_width(window) : 0.f;
-	float cx = (window->screen_width + panel) * .5f;
-	float right = (float)window->screen_width - 48.f * scale;
-
-	ImU32 title = IM_COL32(235, 238, 243, 225);
-	ImU32 dim   = IM_COL32(170, 178, 190, 200);
-	ImU32 amber = IM_COL32(230, 184, 112, 235);
-
-	hud_text_center(dl, 26.f * scale, cx, 36.f * scale, title, "WAR EFFORT");
-	hud_text_center(dl, 14.f * scale, cx, 70.f * scale, dim, "coastal forward base");
-
-	const char* controls = s->player.flycam
-		? "WASD fly  |  mouse look  |  C drive  |  T console"
-		: s->car_camera
-		? "arrows drive  |  SPACE brake  |  C walk  |  F fly  |  T console"
-		: "WASD walk  |  C drive  |  F fly  |  T console";
-
-	hud_text_center(dl, 13.f * scale, cx, window->screen_height - 42.f * scale,
-	                dim, controls);
-
-	if (s->car_camera && !s->player.flycam)
-	{
-		float kmh = s->phys.vehicle_speed() * 3.6f;
-		const char* gear = kmh < -1.f ? "R" : fabsf(kmh) < 1.f ? "N" : "D";
-
-		char speed[32];
-		snprintf(speed, sizeof(speed), "%s  %+.0f km/h", gear, kmh);
-
-		hud_text_right(dl, 14.f * scale, right, window->screen_height - 136.f * scale,
-		               dim, "MOTOR POOL");
-		hud_text_right(dl, 30.f * scale, right, window->screen_height - 112.f * scale,
-		               amber, speed);
-	}
-	else if (!s->player.flycam && s->player.gun_mesh)
-	{
-		char ammo[32];
-		snprintf(ammo, sizeof(ammo), "%u / %u", s->player.ammo, GUN_MAG);
-
-		hud_text_right(dl, 14.f * scale, right, window->screen_height - 96.f * scale,
-		               dim, "TEST PISTOL");
-		hud_text_right(dl, 24.f * scale, right, window->screen_height - 74.f * scale,
-		               s->player.ammo ? title : IM_COL32(220, 90, 80, 235), ammo);
-
-		hud_crosshair(dl, window->screen_width * .5f, window->screen_height * .5f,
-		              scale, IM_COL32(235, 238, 243, 170));
-	}
-}
-
-// ---- weapons : crosshair, ammo, reload and hit feedback
-void scene_weapons_ux(Scene* s, GameWindow* window)
-{
-	ImDrawList* dl = ImGui::GetBackgroundDrawList();
-	ImGuiIO& io = ImGui::GetIO();
-
-	float scale = window->screen_height / 1080.f;
-	float w = (float)window->screen_width;
-	float h = (float)window->screen_height;
-	float cx = w * .5f, cy = h * .5f;
-
-	ImU32 white = IM_COL32(235, 238, 243, 235);
-	ImU32 dim   = IM_COL32(170, 178, 190, 200);
-	ImU32 amber = IM_COL32(230, 184, 112, 235);
-	ImU32 red   = IM_COL32(220, 90, 80, 235);
-
-	bool reloading = (s->player.action == GUN_RELOAD);
-	hud_crosshair(dl, cx, cy, scale, s->player.ammo == 0 ? red : (reloading ? amber : white));
-
-	// ammo : bottom right
-	char ammo[32];
-	snprintf(ammo, sizeof(ammo), "%u / %u", s->player.ammo, GUN_MAG);
-
-	float size = 34.f * scale;
-	ImVec2 extent = hud_font_of(size)->CalcTextSizeA(size, 9999.f, 0.f, ammo);
-	float right = w - 48.f * scale;
-	float y = h - extent.y - 38.f * scale;
-
-	hud_text_right(dl, size, right, y, s->player.ammo ? white : red, ammo);
-	hud_text_right(dl, 15.f * scale, right, y - 24.f * scale, dim, "TEST PISTOL");
-
-	char stats[64];
-	snprintf(stats, sizeof(stats), "HITS %u   FIRED %u", s->player.hits, s->player.fired);
-	hud_text_right(dl, 14.f * scale, right, y + extent.y + 5.f * scale, dim, stats);
-
-	// reload : a thin bar under the crosshair
-	if (reloading)
-	{
-		float t = 1.f - s->player.action_time / GUN_RELOAD_TIME;
-		if (t < 0.f) t = 0.f;
-		if (t > 1.f) t = 1.f;
-
-		float bar_w = 220.f * scale, bar_h = 4.f * scale;
-		float x = cx - bar_w * .5f;
-		float bar_y = cy + 40.f * scale;
-
-		dl->AddRectFilled(ImVec2(x, bar_y), ImVec2(x + bar_w, bar_y + bar_h), IM_COL32(0, 0, 0, 150));
-		dl->AddRectFilled(ImVec2(x, bar_y), ImVec2(x + bar_w * t, bar_y + bar_h), amber);
-		hud_text_center(dl, 14.f * scale, cx, bar_y + 8.f * scale, amber, "RELOADING");
-	}
-
-	// hit marker : a short cross when a shot finds a solid body
-	static uint  last_hits = 0;
-	static float hit_time = 0.f;
-
-	if (s->player.hits > last_hits) hit_time = .18f;
-	last_hits = s->player.hits;
-	hit_time -= io.DeltaTime;
-
-	if (hit_time > 0.f)
-	{
-		float gap = 5.f * scale, len = 9.f * scale;
-		ImU32 hit = IM_COL32(255, 236, 190, 220);
-
-		dl->AddLine(ImVec2(cx - gap - len, cy - gap - len), ImVec2(cx - gap, cy - gap), hit, 2.f * scale);
-		dl->AddLine(ImVec2(cx + gap, cy - gap), ImVec2(cx + gap + len, cy - gap - len), hit, 2.f * scale);
-		dl->AddLine(ImVec2(cx - gap - len, cy + gap + len), ImVec2(cx - gap, cy + gap), hit, 2.f * scale);
-		dl->AddLine(ImVec2(cx + gap, cy + gap), ImVec2(cx + gap + len, cy + gap + len), hit, 2.f * scale);
-	}
-
-	hud_text_center(dl, 14.f * scale, cx, h - 52.f * scale, dim,
-	                "LMB fire   |   R reload   |   N inspect   |   T console");
-}
-
-// ---- render : title, current rig, and the lab legend
-void scene_render_ux(Scene* s, GameWindow* window)
-{
-	ImDrawList* dl = ImGui::GetBackgroundDrawList();
-	float scale = window->screen_height / 1080.f;
-	float cx = window->screen_width * .5f;
-
-	ImU32 title = IM_COL32(235, 238, 243, 225);
-	ImU32 dim   = IM_COL32(170, 178, 190, 200);
-
-	const char* preset = (s->lighting_kind < LIGHT_PRESET_COUNT)
-		? LIGHTING_PRESET_NAMES[s->lighting_kind] : "-";
-
-	char sub[96];
-	snprintf(sub, sizeof(sub), "%s  |  10 materials  |  5x5 metal / roughness  |  texture vs flat", preset);
-
-	hud_text_center(dl, 24.f * scale, cx, 36.f * scale, title, "RENDER");
-	hud_text_center(dl, 14.f * scale, cx, 70.f * scale, dim, sub);
-	hud_text_center(dl, 13.f * scale, cx, window->screen_height - 42.f * scale, dim,
-	                "F fly to inspect  |  T console  |  hero material + lighting under Scenes");
-}
-
-// ---- terrain : title, seed and the generated extent
-void scene_terrain_ux(Scene* s, GameWindow* window)
-{
-	ImDrawList* dl = ImGui::GetBackgroundDrawList();
-	float scale = window->screen_height / 1080.f;
-
-	// centre on the strip the console leaves visible, not the whole window
-	float panel = ux_panel_visible ? ux_panel_width(window) : 0.f;
-	float cx = (window->screen_width + panel) * .5f;
-
-	ImU32 title = IM_COL32(235, 238, 243, 225);
-	ImU32 dim   = IM_COL32(170, 178, 190, 200);
-
-	char sub[128];
-	snprintf(sub, sizeof(sub), "seed %u  |  %d x %d  |  %.0f m  |  %.1f m relief  |  water %.1f m",
-	         s->terrain.seed, s->terrain.resolution, s->terrain.resolution, s->terrain.size,
-	         s->terrain.max_height - s->terrain.min_height, s->terrain.water_level);
-
-	hud_text_center(dl, 24.f * scale, cx, 36.f * scale, title, "TERRAIN");
-	hud_text_center(dl, 14.f * scale, cx, 70.f * scale, dim, sub);
-	hud_text_center(dl, 13.f * scale, cx, window->screen_height - 42.f * scale, dim,
-	                "WASD fly  |  mouse look  |  F walk  |  T console  |  generation under Scenes");
-}
-
-// ---- physics : title, counts and the controls
 void scene_physics_ux(Scene* s, GameWindow* window)
 {
 	ImDrawList* dl = ImGui::GetBackgroundDrawList();
 	float scale = window->screen_height / 1080.f;
-	float cx = window->screen_width * .5f;
 	float h  = (float)window->screen_height;
+
+	float panel = ux_panel_visible ? ux_panel_width(window) : 0.f;
+	float cx = (window->screen_width + panel) * .5f;
 
 	ImU32 title = IM_COL32(235, 238, 243, 225);
 	ImU32 dim   = IM_COL32(170, 178, 190, 200);
+	ImU32 amber = IM_COL32(230, 184, 112, 235);
 
-	char bodies[64];
-	snprintf(bodies, sizeof(bodies), "%u bodies  |  %u joints",
-	         s->phys.num_bodies ? s->phys.num_bodies - 1 : 0, s->phys.num_joints);
+	uint active = 0;
+	for (uint i = 0; i < PHYSICS_TRIGGER_COUNT; i++)
+		if (physics_controls.trigger_on[i]) active++;
+
+	char bodies[96];
+	snprintf(bodies, sizeof(bodies), "%u bodies  |  %u joints  |  %u/%u triggers  |  button %s",
+	         s->phys.num_bodies ? s->phys.num_bodies - 1 : 0, s->phys.num_joints,
+	         active, PHYSICS_TRIGGER_COUNT, physics_controls.button_on ? "ON" : "OFF");
+
+	uint passed = 0, failed = 0;
+	for (uint i = 0; i < PT_COUNT; i++)
+	{
+		if (physics_test_state[i] == 1) passed++;
+		else if (physics_test_state[i] == 0) failed++;
+	}
+
+	char tests[96];
+	if (!physics_tests_evaluated)
+		snprintf(tests, sizeof(tests), "unit tests running ...");
+	else
+		snprintf(tests, sizeof(tests), "unit tests %u/%u passed%s",
+		         passed, PT_COUNT, failed ? "  |  some failed" : "  |  all green");
 
 	hud_text_center(dl, 24.f * scale, cx, 36.f * scale, title, "PHYSICS");
 	hud_text_center(dl, 14.f * scale, cx, 70.f * scale, dim, bodies);
+	hud_text_center(dl, 13.f * scale, cx, 94.f * scale,
+	                failed ? IM_COL32(235, 145, 120, 230) : dim, tests);
+
+	if (!s->player.flycam)
+	{
+		hud_crosshair(dl, cx, h * .5f, scale,
+		              physics_controls.button_target ? amber : IM_COL32(180, 188, 200, 95));
+
+		if (physics_controls.button_target)
+			hud_text_center(dl, 16.f * scale, cx, h * .5f + 42.f * scale, amber,
+			                physics_controls.button_on ? "E  RELEASE" : "E  PRESS");
+	}
+
 	hud_text_center(dl, 13.f * scale, cx, h - 42.f * scale, dim,
-	                "WASD move  |  SHIFT sprint  |  SPACE jump  |  F flycam  |  T console  |  walk into a station");
+	                "WASD move  |  SHIFT sprint  |  SPACE jump  |  E use  |  F flycam  |  T console  |  touch red shapes");
 }
-
-// ---- vehicles : speed readout
-void scene_vehicles_ux(Scene* s, GameWindow* window)
+// global day/night control : presets set the clock, the slider moves it, and
+// animate advances it. a static lighting preset turns the cycle back off
+void scene_day_cycle_ui(Scene* s)
 {
-	ImDrawList* dl = ImGui::GetBackgroundDrawList();
-	float scale = window->screen_height / 1080.f;
-	float cx = window->screen_width * .5f;
-	float w = (float)window->screen_width;
-	float h = (float)window->screen_height;
+	if (ImGui::Checkbox("day cycle", &s->cycle))
+	{
+		if (s->cycle) s->lighting = lighting_from_time(s->time_of_day);
+		else          s->cycle_playing = false;
+	}
 
-	ImU32 white = IM_COL32(235, 238, 243, 235);
-	ImU32 dim   = IM_COL32(170, 178, 190, 200);
-	ImU32 amber = IM_COL32(230, 184, 112, 235);
-	ImU32 red   = IM_COL32(220, 90, 80, 235);
+	float time = s->time_of_day;
+	if (ImGui::SliderFloat("time of day", &time, 0.f, 24.f, "%.2f h"))
+		s->use_time(time);
 
-	float kmh = s->phys.vehicle_speed() * 3.6f;
-	float abs_kmh = kmh < 0.f ? -kmh : kmh;
-	const char* gear = kmh < -1.f ? "R" : abs_kmh < 1.f ? "N" : "D";
+	if (ImGui::Checkbox("animate", &s->cycle_playing) && s->cycle_playing)
+		s->cycle = true;
 
-	char speed[32];
-	snprintf(speed, sizeof(speed), "%s  %+.0f km/h", gear, kmh);
+	if (s->cycle_playing)
+	{
+		ImGui::SameLine();
+		ImGui::SetNextItemWidth(120.f);
+		ImGui::DragFloat("speed", &s->time_speed, .01f, .01f, 2.f, "%.2f h/s");
+	}
 
-	float z = s->phys.get_position(s->phys.vehicle.chassis_id).z;
-	const char* section = z < 30.f ? "START" : z < 55.f ? "JUMP" : z < 108.f ? "SLALOM" : "FINISH";
+	struct Time_Preset { const char* name; float hours; };
+	const Time_Preset presets[] = {
+		{ "dawn", 6.f }, { "morning", 9.f }, { "noon", 12.f },
+		{ "afternoon", 15.f }, { "sunset", 18.2f }, { "dusk", 20.f }, { "night", 23.f },
+	};
 
-	char info[80];
-	snprintf(info, sizeof(info), "%s   |   steer %+.0f deg",
-	         s->player.flycam ? "FREE" : "CHASE", s->phys.vehicle_steer() * 180.f / PI);
+	for (uint i = 0; i < 7; i++)
+	{
+		if (i) ImGui::SameLine();
+		if (ImGui::SmallButton(presets[i].name)) s->use_time(presets[i].hours);
+	}
 
-	hud_text_center(dl, 24.f * scale, cx, 36.f * scale, white, "VEHICLES");
-	hud_text_center(dl, 14.f * scale, cx, 70.f * scale, dim, section);
-
-	float right = w - 48.f * scale;
-	float bar_w = 240.f * scale;
-	float bar_h = 4.f * scale;
-	float bar_x = right - bar_w;
-	float bar_y = h - 92.f * scale;
-	float t = abs_kmh / 160.f;
-	if (t > 1.f) t = 1.f;
-
-	dl->AddRectFilled(ImVec2(bar_x, bar_y), ImVec2(bar_x + bar_w, bar_y + bar_h),
-	                  IM_COL32(30, 34, 40, 180));
-	dl->AddRectFilled(ImVec2(bar_x, bar_y), ImVec2(bar_x + bar_w * t, bar_y + bar_h),
-	                  abs_kmh > 120.f ? red : amber);
-
-	hud_text_right(dl, 34.f * scale, right, h - 136.f * scale, white, speed);
-	hud_text_right(dl, 14.f * scale, right, h - 80.f * scale, dim, info);
-	hud_text_right(dl, 13.f * scale, right, h - 40.f * scale, dim,
-	               "up/down drive  |  left/right steer  |  SPACE handbrake  |  F camera  |  T console");
+	if (s->cycle)
+	{
+		float sun_elev = asinf(fminf(fmaxf(-s->lighting.sun_direction.y, -1.f), 1.f)) * 180.f / PI;
+		float moon_elev = asinf(fminf(fmaxf(-s->lighting.moon_direction.y, -1.f), 1.f)) * 180.f / PI;
+		ImGui::Text("%s  |  sun %+.0f deg  |  moon %+.0f deg",
+		            s->cycle_playing ? "advancing" : "held", sun_elev, moon_elev);
+		ImGui::TextDisabled("the cycle overrides the static lighting preset");
+	}
+	else
+		ImGui::TextDisabled("static preset : move the slider or pick a time to start the cycle");
 }
-
-// ---------------------------------------------------------------------------
-// Scene debug : drawn inside the Scenes tab, for the active scene
-// ---------------------------------------------------------------------------
 
 void scene_labels_checkbox(Scene* s)
 {
 	ImGui::Checkbox("world labels", &s->show_labels);
-}
-
-void scene_hub_debug(Scene* s)
-{
-	ImGui::Text("island %d x %d   yard %.1f m   sea %u x %u tiles",
-	            s->terrain.resolution, s->terrain.resolution, hub_view.plateau,
-	            WATER_TILES, WATER_TILES);
-
-	if (ImGui::Button("reset props")) s->phys.reset_all();
-	ImGui::SameLine();
-	scene_labels_checkbox(s);
-
-	bool drive = s->car_camera;
-	if (ImGui::Checkbox("drive the car", &drive))
-	{
-		s->car_camera = drive;
-		if (drive)
-		{
-			s->player.flycam = false;
-			hub_seat_camera(s);
-		}
-	}
-	ImGui::TextDisabled("C does the same from the world");
-
-	ImGui::Separator();
-	ImGui::TextDisabled("sea (live)");
-	if (ImGui::BeginTable("hub_sea_presets", 3, ImGuiTableFlags_SizingStretchSame))
-	{
-		for (uint i = 0; i < WATER_PRESET_COUNT; i++)
-		{
-			ImGui::TableNextColumn();
-			if (ImGui::Button(WATER_PRESETS[i].name, ImVec2(-1, 0)))
-			{
-				water_apply_preset(&water_config, i);
-				s->water_spectrum = true;
-				s->water_dirty = true;
-			}
-		}
-		ImGui::EndTable();
-	}
-
-	if (ImGui::SliderFloat("wind", &water_config.wind_speed, 1.f, 20.f, "%.1f m/s"))
-	{
-		s->water_spectrum = true;
-		s->water_dirty = true;
-	}
-	if (ImGui::SliderFloat("wave height", &water_config.amplitude, .05f, 2.5f, "%.2f m"))
-	{
-		s->water_spectrum = true;
-		s->water_dirty = true;
-	}
-	if (ImGui::SliderFloat("foam", &water_config.foam, 0.f, 1.f, "%.2f"))
-		s->water_dirty = true;
-
-	ImGui::Separator();
-	ImGui::TextDisabled("cistern");
-	if (ImGui::Button("drop"))
-		shallow_drop(&s->shallow, 0.f, 0.f, shallow_config.drop_strength);
-	ImGui::SameLine();
-	ImGui::Checkbox("rain", &s->shallow.rain);
-	ImGui::SameLine();
-	ImGui::Checkbox("pause", &s->shallow.paused);
-
-	ImGui::Separator();
-	ImGui::TextDisabled("lighting");
-	int preset = (int)s->lighting_kind;
-	if (ImGui::Combo("preset", &preset, LIGHTING_PRESET_NAMES, LIGHT_PRESET_COUNT))
-		s->use_lighting((uint)preset);
-	ImGui::SameLine();
-	if (ImGui::Button("reset")) hub_apply_lighting(s);
-}
-
-void scene_weapons_debug(Scene* s)
-{
-	ImGui::Text("%u / %u rounds   %u fired   %u hits",
-	            s->player.ammo, GUN_MAG, s->player.fired, s->player.hits);
-
-	if (ImGui::Button("reset range")) s->phys.reset_all();
-	ImGui::SameLine();
-	if (ImGui::Button("clear bullets"))
-		for (uint i = 0; i < MAX_BULLETS; i++) s->player.bullets[i].life = 0;
-	ImGui::SameLine();
-	scene_labels_checkbox(s);
 }
 
 void scene_render_debug(Scene* s)
@@ -2466,6 +2484,10 @@ void scene_render_debug(Scene* s)
 	if (ImGui::Button("reset lighting")) s->lighting = lighting_preset(s->lighting_kind);
 	ImGui::SameLine();
 	scene_labels_checkbox(s);
+
+	ImGui::Checkbox("local light volumes", &s->local_lights);
+	ImGui::SameLine();
+	ImGui::TextDisabled("%u lights", s->num_lights);
 
 	ImGui::Separator();
 	ImGui::TextDisabled("hero sphere (right)");
@@ -2527,6 +2549,8 @@ void scene_render_debug(Scene* s)
 	ImGui::Separator();
 	ImGui::TextDisabled("image");
 	ImGui::SliderFloat("exposure", &s->lighting.exposure, .2f, 3.f);
+	ImGui::SliderFloat("contrast", &s->lighting.contrast, .80f, 1.30f, "%.3f");
+	ImGui::SliderFloat("saturation", &s->lighting.saturation, .70f, 1.40f, "%.3f");
 	ImGui::SliderFloat("fog", &s->lighting.fog_density, 0.f, .03f, "%.4f");
 	ImGui::SliderFloat("ambient occlusion", &s->lighting.ao_strength, 0.f, 3.f);
 	ImGui::SliderFloat("multiscatter", &s->lighting.multiscatter, 0.f, 1.f);
@@ -2650,7 +2674,7 @@ void scene_water_debug(Scene* s)
 	float gloss = 1.f - water_config.roughness;
 	if (ImGui::SliderFloat("water gloss", &gloss, 0.f, 1.f, "%.2f"))
 		water_config.roughness = 1.f - gloss;
-	ImGui::SliderFloat("metallic", &water_config.metallic, 0.f, 1.f);
+	ImGui::SliderFloat("subsurface", &water_config.sss, 0.f, 2.f, "%.2f");
 	ImGui::ColorEdit3("foam colour", &water_config.foam_albedo.x);
 	float foam_gloss = 1.f - water_config.foam_roughness;
 	if (ImGui::SliderFloat("foam gloss", &foam_gloss, 0.f, 1.f, "%.2f"))
@@ -2703,7 +2727,7 @@ void scene_shallow_debug(Scene* s)
 	float gloss = 1.f - shallow_config.roughness;
 	if (ImGui::SliderFloat("water gloss", &gloss, 0.f, 1.f, "%.2f"))
 		shallow_config.roughness = 1.f - gloss;
-	ImGui::SliderFloat("metallic", &shallow_config.metallic, 0.f, 1.f);
+	ImGui::SliderFloat("subsurface", &shallow_config.sss, 0.f, 2.f, "%.2f");
 	shallow_apply_material(s);
 
 	ImGui::Separator();
@@ -2715,182 +2739,163 @@ void scene_shallow_debug(Scene* s)
 	if (ImGui::Button("reset lighting")) s->lighting = lighting_preset(s->lighting_kind);
 }
 
-// live band materials : the meshes are baked, but colour and roughness are per prop
-void terrain_apply_materials(Scene* s)
+void physics_view_station(Scene* s, uint station)
 {
-	for (uint band = 0; band < TERRAIN_BAND_COUNT; band++)
-	{
-		uint at = terrain_view.prop[band];
-		if (at >= s->num_props) continue;
-		terrain_band_material(terrain_config, band, &s->props[at].mat_a, &s->props[at].mat_b);
-	}
-}
+	if (station >= PST_COUNT) return;
 
-void scene_terrain_debug(Scene* s)
-{
-	ImGui::Text("seed %u   %d x %d   %.0f m   %.1f..%.1f m   water %.1f m",
-	            s->terrain.seed, s->terrain.resolution, s->terrain.resolution,
-	            s->terrain.size, s->terrain.min_height, s->terrain.max_height,
-	            s->terrain.water_level);
+	vec3 at = PHYSICS_SIGN_AT[station];
+	vec3 pos = at + vec3(0.f, 2.2f, 7.f);
+	vec3 dir = at - pos;
+	if (length(dir) < .01f) dir = vec3(0, 0, -1);
+	dir = normalize(dir);
 
-	if (ImGui::Button("rebuild now")) s->terrain_rebuild = true;
-	ImGui::SameLine();
-	if (ImGui::Button("random seed"))
-	{
-		terrain_config.seed = (uint)(ImGui::GetTime() * 100000.0);
-		s->terrain_rebuild = true;
-	}
-	ImGui::SameLine();
-	scene_labels_checkbox(s);
-
-	ImGui::Separator();
-	ImGui::TextDisabled("generation (live)");
-	int seed = (int)terrain_config.seed;
-	if (ImGui::DragInt("seed", &seed, 1, 0, 1000000))
-	{
-		terrain_config.seed = (uint)seed;
-		s->terrain_rebuild = true;
-	}
-	int res = terrain_config.resolution;
-	if (ImGui::SliderInt("resolution", &res, 33, (int)TERRAIN_MAX_N))
-	{
-		terrain_config.resolution = res;
-		s->terrain_rebuild = true;
-	}
-	if (ImGui::SliderFloat("size", &terrain_config.size, 64.f, 128.f, "%.0f m"))
-		s->terrain_rebuild = true;
-	if (ImGui::SliderFloat("relief", &terrain_config.height, 2.f, 30.f, "%.0f m"))
-		s->terrain_rebuild = true;
-	if (ImGui::SliderInt("octaves", &terrain_config.octaves, 1, 8))
-		s->terrain_rebuild = true;
-	if (ImGui::SliderFloat("frequency", &terrain_config.frequency, .002f, .06f, "%.3f"))
-		s->terrain_rebuild = true;
-	if (ImGui::SliderFloat("lacunarity", &terrain_config.lacunarity, 1.5f, 3.f, "%.1f"))
-		s->terrain_rebuild = true;
-	if (ImGui::SliderFloat("gain", &terrain_config.gain, .3f, .7f, "%.2f"))
-		s->terrain_rebuild = true;
-
-	ImGui::Separator();
-	ImGui::TextDisabled("strata (live)");
-	float water_pct = terrain_config.water_at * 100.f;
-	if (ImGui::SliderFloat("water", &water_pct, 0.f, 95.f, "%.0f%%"))
-	{
-		terrain_config.water_at = water_pct / 100.f;
-		s->terrain_rebuild = true;
-	}
-	float sand_pct = terrain_config.sand_at * 100.f;
-	if (ImGui::SliderFloat("sand", &sand_pct, 0.f, 95.f, "%.0f%%"))
-	{
-		terrain_config.sand_at = sand_pct / 100.f;
-		s->terrain_rebuild = true;
-	}
-	float grass_pct = terrain_config.grass_at * 100.f;
-	if (ImGui::SliderFloat("grass", &grass_pct, 0.f, 100.f, "%.0f%%"))
-	{
-		terrain_config.grass_at = grass_pct / 100.f;
-		s->terrain_rebuild = true;
-	}
-	float rock_pct = terrain_config.rock_at * 100.f;
-	if (ImGui::SliderFloat("rock", &rock_pct, 0.f, 100.f, "%.0f%%"))
-	{
-		terrain_config.rock_at = rock_pct / 100.f;
-		s->terrain_rebuild = true;
-	}
-	ImGui::TextDisabled("above rock : snow");
-
-	ImGui::Separator();
-	ImGui::TextDisabled("strata material (live)");
-
-	const char* band_names[TERRAIN_BAND_COUNT] = { "water", "sand", "grass", "rock", "snow" };
-	vec3*  band_colors[TERRAIN_BAND_COUNT] = {
-		&terrain_config.water_albedo, &terrain_config.sand_albedo,
-		&terrain_config.grass_albedo, &terrain_config.rock_albedo,
-		&terrain_config.snow_albedo };
-	float* band_roughs[TERRAIN_BAND_COUNT] = {
-		&terrain_config.water_roughness, &terrain_config.sand_roughness,
-		&terrain_config.grass_roughness, &terrain_config.rock_roughness,
-		&terrain_config.snow_roughness };
-
-	if (ImGui::BeginTable("terrain_strata", 3, ImGuiTableFlags_SizingFixedFit))
-	{
-		ImGui::TableSetupColumn("band");
-		ImGui::TableSetupColumn("albedo");
-		ImGui::TableSetupColumn("rough");
-		ImGui::TableHeadersRow();
-
-		for (uint i = 0; i < TERRAIN_BAND_COUNT; i++)
-		{
-			ImGui::PushID((int)i);
-			ImGui::TableNextRow();
-			ImGui::TableNextColumn();
-			ImGui::TextUnformatted(band_names[i]);
-			ImGui::TableNextColumn();
-			ImGui::SetNextItemWidth(-1);
-			ImGui::ColorEdit3("##albedo", &band_colors[i]->x,
-			                  ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel);
-			ImGui::TableNextColumn();
-			ImGui::SetNextItemWidth(-1);
-			ImGui::SliderFloat("##roughness", band_roughs[i], 0.f, 1.f, "%.2f");
-			ImGui::PopID();
-		}
-		ImGui::EndTable();
-	}
-
-	terrain_apply_materials(s);
-
-	ImGui::Separator();
-	ImGui::TextDisabled("lighting");
-	int preset = (int)s->lighting_kind;
-	if (ImGui::Combo("preset", &preset, LIGHTING_PRESET_NAMES, LIGHT_PRESET_COUNT))
-		s->use_lighting((uint)preset);
-	ImGui::SameLine();
-	if (ImGui::Button("reset lighting")) s->lighting = lighting_preset(s->lighting_kind);
+	s->player.flycam = true;
+	s->camera.position = pos;
+	s->camera.yaw = atan2f(dir.x, dir.z);
+	s->camera.pitch = asinf(fmaxf(-1.f, fminf(1.f, dir.y)));
+	s->camera.update_dir(0.f, 0.f, 0.f);
 }
 
 void scene_physics_debug(Scene* s)
 {
-	if (ImGui::Button("wake all")) s->phys.wake_all();
-	ImGui::SameLine();
-	if (ImGui::Button("reset all")) s->phys.reset_all();
-	ImGui::SameLine();
-	scene_labels_checkbox(s);
-
-	ImGui::Separator();
-	if (ImGui::Button("kick everything"))
+	uint passed = 0, failed = 0;
+	for (uint i = 0; i < PT_COUNT; i++)
 	{
-		for (uint i = 1; i < s->phys.num_bodies; i++)
-			if (i != s->player.body && s->phys.is_dynamic(i))
-				s->phys.apply_impulse(i, vec3(1.5f, 0, 0));
-	}
-	ImGui::SameLine();
-	if (ImGui::Button("raycast"))
-	{
-		Camera& view = s->player.flycam ? s->camera : s->player.camera;
-		vec3 from = view.position + view.front * .5f; // clear of the player capsule
-		Physics::Phys_Ray hit = s->phys.raycast(from, from + view.front * 50.f);
-
-		char msg[96];
-		if (hit.hit)
-			snprintf(msg, sizeof(msg), "Ray hit body %u at %.1f, %.1f, %.1f",
-			         hit.body_id, hit.point.x, hit.point.y, hit.point.z);
-		else
-			snprintf(msg, sizeof(msg), "Ray missed");
-		console->add_entry(msg, hit.hit ? SUCCESS : DEBUG, PHYS);
+		if (physics_test_state[i] == 1) passed++;
+		else if (physics_test_state[i] == 0) failed++;
 	}
 
-	ImGui::Separator();
-	ImGui::TextDisabled("stations");
-	if (ImGui::BeginTable("physics_stations", 3, ImGuiTableFlags_SizingStretchSame))
+	if (!physics_tests_evaluated)
+		ImGui::TextColored(ImVec4(.62f, .64f, .68f, 1.f), "tests running ...");
+	else
+		ImGui::TextColored(failed ? ImVec4(.95f, .45f, .35f, 1.f)
+		                          : ImVec4(.45f, .85f, .55f, 1.f),
+		                   "tests %u/%u passed", passed, PT_COUNT);
+
+	ImGui::SameLine();
+	if (ImGui::Button("rerun tests")) s->reload_requested = true;
+
+	if (ImGui::CollapsingHeader("actions", ImGuiTreeNodeFlags_DefaultOpen))
 	{
-		for (uint i = 0; i < PST_COUNT; i++)
+		if (ImGui::Button("wake all")) s->phys.wake_all();
+		ImGui::SameLine();
+		if (ImGui::Button("reset all")) s->phys.reset_all();
+		ImGui::SameLine();
+		if (ImGui::Button("kick everything"))
 		{
-			ImGui::TableNextColumn();
-			station_label(i);
+			for (uint i = 1; i < s->phys.num_bodies; i++)
+				if (i != s->player.body && s->phys.is_dynamic(i))
+					s->phys.apply_impulse(i, vec3(1.5f, 0, 0));
 		}
-		ImGui::EndTable();
+		ImGui::SameLine();
+		scene_labels_checkbox(s);
+
+		if (ImGui::Button("raycast"))
+		{
+			Camera& view = s->player.flycam ? s->camera : s->player.camera;
+			vec3 from = view.position + view.front * .5f;
+			Physics::Phys_Ray hit = s->phys.raycast(from, from + view.front * 50.f);
+
+			char msg[96];
+			if (hit.hit)
+				snprintf(msg, sizeof(msg), "Ray hit body %u at %.1f, %.1f, %.1f",
+				         hit.body_id, hit.point.x, hit.point.y, hit.point.z);
+			else
+				snprintf(msg, sizeof(msg), "Ray missed");
+			console->add_entry(msg, hit.hit ? SUCCESS : DEBUG, PHYS);
+		}
 	}
 
-	ImGui::Separator();
+	if (ImGui::CollapsingHeader("unit tests", ImGuiTreeNodeFlags_DefaultOpen))
+	{
+		if (ImGui::BeginTable("physics_tests", 2, ImGuiTableFlags_SizingStretchSame))
+		{
+			for (uint i = 0; i < PT_COUNT; i++)
+			{
+				int state = physics_test_state[i];
+				ImVec4 col = state == 1 ? ImVec4(.45f, .85f, .55f, 1.f)
+				           : state == 0 ? ImVec4(.95f, .45f, .35f, 1.f)
+				                        : ImVec4(.62f, .64f, .68f, 1.f);
+				ImGui::TableNextColumn();
+				ImGui::TextColored(col, "%s  %s", state == 1 ? "PASS" :
+				                   state == 0 ? "FAIL" : "....",
+				                   PHYSICS_TEST_NAMES[i]);
+			}
+			ImGui::EndTable();
+		}
+	}
+
+	if (ImGui::CollapsingHeader("stations / jump"))
+	{
+		if (ImGui::BeginTable("physics_stations", 4, ImGuiTableFlags_SizingStretchSame))
+		{
+			for (uint i = 0; i < PST_COUNT; i++)
+			{
+				ImGui::TableNextColumn();
+				station_label(i);
+				ImGui::SameLine();
+				char go[16];
+				snprintf(go, sizeof(go), "go##%u", i);
+				if (ImGui::SmallButton(go))
+					physics_view_station(s, i);
+			}
+			ImGui::EndTable();
+		}
+	}
+
+	if (ImGui::CollapsingHeader("soft bodies", ImGuiTreeNodeFlags_DefaultOpen))
+	{
+		if (physics_controls.flag_body)
+		{
+			int nodes = physics_controls.flag_body->m_nodes.size();
+			int faces = physics_controls.flag_body->m_faces.size();
+			ImGui::Text("flag  %d nodes  %d faces  pinned hoist", nodes, faces);
+		}
+		if (physics_controls.cloth_body)
+		{
+			int nodes = physics_controls.cloth_body->m_nodes.size();
+			int faces = physics_controls.cloth_body->m_faces.size();
+			ImGui::Text("cloth  %d nodes  %d faces  pinned perimeter", nodes, faces);
+		}
+		if (physics_controls.curtain_body)
+		{
+			int nodes = physics_controls.curtain_body->m_nodes.size();
+			int faces = physics_controls.curtain_body->m_faces.size();
+			ImGui::Text("curtain  %d nodes  %d faces  walk-through", nodes, faces);
+		}
+		ImGui::SliderFloat("flag wind", &physics_controls.flag_wind, 0.f, 6.f, "%.1f m/s");
+		if (ImGui::Button("rebuild soft bodies")) s->reload_requested = true;
+		ImGui::SameLine();
+		if (ImGui::Button("drop cloth ball"))
+		{
+			if (physics_controls.cloth_sphere)
+			{
+				s->phys.reset(physics_controls.cloth_sphere);
+				s->phys.wake_all();
+			}
+		}
+	}
+
+	if (ImGui::CollapsingHeader("world"))
+	{
+		if (ImGui::SliderFloat("gravity", &physics_controls.gravity, 0.f, 20.f, "%.1f m/s2"))
+			s->phys.wake_all();
+		if (ImGui::SliderInt("solver iterations", &physics_controls.solver_iters, 1, 30))
+			s->phys.wake_all();
+		if (ImGui::Button("reset settings"))
+		{
+			physics_default_settings();
+			physics_apply_settings(s);
+			s->phys.wake_all();
+		}
+	}
+
+	if (!ImGui::CollapsingHeader("joint controls", ImGuiTreeNodeFlags_DefaultOpen))
+	{
+		physics_apply_settings(s);
+		return;
+	}
+
 	station_label(PST_HINGE);
 	float arm_limit_deg = physics_controls.arm_limit * 180.f / PI;
 	if (ImGui::SliderFloat("arm limit", &arm_limit_deg, 10.f, 178.f, "%.0f deg"))
@@ -2952,7 +2957,7 @@ void scene_physics_debug(Scene* s)
 		ImGui::Text("%.0f deg | target %.1f", physics_controls.rotor->getHingeAngle() * 180.f / PI,
 		            physics_controls.rotor->getMotorTargetVelocity());
 		ImGui::SliderFloat("rotor speed", &physics_controls.rotor_speed, -8.f, 8.f, "%.1f rad/s");
-		ImGui::SliderFloat("rotor impulse", &physics_controls.rotor_impulse, 0.f, 40.f, "%.1f");
+		ImGui::SliderFloat("rotor impulse", &physics_controls.rotor_impulse, 0.f, 120.f, "%.1f");
 	}
 
 	ImGui::Separator();
@@ -3009,102 +3014,15 @@ void scene_physics_debug(Scene* s)
 		if (ImGui::Button("stop door")) physics_controls.door_target = 0.f;
 	}
 
-	ImGui::Separator();
-	ImGui::TextDisabled("world");
-	if (ImGui::SliderFloat("gravity", &physics_controls.gravity, 0.f, 20.f, "%.1f m/s2"))
-		s->phys.wake_all();
-	if (ImGui::SliderInt("solver iterations", &physics_controls.solver_iters, 1, 30))
-		s->phys.wake_all();
-	if (ImGui::Button("reset settings"))
-	{
-		physics_default_settings();
-		physics_apply_settings(s);
-		s->phys.wake_all();
-	}
-
 	physics_apply_settings(s);
-
-	ImGui::Separator();
 	ImGui::TextDisabled("world signs use the same station numbers");
 }
-
-void scene_vehicles_debug(Scene* s)
-{
-	ImGui::Text("%.0f km/h   steer %+.0f deg   %s",
-	            s->phys.vehicle_speed() * 3.6f,
-	            s->phys.vehicle_steer() * 180.f / PI,
-	            s->player.flycam ? "free camera" : "chase camera");
-
-	if (ImGui::Button("reset car"))
-	{
-		if (s->phys.vehicle.chassis_id) s->phys.reset(s->phys.vehicle.chassis_id);
-	}
-	ImGui::SameLine();
-	if (ImGui::Button("reset course")) s->phys.reset_all();
-	ImGui::SameLine();
-	scene_labels_checkbox(s);
-
-	ImGui::Separator();
-	ImGui::TextDisabled("camera");
-	bool chase = !s->player.flycam;
-	if (ImGui::Checkbox("chase camera", &chase)) s->player.flycam = !chase;
-	ImGui::SliderFloat("chase distance", &s->chase_distance, 4.f, 14.f, "%.1f m");
-	ImGui::SliderFloat("chase height", &s->chase_height, 1.5f, 8.f, "%.1f m");
-
-	ImGui::Separator();
-	ImGui::TextDisabled("engine");
-	ImGui::SliderFloat("engine force", &s->phys.vehicle.engine_force, 100.f, 2000.f, "%.0f / wheel");
-	ImGui::SliderFloat("brake force", &s->phys.vehicle.brake_force, 5.f, 100.f, "%.0f");
-	ImGui::SliderFloat("coast brake", &s->phys.vehicle.coast_brake, 0.f, 20.f, "%.0f");
-	ImGui::SliderFloat("top speed", &s->phys.vehicle.top_speed, 40.f, 200.f, "%.0f km/h");
-
-	ImGui::Separator();
-	ImGui::TextDisabled("steering");
-	float steer_deg = s->phys.vehicle.steer_angle * 180.f / PI;
-	if (ImGui::SliderFloat("steer angle", &steer_deg, 10.f, 45.f, "%.0f deg"))
-		s->phys.vehicle.steer_angle = steer_deg * PI / 180.f;
-	ImGui::SliderFloat("steer rate", &s->phys.vehicle.steer_rate, 1.f, 10.f, "%.1f rad/s");
-
-	ImGui::Separator();
-	ImGui::TextDisabled("suspension and tyres");
-	ImGui::SliderFloat("wheel grip", &s->phys.vehicle.wheel_grip, .5f, 3.f, "%.2f");
-	ImGui::SliderFloat("suspension stiffness", &s->phys.vehicle.suspension_stiffness, 10.f, 100.f, "%.0f");
-	ImGui::SliderFloat("suspension damping", &s->phys.vehicle.suspension_damping, .5f, 5.f, "%.2f");
-	ImGui::SliderFloat("suspension compression", &s->phys.vehicle.suspension_compression, .5f, 8.f, "%.2f");
-	ImGui::SliderFloat("suspension travel", &s->phys.vehicle.suspension_travel, 10.f, 60.f, "%.0f cm");
-	ImGui::SliderFloat("roll influence", &s->phys.vehicle.roll_influence, 0.f, 1.f, "%.2f");
-
-	if (ImGui::Button("boost") && s->phys.vehicle.chassis_id)
-	{
-		vec3 pos;
-		mat3 rot;
-		if (s->phys.get_transform(s->phys.vehicle.chassis_id, &pos, &rot))
-		{
-			vec3 forward = rot[2];
-			forward.y = 0.f;
-			if (length(forward) > .01f)
-				s->phys.apply_impulse(s->phys.vehicle.chassis_id, normalize(forward) * 8000.f);
-		}
-	}
-
-	ImGui::Separator();
-	ImGui::TextDisabled("lighting");
-	int preset = (int)s->lighting_kind;
-	if (ImGui::Combo("preset", &preset, LIGHTING_PRESET_NAMES, LIGHT_PRESET_COUNT))
-		s->use_lighting((uint)preset);
-	ImGui::SameLine();
-	if (ImGui::Button("reset lighting")) s->lighting = lighting_preset(s->lighting_kind);
-}
-
 enum SceneKind {
-	SCENE_HUB = 0,
-	SCENE_WEAPONS,
+	SCENE_MENU = 0,
+	SCENE_PHYSICS,
 	SCENE_RENDER,
 	SCENE_WATER,
 	SCENE_SHALLOW,
-	SCENE_TERRAIN,
-	SCENE_PHYSICS,
-	SCENE_VEHICLES,
 	SCENE_KIND_COUNT
 };
 
@@ -3118,14 +3036,11 @@ struct Scene_Def
 };
 
 static const Scene_Def SCENE_DEFS[SCENE_KIND_COUNT] = {
-	{ "hub",       scene_hub,       scene_hub_ux,       scene_hub_debug },
-	{ "weapons",   scene_weapons,   scene_weapons_ux,   scene_weapons_debug },
+	{ "menu",      scene_menu,      scene_menu_ux,      scene_menu_debug },
+	{ "physics",   scene_physics,   scene_physics_ux,   scene_physics_debug },
 	{ "render",    scene_render,    scene_render_ux,    scene_render_debug },
 	{ "ocean",     scene_water,     scene_water_ux,     scene_water_debug },
 	{ "shallow",   scene_shallow,   scene_shallow_ux,   scene_shallow_debug },
-	{ "terrain",   scene_terrain,   scene_terrain_ux,   scene_terrain_debug },
-	{ "physics",   scene_physics,   scene_physics_ux,   scene_physics_debug },
-	{ "vehicles",  scene_vehicles,  scene_vehicles_ux,  scene_vehicles_debug },
 };
 
 // owns exactly one scene. a request is applied at the top of the next frame, so
@@ -3145,8 +3060,8 @@ struct SceneManager
 	void init(GameRenderer* renderer)
 	{
 		loaded = false;
-		current_kind = requested_kind = SCENE_HUB;
-		load(renderer, SCENE_HUB);
+		current_kind = requested_kind = SCENE_MENU;
+		load(renderer, SCENE_MENU);
 	}
 
 	// ask for a scene : switching happens in update(), never mid-frame
@@ -3157,35 +3072,38 @@ struct SceneManager
 
 	void update(GameWindow* window, GameRenderer* renderer)
 	{
+		bool reloading = scene.reload_requested || !loaded || requested_kind != current_kind;
+		if (reloading) window->ui_lock = false;
+
 		if (scene.reload_requested)
 			load(renderer, current_kind);
 		else if (!loaded || requested_kind != current_kind)
 			load(renderer, requested_kind);
 
-		// terrain edits rebuild the grid and collider in place, before physics steps
-		if (loaded && current_kind == SCENE_TERRAIN && scene.terrain_rebuild)
-			terrain_rebuild(&scene, renderer);
-
 		// water evolves every frame and refills its geometry before the draw pass
 		if (loaded && current_kind == SCENE_WATER)
 		{
 			water_scene_update(&scene, renderer, window->dtime);
-			water_bind_window(window);
+			water_bind_window(window, scene.water.time);
 		}
 
 		// the shallow patch steps and rebuilds its small surface every frame
 		if (loaded && current_kind == SCENE_SHALLOW)
-			shallow_scene_update(&scene, renderer, window->dtime);
-
-		// the hub runs both simulations : C swaps between walking and the car
-		if (loaded && current_kind == SCENE_HUB)
 		{
-			scene_hub_key(&scene, window);
-			hub_scene_update(&scene, renderer, window->dtime);
-			water_bind_window(window);
+			shallow_scene_update(&scene, renderer, window->dtime);
+			shallow_bind_window(window, scene.shallow.time);
 		}
 
+		// replace the soft-body geometry before instance submission : a rewind
+		// after submission would clear the instances that point at those meshes
+		if (loaded && current_kind == SCENE_PHYSICS)
+			physics_update_soft_meshes(renderer);
+
 		scene.update(window, renderer);
+
+		// the physics scene reads the finished camera for its interaction ray
+		if (loaded && current_kind == SCENE_PHYSICS)
+			scene_physics_update(&scene, window);
 	}
 
 	// unload the current scene, then build the next one from its table entry
@@ -3197,7 +3115,7 @@ struct SceneManager
 			renderer->unload_scene();
 		}
 
-		if (kind >= SCENE_KIND_COUNT || !SCENE_DEFS[kind].build) kind = SCENE_HUB;
+		if (kind >= SCENE_KIND_COUNT || !SCENE_DEFS[kind].build) kind = SCENE_MENU;
 		SCENE_DEFS[kind].build(&scene, renderer);
 
 		current_kind = requested_kind = kind;

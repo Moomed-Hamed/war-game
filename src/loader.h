@@ -5,7 +5,7 @@
  * ------------------------- */
 
 const uint MAX_FILEPATH_LENGTH = 64;
-const uint MAX_MESHES   = 32;
+const uint MAX_MESHES   = 128;
 const uint MAX_SHADERS  = 16;
 const uint MAX_TEXTURES = 16;
 
@@ -955,7 +955,15 @@ struct TextureLoader
 		unsigned char* data = stbi_load(path, &width, &height, &num_channels, 0);
 		if (data)
 		{
-			glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, data);
+			// match the upload to the file's channel count : a grayscale mask is
+			// one byte per texel, not three
+			GLint internal = GL_RGB;
+			GLenum format = GL_RGB;
+			if (num_channels == 1)      { internal = GL_R8;   format = GL_RED;  }
+			else if (num_channels == 2) { internal = GL_RG8;  format = GL_RG;   }
+			else if (num_channels == 4) { internal = GL_RGBA; format = GL_RGBA; }
+
+			glTexImage2D(GL_TEXTURE_2D, 0, internal, width, height, 0, format, GL_UNSIGNED_BYTE, data);
 			glGenerateMipmap(GL_TEXTURE_2D);
 		}
 		else
@@ -1216,6 +1224,7 @@ struct ShaderProgram
 	// WARNING : bind shader *before* calling these!
 	void set_int  (const char* name, int   value) { glUniform1i(glGetUniformLocation(id, name), value); }
 	void set_float(const char* name, float value) { glUniform1f(glGetUniformLocation(id, name), value); }
+	void set_vec2 (const char* name, vec2  value) { glUniform2f(glGetUniformLocation(id, name), value.x, value.y); }
 	void set_vec3 (const char* name, vec3  value) { glUniform3f(glGetUniformLocation(id, name), value.x, value.y, value.z); }
 	void set_mat4 (const char* name, mat4  value) { glUniformMatrix4fv(glGetUniformLocation(id, name), 1, GL_FALSE, (float*)&value); }
 };
@@ -1283,6 +1292,48 @@ namespace MeshFactory {
 
 			v += 4;
 		}
+
+		return data;
+	}
+
+	// lat-long sphere : the light volume. no uvs, the light shader only needs shape
+	Mesh_Data_NoUV generate_sphere(float radius, uint rings, uint segments)
+	{
+		Mesh_Data_NoUV data = {};
+		uint vn = (rings + 1) * (segments + 1);
+
+		data.num_vertices = vn;
+		data.num_indices  = rings * segments * 6;
+		data.positions = Alloc(vec3, vn);
+		data.normals   = Alloc(vec3, vn);
+		data.indices   = Alloc(uint, data.num_indices);
+
+		for (uint iy = 0; iy <= rings; iy++)
+		{
+			float theta = (float)iy / (float)rings * PI;
+			float y = cosf(theta), r = sinf(theta);
+
+			for (uint ix = 0; ix <= segments; ix++)
+			{
+				float phi = (float)ix / (float)segments * 2.f * PI;
+				vec3 n = vec3(r * cosf(phi), y, r * sinf(phi));
+				data.positions[iy * (segments + 1) + ix] = n * radius;
+				data.normals  [iy * (segments + 1) + ix] = n;
+			}
+		}
+
+		uint e = 0;
+		for (uint iy = 0; iy < rings; iy++)
+			for (uint ix = 0; ix < segments; ix++)
+			{
+				uint a = iy * (segments + 1) + ix;
+				uint b = a + 1;
+				uint c = a + segments + 1;
+				uint d = c + 1;
+
+				data.indices[e++] = a; data.indices[e++] = b; data.indices[e++] = c;
+				data.indices[e++] = b; data.indices[e++] = d; data.indices[e++] = c;
+			}
 
 		return data;
 	}

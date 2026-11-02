@@ -1,8 +1,10 @@
-#include "terrain.h"
+#include "player.h"
 
 /* ------------------------- *
-	-        Water          -
+	-        Fluids         -
  * ------------------------- */
+
+// ---- FFT ocean ----
 
 // cpu fft ocean : a phillips spectrum, evolved in time, then five inverse
 // transforms (height, two slopes, two horizontal displacements). the patch is
@@ -29,23 +31,23 @@ inline Water_Complex water_conj(Water_Complex a)                 { return { a.re
 struct Water_Config
 {
 	int   resolution = 128; // power of two : spectrum + render grid
-	float size       = 192.f; // metres for one patch
-	float wind_speed = 13.f;  // m/s
-	float wind_angle = .95f;  // radians
-	float amplitude  = .90f;  // rms height, metres
-	float choppiness = .90f;  // horizontal displacement scale
-	float time_scale = .90f;
-	float foam       = .55f;  // foam source amount, 0..1
-	float foam_persistence = 2.2f; // seconds a trail survives
-	float detail     = .70f;  // short-chop normal strength
+	float size       = 160.f; // metres for one patch
+	float wind_speed = 9.f;  // m/s
+	float wind_angle = .60f; // radians
+	float amplitude  = .55f; // rms height, metres
+	float choppiness = .95f; // horizontal displacement scale
+	float time_scale = .88f;
+	float foam       = .35f; // foam source amount, 0..1
+	float foam_persistence = 1.6f; // seconds a trail survives
+	float detail     = .68f; // short-chop normal strength
 	uint  seed       = 7;
 
 	// material
-	vec3  albedo        = vec3(.020f, .105f, .140f);
-	float metallic      = 0.f;
-	float roughness     = .080f;
-	vec3  foam_albedo   = vec3(.78f, .84f, .86f);
-	float foam_roughness = .55f;
+	vec3  albedo        = vec3(.020f, .160f, .185f);
+	float roughness     = .055f;
+	float sss           = .72f; // backlit crest glow
+	vec3  foam_albedo   = vec3(.80f, .87f, .89f);
+	float foam_roughness = .50f;
 };
 
 // second cascade : short wind chop, only slopes. it becomes a tiled normal map
@@ -111,6 +113,8 @@ const Water_Preset WATER_PRESETS[] = {
 	{ "glassy",  96.f,  3.f, 0.20f, 0.05f, 0.25f, 0.55f, 0.00f, 0.50f, 0.25f, 0.025f, vec3(.012f, .075f, .100f) },
 	{ "calm",   128.f,  6.f, 0.45f, 0.19f, 0.50f, 0.80f, 0.10f, 1.00f, 0.45f, 0.040f, vec3(.018f, .095f, .125f) },
 	{ "breeze", 160.f,  9.f, 0.60f, 0.43f, 0.80f, 1.00f, 0.45f, 1.80f, 0.65f, 0.060f, vec3(.022f, .120f, .155f) },
+	{ "caribbean", 160.f, 9.f, 0.60f, 0.55f, 0.95f, 0.88f, 0.35f, 1.60f, 0.68f, 0.055f, vec3(.020f, .160f, .185f) },
+	{ "lagoon", 128.f, 6.f, 0.55f, 0.18f, 0.45f, 0.80f, 0.08f, 1.00f, 0.55f, 0.035f, vec3(.030f, .220f, .230f) },
 	{ "swell",  192.f, 13.f, 0.95f, 0.90f, 0.90f, 0.90f, 0.55f, 2.20f, 0.70f, 0.080f, vec3(.020f, .105f, .140f) },
 	{ "chop",   256.f, 16.f, 1.35f, 1.37f, 1.15f, 1.10f, 0.65f, 2.50f, 0.85f, 0.100f, vec3(.018f, .090f, .125f) },
 	{ "storm",  256.f, 20.f, 2.20f, 2.14f, 1.45f, 1.20f, 0.80f, 3.00f, 1.00f, 0.130f, vec3(.012f, .055f, .075f) },
@@ -136,9 +140,7 @@ void water_apply_preset(Water_Config* c, uint index)
 	c->albedo     = p.albedo;
 }
 
-/* ------------------------- *
-	-          FFT          -
- * ------------------------- */
+// ---- FFT ----
 
 // in-place radix-2 inverse transform, scaled by 1/n
 void water_ifft(Water_Complex* a, uint n)
@@ -194,9 +196,7 @@ void water_ifft2(Water_Complex* data, uint n)
 	}
 }
 
-/* ------------------------- *
-	-       Spectrum        -
- * ------------------------- */
+// ---- spectrum ----
 
 uint water_rng(uint* state)
 {
@@ -288,9 +288,7 @@ void water_build_spectrum(Water* w, const Water_Config& c)
 	}
 }
 
-/* ------------------------- *
-	-       Simulation      -
- * ------------------------- */
+// ---- simulation ----
 
 // the centered spectrum leaves a (-1)^(x+z) modulation on the output
 void water_extract(Water* w, float* out)
@@ -357,10 +355,13 @@ bool water_update(Water* w, const Water_Config& c, float dt, bool force)
 
 				if (pass == 0)      v = h * Water_Complex{ 0.f, k.x };       // dh/dx
 				else if (pass == 1) v = h * Water_Complex{ 0.f, k.y };       // dh/dz
+				// +i, not -i : with this inverse transform's positive exponent
+				// that pushes points toward the crest, so the jacobian compresses
+				// there and the foam field forms on crests instead of troughs
 				else if (len > 1e-6f && pass == 2)
-					v = h * Water_Complex{ 0.f, -k.x / len };                // -i kx/|k| h
+					v = h * Water_Complex{ 0.f, k.x / len };                 // +i kx/|k| h
 				else if (len > 1e-6f)
-					v = h * Water_Complex{ 0.f, -k.y / len };                // -i kz/|k| h
+					v = h * Water_Complex{ 0.f, k.y / len };                 // +i kz/|k| h
 
 				w->work[i] = v;
 			}
@@ -553,9 +554,7 @@ void water_update_detail(Water_Detail* d, float time)
 	}
 }
 
-/* ------------------------- *
-	-          Mesh          -
- * ------------------------- */
+// ---- mesh ----
 
 // one water vertex : the grid is periodic, so i == n samples the seam at i == 0
 void water_mesh_vertex(const Water* w, int i, int j, Mesh_Data* mesh, uint v)
@@ -599,6 +598,281 @@ Mesh_Data water_build_mesh(const Water* w)
 			uint a = (uint)(j * vn + i);
 			uint b = a + 1;
 			uint c = a + vn;
+			uint d = c + 1;
+
+			mesh.indices[e++] = a;  mesh.indices[e++] = c; mesh.indices[e++] = b;
+			mesh.indices[e++] = b;  mesh.indices[e++] = c; mesh.indices[e++] = d;
+		}
+	}
+
+	mesh.num_vertices = num_vertices;
+	mesh.num_indices  = num_indices;
+	return mesh;
+}
+
+
+// ---- shallow water (finite difference) ----
+
+// small fd wave patch : a height/velocity scheme on one cell per point,
+// reflecting edges, gaussian drops, and a fixed step that stays stable.
+
+const uint SHALLOW_MAX_N = 128;
+
+struct Shallow_Config
+{
+	int   n = 128;
+	float size = 8.f;          // metres, full patch
+	float speed = 1.6f;         // m/s
+	float damping = .998f;
+	float drop_strength = .65f; // metres
+	float drop_interval = 4.f;  // seconds
+	float level = 1.6f;         // mean water height in the scene
+	vec3  albedo = vec3(.030f, .200f, .215f);
+	float roughness = .045f;
+	float sss = .75f; // backlit crest glow
+};
+
+struct Shallow_Water
+{
+	int   n;
+	float size;
+	float time;
+	float drop_timer;
+	float accumulator; // fixed-step remainder
+	bool  rain;
+	bool  paused;
+	bool  dirty;
+	uint  rng;
+
+	float a[SHALLOW_MAX_N * SHALLOW_MAX_N];
+	float b[SHALLOW_MAX_N * SHALLOW_MAX_N];
+	float velocity[SHALLOW_MAX_N * SHALLOW_MAX_N];
+
+	float* height;
+	float* next;
+};
+
+uint shallow_rand(uint* state)
+{
+	uint x = *state;
+	x ^= x << 13;
+	x ^= x >> 17;
+	x ^= x << 5;
+	*state = x;
+	return x;
+}
+
+float shallow_rand01(uint* state)
+{
+	return (shallow_rand(state) & 0xFFFFFFu) / 16777215.f;
+}
+
+void shallow_reset(Shallow_Water* w, const Shallow_Config& c)
+{
+	int n = c.n;
+	if (n < 8) n = 8;
+	if (n > (int)SHALLOW_MAX_N) n = SHALLOW_MAX_N;
+
+	w->n = n;
+	w->size = c.size;
+	w->time = 0.f;
+	w->drop_timer = 1.f;
+	w->accumulator = 0.f;
+	w->rain = true;
+	w->paused = false;
+	w->dirty = true;
+	w->rng = 0x9e3779b9u;
+	w->height = w->a;
+	w->next   = w->b;
+
+	int count = n * n;
+	for (int i = 0; i < count; i++)
+	{
+		w->a[i] = 0.f;
+		w->b[i] = 0.f;
+		w->velocity[i] = 0.f;
+	}
+}
+
+// x, z are patch-local metres, centred on the patch
+void shallow_drop(Shallow_Water* w, float x, float z, float strength)
+{
+	int n = w->n;
+	if (n < 2) return;
+
+	float spacing = w->size / (float)(n - 1);
+	float sigma = .28f;
+	int cx = (int)((x / w->size + .5f) * (float)(n - 1));
+	int cz = (int)((z / w->size + .5f) * (float)(n - 1));
+
+	int reach = (int)(sigma * 3.f / spacing) + 1;
+
+	for (int dz = -reach; dz <= reach; dz++)
+	{
+		for (int dx = -reach; dx <= reach; dx++)
+		{
+			int ix = cx + dx;
+			int iz = cz + dz;
+			if (ix < 1 || ix >= n - 1 || iz < 1 || iz >= n - 1) continue;
+
+			float rx = (float)dx * spacing;
+			float rz = (float)dz * spacing;
+			float bump = strength * expf(-(rx * rx + rz * rz) / (2.f * sigma * sigma));
+			w->height[iz * n + ix] += bump;
+		}
+	}
+
+	w->dirty = true;
+}
+
+// returns false when paused / no time passed
+// one fixed step : the caller never hands this a frame-sized delta
+void shallow_step(Shallow_Water* w, const Shallow_Config& c, float dt)
+{
+	int n = w->n;
+	float spacing = w->size / (float)(n - 1);
+	float c2 = c.speed * c.speed;
+
+	memcpy(w->next, w->height, sizeof(float) * n * n);
+
+	for (int z = 1; z < n - 1; z++)
+	{
+		for (int x = 1; x < n - 1; x++)
+		{
+			int i = z * n + x;
+			float h = w->height[i];
+
+			float lap = (w->height[i - 1] + w->height[i + 1] +
+			             w->height[i - n] + w->height[i + n] - 4.f * h) / (spacing * spacing);
+
+			float v = w->velocity[i] + c2 * lap * dt;
+			v *= c.damping;
+			w->velocity[i] = v;
+			w->next[i] = h + v * dt;
+		}
+	}
+
+	float* swap = w->height;
+	w->height = w->next;
+	w->next = swap;
+	w->time += dt;
+
+	// numeric guard : a clamp keeps a bad frame from taking the surface with it
+	bool bad = false;
+	for (int i = 0; i < n * n; i++)
+	{
+		float h = w->height[i];
+		float v = w->velocity[i];
+		if (!isfinite(h) || !isfinite(v)) { bad = true; break; }
+
+		if (h >  1.f) h =  1.f;
+		if (h < -1.f) h = -1.f;
+		if (v >  10.f) v =  10.f;
+		if (v < -10.f) v = -10.f;
+
+		w->height[i] = h;
+		w->velocity[i] = v;
+	}
+
+	if (bad)
+	{
+		for (int i = 0; i < n * n; i++)
+		{
+			w->a[i] = 0.f;
+			w->b[i] = 0.f;
+			w->velocity[i] = 0.f;
+		}
+		w->height = w->a;
+		w->next = w->b;
+		w->accumulator = 0.f;
+		return;
+	}
+
+	if (w->rain)
+	{
+		w->drop_timer -= dt;
+		if (w->drop_timer <= 0.f)
+		{
+			float x = (shallow_rand01(&w->rng) * 2.f - 1.f) * w->size * .36f;
+			float z = (shallow_rand01(&w->rng) * 2.f - 1.f) * w->size * .36f;
+			shallow_drop(w, x, z, c.drop_strength);
+			w->drop_timer = c.drop_interval;
+		}
+	}
+}
+
+bool shallow_update(Shallow_Water* w, const Shallow_Config& c, float dt, bool paused)
+{
+	if (w->n < 2) return false;
+	if (paused) return false;
+
+	// fixed 120 hz : stable for every speed the slider allows, independent of fps
+	const float fixed_dt = 1.f / 120.f;
+	float incoming = dt;
+	if (incoming < 0.f) incoming = 0.f;
+	if (incoming > .10f) incoming = .10f;
+	w->accumulator += incoming;
+
+	int steps = 0;
+	bool stepped = false;
+
+	while (w->accumulator >= fixed_dt && steps < 12)
+	{
+		shallow_step(w, c, fixed_dt);
+		w->accumulator -= fixed_dt;
+		steps++;
+		stepped = true;
+	}
+
+	if (w->accumulator > .10f) w->accumulator = .10f;
+	return stepped;
+}
+
+Mesh_Data shallow_build_mesh(const Shallow_Water* w)
+{
+	Mesh_Data mesh = {};
+	int n = w->n;
+	if (n < 2) return mesh;
+
+	uint num_vertices = (uint)(n * n);
+	uint num_indices  = (uint)((n - 1) * (n - 1) * 6);
+
+	mesh.positions = Alloc(vec3, num_vertices);
+	mesh.normals   = Alloc(vec3, num_vertices);
+	mesh.uvs       = Alloc(vec2, num_vertices);
+	mesh.indices   = Alloc(uint, num_indices);
+
+	float spacing = w->size / (float)(n - 1);
+
+	for (int z = 0; z < n; z++)
+	{
+		for (int x = 0; x < n; x++)
+		{
+			int i = z * n + x;
+			int x0 = x > 0 ? x - 1 : x;
+			int x1 = x < n - 1 ? x + 1 : x;
+			int z0 = z > 0 ? z - 1 : z;
+			int z1 = z < n - 1 ? z + 1 : z;
+
+			float dx = (w->height[z * n + x1] - w->height[z * n + x0]) / ((x1 - x0) * spacing);
+			float dz = (w->height[z1 * n + x] - w->height[z0 * n + x]) / ((z1 - z0) * spacing);
+
+			mesh.positions[i] = vec3(((float)x / (float)(n - 1) - .5f) * w->size,
+			                         w->height[i],
+			                         ((float)z / (float)(n - 1) - .5f) * w->size);
+			mesh.normals[i] = normalize(vec3(-dx, 1.f, -dz));
+			mesh.uvs[i]     = vec2((float)x / (float)(n - 1), (float)z / (float)(n - 1));
+		}
+	}
+
+	uint e = 0;
+	for (int z = 0; z < n - 1; z++)
+	{
+		for (int x = 0; x < n - 1; x++)
+		{
+			uint a = (uint)(z * n + x);
+			uint b = a + 1;
+			uint c = a + (uint)n;
 			uint d = c + 1;
 
 			mesh.indices[e++] = a;  mesh.indices[e++] = c; mesh.indices[e++] = b;

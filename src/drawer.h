@@ -38,7 +38,7 @@ struct MeshVertexDataAnimNoUV {
 	ivec3 bones;
 }; // 48 bytes
 
-// ---- the four draw modes -------------------------------------------------------------
+// ---- the draw modes -------------------------------------------------------------------
 // a mode is a vertex layout, a stride and a shader pair. the no-uv modes leave attribute 2
 // disabled, so the sampler reads its constant (0,0) and the instance material's texture
 // flag decides whether that counts : no shader branch, and no second shader
@@ -47,6 +47,7 @@ enum DrawMode : uint {
 	MODE_STATIC_NOUV,   // 3 : the same meshes, built without a uv column
 	MODE_ANIM_UV,       // 2 : weapons and rigs, skinned
 	MODE_ANIM_NOUV,     // 4 : the same, built without a uv column
+	MODE_WATER,         // 5 : forward water, drawn after the opaque frame
 	DRAW_MODE_COUNT
 };
 
@@ -58,13 +59,15 @@ struct DrawMode_Info {
 	uint vertex_size;  // bytes per vertex : the gpu stride, and the layout arithmetic
 	bool skinned;      // needs the pose ubo, and a player bound to be posed
 	bool has_uv;       // enables attribute 2
+	bool deferred;     // writes the g-buffer : otherwise a forward pass owns it
 };
 
 const DrawMode_Info DRAW_MODE_INFO[DRAW_MODE_COUNT] = {
-	{ "1  static + uv",    0, sizeof(MeshVertexData),         false, true  },
-	{ "3  static, no uv",  0, sizeof(MeshVertexDataNoUV),     false, false },
-	{ "2  skinned + uv",   1, sizeof(MeshVertexDataAnim),     true,  true  },
-	{ "4  skinned, no uv", 1, sizeof(MeshVertexDataAnimNoUV), true,  false },
+	{ "1  static + uv",    0, sizeof(MeshVertexData),         false, true,  true  },
+	{ "3  static, no uv",  0, sizeof(MeshVertexDataNoUV),     false, false, true  },
+	{ "2  skinned + uv",   1, sizeof(MeshVertexDataAnim),     true,  true,  true  },
+	{ "4  skinned, no uv", 1, sizeof(MeshVertexDataAnimNoUV), true,  false, true  },
+	{ "5  water (forward)",2, sizeof(MeshVertexData),         false, true,  false },
 };
 
 // one instance : the model matrix plus the material the deferred lighting reads.
@@ -461,6 +464,359 @@ const vec3 SKELETON_TIER_COLOR[SKELETON_TIERS] = {
 	vec3(0.64f, 0.62f, 0.98f), // violet : the deep end of the chain
 };
 
+// the shared wire overlay : physics, animation, light volumes and scene guides
+// all append into one buffer and one shader. line colour rides the instance tint,
+// so a category can be read at a glance without another draw state
+struct Debug_Draw
+{
+	DrawBuffer    lines;
+	ShaderProgram shader;
+
+	uint box_mesh, sphere_mesh, cylinder_mesh, cone_mesh;
+	uint light_cone_mesh, segment_mesh;
+	uint next_mesh; // free id for generated wires (capsules, etc)
+
+	uint static_mesh_mark, static_geom_mark, static_indx_mark;
+
+	// presentation toggles, edited in the Debug tab
+	bool lights;
+	bool light_directions;
+	bool camera;
+	bool axes;
+
+	void init()
+	{
+		light_directions = true;
+
+		shader.create("assets/shaders/wire.vert", "assets/shaders/wire.frag");
+		lines.init();
+
+		// unit box : 8 corners, 12 edges (an edge joins corners differing by one bit)
+		Mesh_Data box = {};
+		box.num_vertices = 8;
+		box.num_indices  = 24;
+		box.positions = Alloc(vec3, 8);
+		box.normals   = Alloc(vec3, 8);
+		box.uvs       = Alloc(vec2, 8);
+		box.indices   = Alloc(uint, 24);
+
+		for (uint i = 0; i < 8; i++)
+		{
+			box.positions[i] = vec3((i & 1) ? 1.f : -1.f, (i & 2) ? 1.f : -1.f, (i & 4) ? 1.f : -1.f);
+			box.normals[i]   = vec3(0, 1, 0);
+		}
+
+		uint e = 0;
+		for (uint i = 0; i < 8; i++)
+			for (uint bit = 1; bit < 8; bit *= 2)
+			{
+				uint j = i ^ bit;
+				if (i < j) { box.indices[e++] = i; box.indices[e++] = j; }
+			}
+
+		box_mesh = 1;
+		lines.append_geometry(box_mesh, box);
+		box.release();
+
+		// unit sphere : ring + column edges of a coarse uv sphere
+		uint slices = 16, stacks = 12;
+		Mesh_Data src = MeshFactory::generate_uv_sphere(1.f, slices, stacks);
+		Mesh_Data ball = {};
+		ball.num_vertices = src.num_vertices;
+		ball.num_indices  = stacks * slices * 8;
+		ball.positions = Alloc(vec3, src.num_vertices);
+		ball.normals   = Alloc(vec3, src.num_vertices);
+		ball.uvs       = Alloc(vec2, src.num_vertices);
+		ball.indices   = Alloc(uint, ball.num_indices);
+
+		for (uint i = 0; i < src.num_vertices; i++)
+		{
+			ball.positions[i] = src.positions[i];
+			ball.normals[i]   = src.normals[i];
+			ball.uvs[i]       = src.uvs[i];
+		}
+
+		e = 0;
+		for (uint i = 0; i < stacks; i++)
+			for (uint j = 0; j < slices; j++)
+			{
+				uint upper = i * (slices + 1) + j;
+				uint lower = upper + slices + 1;
+
+				ball.indices[e++] = upper;     ball.indices[e++] = upper + 1;
+				ball.indices[e++] = lower;     ball.indices[e++] = lower + 1;
+				ball.indices[e++] = upper;     ball.indices[e++] = lower;
+				ball.indices[e++] = upper + 1; ball.indices[e++] = lower + 1;
+			}
+
+		src.release();
+		sphere_mesh = 2;
+		lines.append_geometry(sphere_mesh, ball);
+		ball.release();
+
+		// unit cylinder : radius 1, half-height 1, rings only in the xz plane
+		uint cyl_slices = 16;
+		Mesh_Data cyl = {};
+		cyl.num_vertices = 2 * (cyl_slices + 1);
+		cyl.num_indices  = cyl_slices * 6;
+		cyl.positions = Alloc(vec3, cyl.num_vertices);
+		cyl.normals   = Alloc(vec3, cyl.num_vertices);
+		cyl.uvs       = Alloc(vec2, cyl.num_vertices);
+		cyl.indices   = Alloc(uint, cyl.num_indices);
+
+		for (uint ring = 0; ring < 2; ring++)
+			for (uint j = 0; j <= cyl_slices; j++)
+			{
+				float theta = 2.f * PI * j / cyl_slices;
+				cyl.positions[ring * (cyl_slices + 1) + j] =
+					vec3(cosf(theta), ring ? -1.f : 1.f, sinf(theta));
+			}
+
+		e = 0;
+		for (uint j = 0; j < cyl_slices; j++)
+		{
+			uint top = j, bottom = cyl_slices + 1 + j;
+			cyl.indices[e++] = top;    cyl.indices[e++] = top + 1;
+			cyl.indices[e++] = bottom; cyl.indices[e++] = bottom + 1;
+			cyl.indices[e++] = top;    cyl.indices[e++] = bottom;
+		}
+
+		cylinder_mesh = 3;
+		lines.append_geometry(cylinder_mesh, cyl);
+		cyl.release();
+
+		// unit cone : base ring at y -0.5, apex at y +0.5
+		uint cone_slices = 16;
+		Mesh_Data cone = {};
+		cone.num_vertices = cone_slices + 1;
+		cone.num_indices  = cone_slices * 4;
+		cone.positions = Alloc(vec3, cone.num_vertices);
+		cone.normals   = Alloc(vec3, cone.num_vertices);
+		cone.uvs       = Alloc(vec2, cone.num_vertices);
+		cone.indices   = Alloc(uint, cone.num_indices);
+
+		for (uint j = 0; j < cone_slices; j++)
+		{
+			float theta = 2.f * PI * j / cone_slices;
+			cone.positions[j] = vec3(cosf(theta), -.5f, sinf(theta));
+		}
+		cone.positions[cone_slices] = vec3(0, .5f, 0);
+
+		e = 0;
+		for (uint j = 0; j < cone_slices; j++)
+		{
+			uint next = (j + 1) % cone_slices;
+			cone.indices[e++] = j; cone.indices[e++] = next;
+			cone.indices[e++] = j; cone.indices[e++] = cone_slices;
+		}
+
+		cone_mesh = 4;
+		lines.append_geometry(cone_mesh, cone);
+		cone.release();
+
+		// light cone : apex at the origin, base at y = 1, radius 1
+		Mesh_Data light_cone = {};
+		light_cone.num_vertices = cone_slices + 1;
+		light_cone.num_indices  = cone_slices * 6; // two side edges + the base ring
+		light_cone.positions = Alloc(vec3, light_cone.num_vertices);
+		light_cone.normals   = Alloc(vec3, light_cone.num_vertices);
+		light_cone.uvs       = Alloc(vec2, light_cone.num_vertices);
+		light_cone.indices   = Alloc(uint, light_cone.num_indices);
+
+		light_cone.positions[0] = vec3(0.f);
+		for (uint j = 0; j < cone_slices; j++)
+		{
+			float theta = 2.f * PI * j / cone_slices;
+			light_cone.positions[1 + j] = vec3(cosf(theta), 1.f, sinf(theta));
+		}
+
+		e = 0;
+		for (uint j = 0; j < cone_slices; j++)
+		{
+			uint next = 1 + (j + 1) % cone_slices;
+			light_cone.indices[e++] = 0; light_cone.indices[e++] = 1 + j;
+			light_cone.indices[e++] = 0; light_cone.indices[e++] = next;
+			light_cone.indices[e++] = 1 + j; light_cone.indices[e++] = next;
+		}
+
+		light_cone_mesh = 5;
+		lines.append_geometry(light_cone_mesh, light_cone);
+		light_cone.release();
+
+		// one +x segment, stretched between any two points
+		Mesh_Data seg = {};
+		seg.num_vertices = 2;
+		seg.num_indices  = 2;
+		seg.positions = Alloc(vec3, 2);
+		seg.normals   = Alloc(vec3, 2);
+		seg.uvs       = Alloc(vec2, 2);
+		seg.indices   = Alloc(uint, 2);
+
+		seg.positions[0] = vec3(0.f, 0.f, 0.f);
+		seg.positions[1] = vec3(1.f, 0.f, 0.f);
+		seg.normals[0] = seg.normals[1] = vec3(0.f, 1.f, 0.f);
+		seg.uvs[0] = seg.uvs[1] = vec2(0.f);
+		seg.indices[0] = 0;
+		seg.indices[1] = 1;
+
+		segment_mesh = 6;
+		lines.append_geometry(segment_mesh, seg);
+		seg.release();
+
+		next_mesh = 20;
+	}
+
+	// call once the built-in unit meshes and the anim rig meshes exist : everything
+	// appended after this mark is per-scene and can be dropped on a scene switch
+	void mark_static()
+	{
+		static_mesh_mark = lines.num_meshes;
+		static_geom_mark = lines.geom_size;
+		static_indx_mark = lines.indx_size;
+		next_mesh = 20;
+	}
+
+	void reset_dynamic()
+	{
+		if (lines.num_meshes >= static_mesh_mark)
+			lines.rewind(static_mesh_mark, static_geom_mark, static_indx_mark);
+		next_mesh = 20;
+	}
+
+	void begin() { lines.clear_instances(); }
+
+	void add_instance(uint mesh, const mat4& model, vec4 color)
+	{
+		Instance inst = INSTANCE_DEFAULT;
+		inst.model = model;
+		inst.mat_a = color;
+		lines.append_instances(mesh, 1, &inst);
+	}
+
+	void append_shape(uint mesh, const mat4& model, vec4 color)
+	{
+		add_instance(mesh, model, color);
+	}
+
+	void append_sphere(vec3 center, float radius, vec4 color)
+	{
+		add_instance(sphere_mesh, glm::translate(mat4(1), center) * glm::scale(mat4(1), vec3(radius)), color);
+	}
+
+	void append_box(vec3 center, vec3 half, vec4 color)
+	{
+		add_instance(box_mesh, glm::translate(mat4(1), center) * glm::scale(mat4(1), half), color);
+	}
+
+	void append_cylinder(vec3 center, vec3 half, vec4 color)
+	{
+		add_instance(cylinder_mesh, glm::translate(mat4(1), center) * glm::scale(mat4(1), half), color);
+	}
+
+	void append_cone(vec3 center, vec3 half, mat3 basis, vec4 color)
+	{
+		add_instance(cone_mesh, glm::translate(mat4(1), center) * mat4(basis) * glm::scale(mat4(1), half), color);
+	}
+
+	// a spot volume : apex at the light, base ring at the reach
+	void append_light_cone(vec3 apex, vec3 dir, float radius, float outer_angle, vec4 color)
+	{
+		vec3 helper = fabsf(dir.y) < .95f ? vec3(0, 1, 0) : vec3(1, 0, 0);
+		vec3 right = normalize(cross(helper, dir));
+		vec3 up = cross(dir, right);
+		mat3 basis(right, dir, up);
+
+		float tan_outer = tanf(outer_angle);
+		mat4 model = glm::translate(mat4(1), apex) * mat4(basis)
+		           * glm::scale(mat4(1), vec3(tan_outer * radius, radius, tan_outer * radius));
+		add_instance(light_cone_mesh, model, color);
+	}
+
+	void append_segment(vec3 a, vec3 b, vec4 color)
+	{
+		vec3 d = b - a;
+		float len = length(d);
+		if (len < 1e-5f) return;
+
+		vec3 x = d / len;
+		vec3 helper = fabsf(x.y) < .95f ? vec3(0, 1, 0) : vec3(1, 0, 0);
+		vec3 z = normalize(cross(x, helper));
+		vec3 y = cross(z, x);
+
+		mat3 rot;
+		rot[0] = x;
+		rot[1] = y;
+		rot[2] = z;
+
+		add_instance(segment_mesh, glm::translate(mat4(1), a) * mat4(rot) *
+		             glm::scale(mat4(1), vec3(len, 1.f, 1.f)), color);
+	}
+
+	void append_cross(vec3 p, float size, vec4 color)
+	{
+		append_segment(p - vec3(size, 0, 0), p + vec3(size, 0, 0), color);
+		append_segment(p - vec3(0, size, 0), p + vec3(0, size, 0), color);
+		append_segment(p - vec3(0, 0, size), p + vec3(0, 0, size), color);
+	}
+
+	void append_axes(float size)
+	{
+		if (!axes) return;
+		append_segment(vec3(0), vec3(size, 0, 0), vec4(1.f, .25f, .25f, 1.f));
+		append_segment(vec3(0), vec3(0, size, 0), vec4(.25f, 1.f, .25f, 1.f));
+		append_segment(vec3(0), vec3(0, 0, size), vec4(.25f, .45f, 1.f, 1.f));
+	}
+
+	void append_frustum(mat4 proj_view, vec4 color)
+	{
+		if (!camera) return;
+		mat4 inv = glm::inverse(proj_view);
+		vec3 c[8];
+		uint k = 0;
+		for (uint z = 0; z < 2; z++)
+			for (uint y = 0; y < 2; y++)
+				for (uint x = 0; x < 2; x++)
+				{
+					vec4 p = inv * vec4(x ? 1.f : -1.f, y ? 1.f : -1.f, z ? .999f : .02f, 1.f);
+					c[k++] = vec3(p) / p.w;
+				}
+
+		// near / far rectangles, then the four side edges
+		uint edges[12][2] = {
+			{0,1},{1,3},{3,2},{2,0}, {4,5},{5,7},{7,6},{6,4},
+			{0,4},{1,5},{2,6},{3,7},
+		};
+		for (uint i = 0; i < 12; i++) append_segment(c[edges[i][0]], c[edges[i][1]], color);
+	}
+
+	void draw(mat4 proj_view)
+	{
+		glBindFramebuffer(GL_FRAMEBUFFER, 0);
+		glClear(GL_DEPTH_BUFFER_BIT);
+		glDisable(GL_DEPTH_TEST);
+		glDepthMask(GL_FALSE);
+
+		glBindVertexArray(lines.vao);
+		shader.bind();
+		glUniformMatrix4fv(glGetUniformLocation(shader.id, "proj_view"), 1, GL_FALSE, (float*)&proj_view);
+		glUniform4f(glGetUniformLocation(shader.id, "color"), 1.f, 1.f, 1.f, 1.f);
+
+		for (uint i = 0; i < MAX_MESHES; i++)
+		{
+			auto& mi = lines.mesh_info[i];
+			if (mi.mesh_id == 0 || mi.num_instances == 0) continue;
+			glDrawElementsInstancedBaseVertexBaseInstance(GL_LINES, mi.num_indices, GL_UNSIGNED_INT,
+				(void*)mi.base_index, mi.num_instances, mi.base_vertex, mi.base_instance);
+		}
+
+		glDepthMask(GL_TRUE);
+		glEnable(GL_DEPTH_TEST);
+	}
+};
+
+// the one overlay every system appends to
+static Debug_Draw debug_draw;
+
 struct Anim_Debug
 {
 	bool enabled; // the Anim tab's master toggle
@@ -470,8 +826,6 @@ struct Anim_Debug
 	bool no_uv;   // which skinned buffer the slot belongs to (mode 2 or mode 4)
 	uint slot;    // the mesh_info slot to draw : what the dropdown picked
 
-	DrawBuffer    lines;
-	ShaderProgram shader;
 	uint bone_mesh, link_mesh, joint_mesh;
 
 	void init()
@@ -480,9 +834,6 @@ struct Anim_Debug
 		// bones and the links between them are what you want first
 		bones = true;
 		links = true;
-
-		shader.create("assets/shaders/wire.vert", "assets/shaders/wire.frag");
-		lines.init(); // 1MB default : a rig barely uses it
 
 		// a bone : joint at the origin, tip at +1, a diamond ring at 0.15. sized per
 		// bone when it is instanced, so one unit mesh covers every length
@@ -510,8 +861,8 @@ struct Anim_Debug
 			bone.indices[e++] = 2 + i; bone.indices[e++] = 2 + ((i + 1) % 4); // the ring
 		}
 
-		bone_mesh = 1;
-		lines.append_geometry(bone_mesh, bone);
+		bone_mesh = 7;
+		debug_draw.lines.append_geometry(bone_mesh, bone);
 		bone.release();
 
 		// a joint : the bone's own x / y / z, unit length
@@ -532,8 +883,8 @@ struct Anim_Debug
 		joint.indices[2] = 0; joint.indices[3] = 2;
 		joint.indices[4] = 0; joint.indices[5] = 3;
 
-		joint_mesh = 2;
-		lines.append_geometry(joint_mesh, joint);
+		joint_mesh = 8;
+		debug_draw.lines.append_geometry(joint_mesh, joint);
 		joint.release();
 
 		// a link : one line along +y, unit length. scaled to the joint gap, so a bone
@@ -551,8 +902,8 @@ struct Anim_Debug
 		link.positions[1] = vec3(0.f, 1.f, 0.f);
 		link.indices[0] = 0; link.indices[1] = 1;
 
-		link_mesh = 3;
-		lines.append_geometry(link_mesh, link);
+		link_mesh = 9;
+		debug_draw.lines.append_geometry(link_mesh, link);
 		link.release();
 	}
 
@@ -568,24 +919,8 @@ struct Anim_Debug
 		             * glm::scale(mat4(1.f), vec3(len));
 	}
 
-	// one shape's line draw, straight from the buffer's own bookkeeping
-	void draw_shape(uint mesh)
-	{
-		for (uint i = 0; i < MAX_MESHES; i++)
-		{
-			if (lines.mesh_info[i].mesh_id != mesh)
-				continue;
-
-			auto& mi = lines.mesh_info[i];
-			if (mi.num_instances)
-				glDrawElementsInstancedBaseVertexBaseInstance(GL_LINES, mi.num_indices, GL_UNSIGNED_INT,
-					(void*)mi.base_index, mi.num_instances, mi.base_vertex, mi.base_instance);
-			return;
-		}
-	}
-
 	// the selected mesh's rig, as the player posing it has it right now
-	void draw(mat4 proj_view, DrawBuffer* meshes, AnimLoader* anim)
+	void append(DrawBuffer* meshes, AnimLoader* anim)
 	{
 		if (!enabled || slot >= MAX_MESHES)
 			return;
@@ -655,15 +990,10 @@ struct Anim_Debug
 		for (uint b = 0; b < bones; b++)
 			tier[b] = (b < SKELETON_TIERS) ? b : SKELETON_TIERS - 1;
 
-		// after lighting the backbuffer depth is nobody's : start clean
-		glBindFramebuffer(GL_FRAMEBUFFER, 0);
-		glClear(GL_DEPTH_BUFFER_BIT);
-
 		// three runs that must not interleave : a draw reads its instances from one
 		// block. the instance albedo carries each bone's tier colour and wire.frag
 		// multiplies it in, so a single mesh draws every tier
 		mat4 place = mi.last_model;
-		lines.clear_instances();
 
 		if (bones)
 			for (uint b = 0; b < bones; b++)
@@ -675,7 +1005,7 @@ struct Anim_Debug
 				Instance inst = INSTANCE_DEFAULT;
 				inst.mat_a = vec4(SKELETON_TIER_COLOR[tier[b]], 0.f);
 				inst.model = bone_at(place, head[b], axis / len, len);
-				lines.append_instances(bone_mesh, 1, &inst);
+				debug_draw.lines.append_instances(bone_mesh, 1, &inst);
 			}
 
 		if (links)
@@ -691,7 +1021,7 @@ struct Anim_Debug
 				Instance inst = INSTANCE_DEFAULT;
 				inst.mat_a = vec4(SKELETON_TIER_COLOR[tier[b]] * 0.62f, 0.f); // dimmer than the bones
 				inst.model = bone_at(place, head[b], axis / len, len);
-				lines.append_instances(link_mesh, 1, &inst);
+				debug_draw.lines.append_instances(link_mesh, 1, &inst);
 			}
 
 		if (axes)
@@ -702,21 +1032,10 @@ struct Anim_Debug
 				if (len < 1e-4f) continue;
 
 				Instance inst = INSTANCE_DEFAULT;
+				inst.mat_a = vec4(0.58f, 0.62f, 0.68f, 0.f);
 				inst.model = bone_at(place, head[b], axis / len, len * 0.20f);
-				lines.append_instances(joint_mesh, 1, &inst);
+				debug_draw.lines.append_instances(joint_mesh, 1, &inst);
 			}
-
-		glBindVertexArray(lines.vao);
-		shader.bind();
-		glUniformMatrix4fv(glGetUniformLocation(shader.id, "proj_view"), 1, GL_FALSE, (float*)&proj_view);
-
-		// white : the instances carry the colour now. the crosses stay neutral, so the
-		// tier ramp is the only thing tinting
-		glUniform4f(glGetUniformLocation(shader.id, "color"), 1.f, 1.f, 1.f, 1.f);
-		draw_shape(bone_mesh);
-		draw_shape(link_mesh);
-		glUniform4f(glGetUniformLocation(shader.id, "color"), 0.58f, 0.62f, 0.68f, 1.f);
-		draw_shape(joint_mesh);
 	}
 };
 
@@ -736,12 +1055,45 @@ struct GameRenderer
 	MeshLoaderAnim meshloader_anim;
 	AnimLoader     animloader; // clips + players : the only animation state in the engine
 	TextureLoader  txloader;
-	ShaderProgram  shaders[MAX_SHADERS]; // 0 = static meshes, 1 = skinned meshes
+	uint           foam_pattern_tx; // CC0 lace mask, shared by every water surface
+	ShaderProgram  shaders[MAX_SHADERS]; // 0 = static meshes, 1 = skinned, 2 = forward water
 
 	// drawing : one buffer and one draw list per mode. the table is the only list of
 	// them in the engine, so a fifth layout is a row in DRAW_MODE_INFO and nothing else
 	DrawBuffer drawbuffers[DRAW_MODE_COUNT];
 	DrawList   drawlists[DRAW_MODE_COUNT];
+
+	// one directional shadow map : depth-only render of the static world, sampled
+	// by the deferred sun light
+	struct {
+		GLuint fbo, depth_tx;
+		ShaderProgram shader;
+		mat4 proj_view;
+		uint size;
+		bool enabled;
+	} shadow;
+
+	// light volumes : one unit sphere drawn once per light through an instance
+	// buffer. the sphere is the light's reach, so the fragment shader only runs
+	// on the pixels the light can actually touch
+	struct LightVolumeMesh {
+		GLuint vao, geom_buffer, idx_buffer;
+		uint num_indices;
+	};
+
+	struct {
+		ShaderProgram shader;
+		GLuint inst_buffer;
+		LightVolumeMesh sphere, cone;
+	} lightvol;
+
+	// one light instance : centre/radius, colour/power, axis/shape and cone angles
+	struct LightInstance {
+		vec4 pos_radius;
+		vec4 color_power;
+		vec4 direction_shape;
+		vec4 params; // outer radians, outer cos, inner cos
+	};
 
 	// which buffer an asset belongs to, from the only two things that decide it. the
 	// mapping lives here so no caller has to open-code it
@@ -759,26 +1111,203 @@ struct GameRenderer
 	{
 		shaders[0].create("assets/shaders/geom.vert", "assets/shaders/geom.frag");
 		shaders[1].create("assets/shaders/anim.vert", "assets/shaders/geom.frag"); // same frag as the static pass
+		shaders[2].create("assets/shaders/water.vert", "assets/shaders/water.frag");
 
-		// 8MB apiece : the scene needs a few hundred KB, and the buffers only grow
 		for (uint mode = 0; mode < DRAW_MODE_COUNT; mode++)
 			drawbuffers[mode].init(MegaByte(8), mode);
 
+		init_light_volumes();
+		init_shadow();
+
 		txloader.init();
+		foam_pattern_tx = txloader.load("assets/textures/foam_pattern.jpg");
 		animloader.init(); // playback defaults (calloc skips them)
+		debug_draw.init();
 		animdebug.init();
+		debug_draw.mark_static();
 
 		console->add_entry((char*)"Init GameRenderer", SUCCESS, RNDR);
 	}
 
+	// one unit sphere and one unit cone, both drawn through the same instance
+	// buffer. only the sphere or the cone group is submitted for each light
+	void init_light_volumes()
+	{
+		lightvol.shader.create("assets/shaders/light.vert", "assets/shaders/light.frag");
+
+		glGenBuffers(1, &lightvol.inst_buffer);
+		glBindBuffer(GL_ARRAY_BUFFER, lightvol.inst_buffer);
+		glBufferData(GL_ARRAY_BUFFER, MAX_LIGHTS * sizeof(LightInstance), NULL, GL_DYNAMIC_DRAW);
+
+		Mesh_Data_NoUV sphere = MeshFactory::generate_sphere(1.f, 12, 20);
+		init_light_volume_mesh(&lightvol.sphere, sphere);
+		sphere.release();
+
+		// centre cone : base at -Y, apex at +Y. the vertex shader maps the apex
+		// to the light centre and the base ring to the reach at the outer angle
+		Mesh_Data_NoUV cone = MeshFactory::without_uv(MeshFactory::generate_cone(1.f, 1.f, 24));
+		init_light_volume_mesh(&lightvol.cone, cone);
+		cone.release();
+	}
+
+	void init_light_volume_mesh(LightVolumeMesh* mesh, Mesh_Data_NoUV& data)
+	{
+		mesh->num_indices = data.num_indices;
+
+		glGenVertexArrays(1, &mesh->vao);
+		glBindVertexArray(mesh->vao);
+
+		glGenBuffers(1, &mesh->geom_buffer);
+		glBindBuffer(GL_ARRAY_BUFFER, mesh->geom_buffer);
+		glBufferData(GL_ARRAY_BUFFER, data.num_vertices * sizeof(vec3), data.positions, GL_STATIC_DRAW);
+		glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(vec3), (void*)0);
+		glEnableVertexAttribArray(0);
+
+		glGenBuffers(1, &mesh->idx_buffer);
+		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mesh->idx_buffer);
+		glBufferData(GL_ELEMENT_ARRAY_BUFFER, data.num_indices * sizeof(uint), data.indices, GL_STATIC_DRAW);
+
+		glBindBuffer(GL_ARRAY_BUFFER, lightvol.inst_buffer);
+		uint stride = sizeof(LightInstance);
+		glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, stride, (void*)0);
+		glEnableVertexAttribArray(1);
+		glVertexAttribDivisor(1, 1);
+		glVertexAttribPointer(2, 4, GL_FLOAT, GL_FALSE, stride, (void*)sizeof(vec4));
+		glEnableVertexAttribArray(2);
+		glVertexAttribDivisor(2, 1);
+		glVertexAttribPointer(3, 4, GL_FLOAT, GL_FALSE, stride, (void*)(sizeof(vec4) * 2));
+		glEnableVertexAttribArray(3);
+		glVertexAttribDivisor(3, 1);
+		glVertexAttribPointer(4, 4, GL_FLOAT, GL_FALSE, stride, (void*)(sizeof(vec4) * 3));
+		glEnableVertexAttribArray(4);
+		glVertexAttribDivisor(4, 1);
+	}
+
 	// the animator's own overlay pass : drawn straight to the backbuffer, over the
-	// lit frame, after the scene. mirrors Phys::draw_debug
-	void draw_skeleton(mat4 proj_view)
+	// 2048 depth-only target for the sun. the pass is rebuilt every frame around
+	// the camera, so it follows the scene instead of matching one fixed map
+	void init_shadow()
+	{
+		shadow.size = 2048;
+		shadow.enabled = true;
+		shadow.shader.create("assets/shaders/shadow.vert", "assets/shaders/shadow.frag");
+
+		glGenTextures(1, &shadow.depth_tx);
+		glBindTexture(GL_TEXTURE_2D, shadow.depth_tx);
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, shadow.size, shadow.size,
+		             0, GL_DEPTH_COMPONENT, GL_FLOAT, NULL);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_REF_TO_TEXTURE);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_FUNC, GL_LEQUAL);
+		float border[4] = { 1, 1, 1, 1 };
+		glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, border);
+
+		glGenFramebuffers(1, &shadow.fbo);
+		glBindFramebuffer(GL_FRAMEBUFFER, shadow.fbo);
+		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, shadow.depth_tx, 0);
+		glDrawBuffer(GL_NONE);
+		glReadBuffer(GL_NONE);
+
+		if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+			console->add_entry("shadow framebuffer incomplete", FIXME, RNDR);
+
+		glBindFramebuffer(GL_FRAMEBUFFER, 0);
+	}
+
+	// depth-only pass : static meshes from the sun's point of view. skinned meshes
+	// are skipped (they would need a second pose-aware depth shader)
+	void draw_shadows(GameWindow* window, const Lighting& l, vec3 camera_pos, vec3 camera_front,
+	                  float extent)
+	{
+		if (!shadow.enabled)
+		{
+			window->shadow_on = false;
+			return;
+		}
+
+		// at night the moon takes over the same depth pass
+		bool use_moon = l.sun_power < .05f && l.moon_power > .02f
+		             && l.moon_direction.y < -.02f;
+		vec3 dir = use_moon ? l.moon_direction : l.sun_direction;
+		if (dot(dir, dir) < 1e-6f) dir = vec3(-.36f, -.84f, -.30f);
+		dir = normalize(dir);
+
+		// the active light is below the horizon : nothing useful to render
+		if (!use_moon && (l.sun_power < .05f || dir.y > -.02f))
+		{
+			window->shadow_on = false;
+			return;
+		}
+		if (use_moon && dir.y > -.02f)
+		{
+			window->shadow_on = false;
+			return;
+		}
+
+		vec3 center = camera_pos + camera_front * (extent * .20f);
+		vec3 up = fabsf(dir.y) > .95f ? vec3(0, 0, 1) : vec3(0, 1, 0);
+		mat4 view = glm::lookAt(center - dir * extent, center, up);
+		mat4 proj = glm::ortho(-extent * .5f, extent * .5f, -extent * .5f, extent * .5f,
+		                       .1f, extent * 2.f);
+		shadow.proj_view = proj * view;
+
+		glBindFramebuffer(GL_FRAMEBUFFER, shadow.fbo);
+		glViewport(0, 0, shadow.size, shadow.size);
+		glClear(GL_DEPTH_BUFFER_BIT);
+
+		glEnable(GL_DEPTH_TEST);
+		glDepthMask(GL_TRUE);
+		glDisable(GL_BLEND);
+		glDisable(GL_CULL_FACE); // the floor and staged meshes are single-sided
+
+		shadow.shader.bind();
+		shadow.shader.set_mat4("light_proj_view", shadow.proj_view);
+
+		for (uint mode = 0; mode < DRAW_MODE_COUNT; mode++)
+		{
+			DrawBuffer& db = drawbuffers[mode];
+			if (db.num_meshes == 0) continue;
+			if (!DRAW_MODE_INFO[mode].deferred) continue;
+			if (DRAW_MODE_INFO[mode].skinned) continue; // no pose-aware depth shader yet
+
+
+			glBindVertexArray(db.vao);
+			drawlists[mode].update(&db);
+
+			for (uint i = 0; i < MAX_MESHES; i++)
+			{
+				auto& mp = drawlists[mode].mesh_params[i];
+				if (mp.num_instances == 0) continue;
+
+				glDrawElementsInstancedBaseVertexBaseInstance(GL_TRIANGLES, mp.num_indices,
+					GL_UNSIGNED_INT, (void*)mp.base_index, mp.num_instances,
+					mp.base_vertex, mp.base_instance);
+			}
+		}
+
+		glEnable(GL_CULL_FACE);
+		glCullFace(GL_BACK);
+		glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+		window->shadow_tx = shadow.depth_tx;
+		window->shadow_proj_view = shadow.proj_view;
+		window->shadow_direction = dir;
+		window->shadow_texel = 1.f / (float)shadow.size;
+		window->shadow_world_texel = extent / (float)shadow.size;
+		window->shadow_is_moon = use_moon;
+		window->shadow_on = true;
+	}
+
+	// append the selected rig to the shared debug overlay
+	void append_skeleton()
 	{
 		// a no-uv rig lives in the other skinned buffer, and the slot number alone cannot
 		// say which : the tab sets no_uv alongside it
 		DrawBuffer* meshes = &buffer(animdebug.no_uv ? MODE_ANIM_NOUV : MODE_ANIM_UV);
-		animdebug.draw(proj_view, meshes, &animloader);
+		animdebug.append(meshes, &animloader);
 	}
 
 	// returns the mesh id (0 = failed, error already logged)
@@ -811,6 +1340,23 @@ struct GameRenderer
 			mesh_id, texture ? texture : "default");
 		console->add_entry(msg, SUCCESS, RNDR);
 
+		return mesh_id;
+	}
+
+	// forward water : same vertex layout as the static buffer, different pass
+	uint add_mesh_water(Mesh_Data mesh_data, const char* texture = NULL)
+	{
+		uint mesh_id = ++meshloader.num_loaded;
+		uint tx_id   = texture ? txloader.load(texture) : 0;
+
+		bool appended = buffer(MODE_WATER).append_geometry(mesh_id, mesh_data, tx_id);
+		mesh_data.release();
+		if (!appended) return 0;
+
+		char msg[MAX_LOG_MSG_LENGTH] = {};
+		snprintf(msg, MAX_LOG_MSG_LENGTH, "Add Mesh (water), id[%d], texture[%s]",
+			mesh_id, texture ? texture : "default");
+		console->add_entry(msg, SUCCESS, RNDR);
 		return mesh_id;
 	}
 
@@ -933,8 +1479,10 @@ struct GameRenderer
 		meshloader.clear();
 		meshloader_anim.clear();
 		animloader.clear();
+		debug_draw.reset_dynamic();
 		txloader.clear();
 		txloader.init();
+		foam_pattern_tx = txloader.load("assets/textures/foam_pattern.jpg");
 
 		animdebug.slot = (uint)-1;
 		stats = {};
@@ -948,10 +1496,15 @@ struct GameRenderer
 
 		// bind & clear deferred framebuffer (both passes draw into it)
 		glBindFramebuffer(GL_FRAMEBUFFER, window->gbuf.rendertarget.fbo);
+		glViewport(0, 0, window->screen_width, window->screen_height);
 		glClearColor(0, 0, 0, 1.0f);
 		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
 		stats = {}; // reset per-frame draw statistics (read by the console)
+
+		// soft bodies are genuine two-sided sheets, and the studio floor/backdrop
+		// are single-sided planes : the deferred pass draws everything double-sided
+		glDisable(GL_CULL_FACE);
 
 		// every mode, one loop : the table supplies the shader, the buffer supplies its
 		// meshes. an empty mode skips the bind entirely, and the no-uv modes need nothing
@@ -961,27 +1514,206 @@ struct GameRenderer
 		{
 			DrawBuffer& db = drawbuffers[mode];
 			if (db.num_meshes == 0) continue;
+			if (!DRAW_MODE_INFO[mode].deferred) continue; // forward water owns a later pass
 
 			ShaderProgram& shader = shaders[DRAW_MODE_INFO[mode].shader];
 
 			glBindVertexArray(db.vao);
 			shader.bind();
 			glUniformMatrix4fv(glGetUniformLocation(shader.id, "proj_view"), 1, GL_FALSE, (float*)&proj_view);
-
-			// the water material reads these; non-water instances ignore the branch
-			glUniform3f(glGetUniformLocation(shader.id, "foam_color"),
-			            window->water_foam_color.x, window->water_foam_color.y,
-			            window->water_foam_color.z);
-			glUniform1f(glGetUniformLocation(shader.id, "foam_roughness"),
-			            window->water_foam_roughness);
-			glUniform1i(glGetUniformLocation(shader.id, "water_normal_map"), 1);
-			glUniform1f(glGetUniformLocation(shader.id, "water_detail"), window->water_detail);
-			glUniform1f(glGetUniformLocation(shader.id, "water_detail_tiles"), window->water_detail_tiles);
-			if (window->water_normal_tx) txloader.bind(window->water_normal_tx, 1);
+			shader.set_float("night", 0.f);
 
 			drawlists[mode].update(&db);
 			draw_pass(&db, &drawlists[mode]);
 		}
+	}
+
+	// one instanced pass over the light volumes, additively into the linear frame.
+	// the fragment shader reads the g-buffer, so a volume that covers a pixel but
+	// reaches no surface in it costs one texture fetch and a discard
+	void draw_light_volumes(GameWindow* window, mat4 proj_view, vec3 view_pos,
+	                        const Point_Light* lights, uint count)
+	{
+		if (count == 0) return;
+		if (count > MAX_LIGHTS) count = MAX_LIGHTS;
+
+		static LightInstance spheres[MAX_LIGHTS];
+		static LightInstance cones[MAX_LIGHTS];
+		uint num_spheres = 0, num_cones = 0;
+
+		for (uint i = 0; i < count; i++)
+		{
+			const Point_Light& l = lights[i];
+			vec3 dir = l.direction;
+			if (dot(dir, dir) < 1e-6f) dir = vec3(0, -1, 0);
+			else                       dir = normalize(dir);
+
+			LightInstance inst = {};
+			inst.pos_radius      = vec4(l.position, l.radius);
+			inst.color_power     = vec4(l.color, l.intensity);
+			inst.direction_shape = vec4(dir, (float)l.shape);
+			inst.params          = vec4(l.outer_angle, cosf(l.outer_angle), cosf(l.inner_angle), 0.f);
+
+			if (l.shape == LIGHT_CONE) cones[num_cones++] = inst;
+			else                       spheres[num_spheres++] = inst;
+		}
+
+		glBindFramebuffer(GL_FRAMEBUFFER, window->hdr.lit.fbo);
+		glViewport(0, 0, window->screen_width, window->screen_height);
+
+		glDisable(GL_DEPTH_TEST);
+		glDepthMask(GL_FALSE);
+		glEnable(GL_CULL_FACE);
+		glCullFace(GL_FRONT); // one layer of the closed volume, camera inside or out
+		glEnable(GL_BLEND);
+		glBlendFunc(GL_ONE, GL_ONE);
+
+		lightvol.shader.bind();
+		lightvol.shader.set_mat4("proj_view", proj_view);
+		lightvol.shader.set_vec3("view_pos", view_pos);
+		glUniform2i(glGetUniformLocation(lightvol.shader.id, "screen_size"),
+		            (int)window->screen_width, (int)window->screen_height);
+
+		glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, window->gbuf.rendertarget.position_tx);
+		glActiveTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_2D, window->gbuf.rendertarget.normal_tx);
+		glActiveTexture(GL_TEXTURE2); glBindTexture(GL_TEXTURE_2D, window->gbuf.rendertarget.albedo_tx);
+
+		glBindBuffer(GL_ARRAY_BUFFER, lightvol.inst_buffer);
+
+		if (num_spheres)
+		{
+			glBindVertexArray(lightvol.sphere.vao);
+			glBufferSubData(GL_ARRAY_BUFFER, 0, num_spheres * sizeof(LightInstance), spheres);
+			glDrawElementsInstanced(GL_TRIANGLES, lightvol.sphere.num_indices, GL_UNSIGNED_INT, 0, num_spheres);
+			stats.draw_calls++;
+			stats.instances += num_spheres;
+		}
+
+		if (num_cones)
+		{
+			glBindVertexArray(lightvol.cone.vao);
+			glBufferSubData(GL_ARRAY_BUFFER, 0, num_cones * sizeof(LightInstance), cones);
+			glDrawElementsInstanced(GL_TRIANGLES, lightvol.cone.num_indices, GL_UNSIGNED_INT, 0, num_cones);
+			stats.draw_calls++;
+			stats.instances += num_cones;
+		}
+
+		glCullFace(GL_BACK);
+		glDisable(GL_BLEND);
+		glEnable(GL_CULL_FACE);
+		glDepthMask(GL_TRUE);
+		glEnable(GL_DEPTH_TEST);
+	}
+
+	// append the light volumes as coloured wire shapes : a sphere for a point
+	// light, a cone for a spot, with a short axis line for the spot direction
+	void append_light_debug(const Point_Light* lights, uint count)
+	{
+		if (!debug_draw.lights) return;
+
+		for (uint i = 0; i < count; i++)
+		{
+			const Point_Light& l = lights[i];
+			vec4 color = vec4(glm::mix(l.color, vec3(1.f), .25f), .85f);
+
+			if (l.shape == LIGHT_CONE)
+			{
+				vec3 dir = l.direction;
+				if (dot(dir, dir) < 1e-6f) dir = vec3(0, -1, 0);
+				else                       dir = normalize(dir);
+
+				debug_draw.append_light_cone(l.position, dir, l.radius, l.outer_angle, color);
+				if (debug_draw.light_directions)
+					debug_draw.append_segment(l.position, l.position + dir * fminf(l.radius, 5.f),
+					                          vec4(1.f, .92f, .55f, 1.f));
+			}
+			else
+			{
+				debug_draw.append_sphere(l.position, l.radius, color);
+				debug_draw.append_cross(l.position, .25f, vec4(1.f, .92f, .55f, 1.f));
+			}
+		}
+	}
+
+	// forward water : copy the lit frame, then draw the water meshes over it. the
+	// copy is what the surface refracts; the g-buffer depth says how much water is
+	// between the surface and the floor
+	void draw_water(GameWindow* window, mat4 proj_view, vec3 view_pos, const Lighting& l)
+	{
+		DrawBuffer& db = drawbuffers[MODE_WATER];
+		if (db.num_meshes == 0) return;
+
+		// copy the g-buffer depth into the lit target's own depth renderbuffer : the
+		// water shader samples the g-buffer depth, and a texture cannot be both
+		// attached to the draw target and sampled in the same pass
+		glBindFramebuffer(GL_READ_FRAMEBUFFER, window->gbuf.rendertarget.fbo);
+		glBindFramebuffer(GL_DRAW_FRAMEBUFFER, window->hdr.lit.fbo);
+		glBlitFramebuffer(0, 0, window->screen_width, window->screen_height,
+		                  0, 0, window->screen_width, window->screen_height,
+		                  GL_DEPTH_BUFFER_BIT, GL_NEAREST);
+
+		glBindFramebuffer(GL_READ_FRAMEBUFFER, window->hdr.lit.fbo);
+		glBindFramebuffer(GL_DRAW_FRAMEBUFFER, window->hdr.scene_copy.fbo);
+		glBlitFramebuffer(0, 0, window->screen_width, window->screen_height,
+		                  0, 0, window->screen_width, window->screen_height,
+		                  GL_COLOR_BUFFER_BIT, GL_NEAREST);
+
+		glBindFramebuffer(GL_FRAMEBUFFER, window->hdr.lit.fbo);
+		glViewport(0, 0, window->screen_width, window->screen_height);
+
+		glEnable(GL_DEPTH_TEST);
+		glDepthFunc(GL_LEQUAL);
+		glDepthMask(GL_TRUE);
+		glDisable(GL_BLEND);
+		glEnable(GL_CULL_FACE);
+
+		ShaderProgram& shader = shaders[DRAW_MODE_INFO[MODE_WATER].shader];
+		shader.bind();
+		shader.set_mat4("proj_view", proj_view);
+		shader.set_vec3("view_pos", view_pos);
+		shader.set_float("near_plane", 0.1f); // matches Scene::update's projection
+		shader.set_float("far_plane", window->far_plane);
+		glUniform2f(glGetUniformLocation(shader.id, "screen_size"),
+		            (float)window->screen_width, (float)window->screen_height);
+
+		vec3 sun_dir = l.sun_direction;
+		if (dot(sun_dir, sun_dir) < 1e-6f) sun_dir = vec3(-0.36f, -0.84f, -0.30f);
+		sun_dir = normalize(sun_dir);
+
+		shader.set_vec3 ("sun_direction", sun_dir);
+		shader.set_vec3 ("sun_color", l.sun_color);
+		shader.set_float("sun_power", l.sun_power);
+		shader.set_vec3 ("moon_direction", l.moon_direction);
+		shader.set_vec3 ("moon_color", l.moon_color);
+		shader.set_float("moon_power", l.moon_power);
+		shader.set_float("moon_disk", l.moon_disk);
+		shader.set_vec3("zenith", l.zenith);
+		shader.set_vec3("haze",   l.haze);
+		shader.set_vec3("glow",   l.glow);
+		shader.set_vec3("ground", l.ground);
+		shader.set_vec3("ambient_up",   l.ambient_up);
+		shader.set_vec3("ambient_side", l.ambient_side);
+		shader.set_vec3("ambient_down", l.ambient_down);
+		shader.set_float("fog_density", l.fog_density);
+
+		shader.set_vec3 ("foam_color", window->water_foam_color);
+		shader.set_float("foam_roughness", window->water_foam_roughness);
+		shader.set_float("water_detail", window->water_detail);
+		shader.set_float("water_sss", window->water_sss);
+		shader.set_float("water_time", window->water_time);
+
+		glActiveTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_2D, window->hdr.scene_copy.color_tx);
+		glActiveTexture(GL_TEXTURE2); glBindTexture(GL_TEXTURE_2D, window->gbuf.rendertarget.depth_tx);
+		glActiveTexture(GL_TEXTURE3); txloader.bind(window->water_normal_tx, 3);
+		glActiveTexture(GL_TEXTURE4); txloader.bind(foam_pattern_tx, 4);
+		glActiveTexture(GL_TEXTURE5); glBindTexture(GL_TEXTURE_2D, window->gbuf.rendertarget.normal_tx);
+		glActiveTexture(GL_TEXTURE0);
+
+		glBindVertexArray(db.vao);
+		drawlists[MODE_WATER].update(&db);
+		draw_pass(&db, &drawlists[MODE_WATER]);
+
+		glDepthFunc(GL_LESS);
 	}
 
 	// issue the instanced draw calls for one buffer, tallying stats. the pose upload is

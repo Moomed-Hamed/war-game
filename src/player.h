@@ -33,8 +33,7 @@ const float WEAPON_KICK   = .5f;    // recoil kick -> metres
 const float WEAPON_SWAY   = .0035f; // mouse delta -> sway radians
 const float WEAPON_ROLL   = 1.4f;   // shot : how much the kick rolls the gun
 
-// the action *is* the clip's segment index : the action time drives the
-// segment with the same number
+// action state : each weapon maps it to its own clip segment
 enum { GUN_RELOAD = 0, GUN_SHOOT, GUN_INSPECT, GUN_IDLE };
 
 struct Player
@@ -48,9 +47,15 @@ struct Player
 	uint  bullet_mesh; // small sphere for the projectiles
 	uint  sfx_fire[3], sfx_reload, sfx_inspect, sfx_hit; // mixer slots
 	uint  shot_variant; // which shot take plays next
-	uint  action;      // GUN_* (also the segment index)
+	uint  action;      // GUN_* state, mapped to a segment below
 	float action_time; // seconds left in the action
 	uint  ammo;
+	uint  mag_size;
+
+	// each weapon's clip slices are laid out differently : keep the action map
+	// with the equipped gun instead of assuming GUN_* is the segment index
+	uint  seg_reload, seg_shoot, seg_inspect, seg_idle;
+	float reload_time, inspect_time;
 
 	// juice : every one of these springs back to nothing
 	vec3  kick, kick_vel; // recoil offset on the gun, view space (right, up, back)
@@ -77,6 +82,15 @@ struct Player
 		camera.pitch    = 0;
 		camera.update_dir(0, 0, 0);
 
+		// the default map matches the test pistol; equip_loaded retunes it
+		seg_reload  = GUN_RELOAD;
+		seg_shoot   = GUN_SHOOT;
+		seg_inspect = GUN_INSPECT;
+		seg_idle    = GUN_IDLE;
+		reload_time  = GUN_RELOAD_TIME;
+		inspect_time = GUN_INSPECT_TIME;
+		mag_size     = GUN_MAG;
+
 		// the view gun rides the display row's mesh : its instance is appended
 		// just before the row each frame, so the mesh keeps one contiguous run
 		gun_mesh = mesh;
@@ -86,28 +100,96 @@ struct Player
 		// a scene with no view model passes mesh 0 : the capsule still works
 		if (gun_mesh && clip)
 		{
-			gun_player = renderer->animloader.play(clip, GUN_IDLE, .5f);
+			gun_player = renderer->animloader.play(clip, seg_idle, .5f);
 			if (gun_player == (uint)-1)
 			{
 				gun_mesh = 0;
 				console->add_entry("Player : view model failed to load", FIXME, PHYS);
 			}
-			else renderer->bind_player(gun_mesh, gun_player);
-
-			bullet_mesh = renderer->add_mesh(MeshFactory::generate_uv_sphere(.04f, 8, 6));
-
-			sfx_fire[0] = audio.load("shot 1",  "assets/audio/pistol_shot_1.audio");
-			sfx_fire[1] = audio.load("shot 2",  "assets/audio/pistol_shot_2.audio");
-			sfx_fire[2] = audio.load("shot 3",  "assets/audio/pistol_shot_3.audio");
-			sfx_reload  = audio.load("reload",  "assets/audio/arm.audio");
-			sfx_inspect = audio.load("inspect", "assets/audio/lmg_tail.audio");
-			sfx_hit     = audio.load("hit",     "assets/audio/hitmarker.audio");
+			else
+			{
+				renderer->bind_player(gun_mesh, gun_player);
+				ensure_weapon_assets(renderer);
+			}
 		}
 
-		ammo   = gun_mesh ? GUN_MAG : 0;
+		ammo   = gun_mesh ? mag_size : 0;
 		action = GUN_IDLE;
 
 		console->add_entry("Player spawned : F swaps to the fly camera", SUCCESS, PHYS);
+	}
+
+	// the bullet mesh and takes are shared by every equipped weapon
+	void ensure_weapon_assets(GameRenderer* renderer)
+	{
+		if (bullet_mesh) return;
+
+		bullet_mesh = renderer->add_mesh(MeshFactory::generate_uv_sphere(.04f, 8, 6));
+
+		sfx_fire[0] = audio.load("shot 1",  "assets/audio/pistol_shot_1.audio");
+		sfx_fire[1] = audio.load("shot 2",  "assets/audio/pistol_shot_2.audio");
+		sfx_fire[2] = audio.load("shot 3",  "assets/audio/pistol_shot_3.audio");
+		sfx_reload  = audio.load("reload",  "assets/audio/arm.audio");
+		sfx_inspect = audio.load("inspect", "assets/audio/lmg_tail.audio");
+		sfx_hit     = audio.load("hit",     "assets/audio/hitmarker.audio");
+	}
+
+	// take a mesh/player that is already in the animated buffer (the armory row)
+	// and make it the view model, with its own magazine and action segments
+	void equip_loaded(GameRenderer* renderer, uint mesh, uint player_id, uint mag,
+	                  uint reload_seg, uint shoot_seg, uint inspect_seg, uint idle_seg)
+	{
+		if (!mesh || player_id == (uint)-1) return;
+		if (player_id >= renderer->animloader.num_players) return;
+
+		gun_mesh = mesh;
+		gun_player = player_id;
+		renderer->bind_player(gun_mesh, gun_player);
+		ensure_weapon_assets(renderer);
+
+		Anim_Player& ap = renderer->animloader.players[gun_player];
+		Animation& clip = renderer->animloader.clips[ap.clip_id];
+		uint count = clip.num_segs;
+
+		if (count == 0) return;
+		if (idle_seg    >= count) idle_seg    = count - 1;
+		if (reload_seg  >= count) reload_seg  = count - 1;
+		if (shoot_seg   >= count) shoot_seg   = count - 1;
+		if (inspect_seg >= count) inspect_seg = count - 1;
+
+		seg_reload  = reload_seg;
+		seg_shoot   = shoot_seg;
+		seg_inspect = inspect_seg;
+		seg_idle    = idle_seg;
+
+		// the takes are authored at 24 fps : use the real frame span for the
+		// action lock so each weapon's reload finishes with its animation
+		uint reload_span  = clip.segs[reload_seg].last - clip.segs[reload_seg].first + 1;
+		uint inspect_span = clip.segs[inspect_seg].last - clip.segs[inspect_seg].first + 1;
+		reload_time  = (float)reload_span / 24.f;
+		inspect_time = (float)inspect_span / 24.f;
+		if (reload_time  < .15f) reload_time  = .15f;
+		if (inspect_time < .15f) inspect_time = .15f;
+
+		mag_size = mag;
+		ammo     = mag;
+		action   = GUN_IDLE;
+		action_time = 0;
+
+		ap.control.loop = true;
+		renderer->animloader.blend_to(gun_player, seg_idle, .35f);
+	}
+
+	// the hand is empty or holds a non-weapon : hide the view model, keep the
+	// bullet/audio assets ready for the next equip
+	void unequip()
+	{
+		gun_mesh = 0;
+		gun_player = (uint)-1;
+		ammo = 0;
+		mag_size = 0;
+		action = GUN_IDLE;
+		action_time = 0;
 	}
 
 	// one frame : input -> movement -> camera -> weapon -> projectiles. armed is
@@ -196,7 +278,7 @@ struct Player
 			action_time -= dt;
 			if (action_time <= 0)
 			{
-				if (action == GUN_RELOAD) ammo = GUN_MAG;
+				if (action == GUN_RELOAD) ammo = mag_size;
 				action = GUN_IDLE;
 				action_time = 0;
 				to_idle(renderer);
@@ -209,8 +291,10 @@ struct Player
 		if (ours && action == GUN_IDLE)
 		{
 			if (window->mouse.left_button.is_pressed) fire(renderer, phys);
-			else if (window->keys.R.is_pressed && ammo < GUN_MAG) start_action(renderer, GUN_RELOAD, GUN_RELOAD_TIME);
-			else if (window->keys.N.is_pressed) start_action(renderer, GUN_INSPECT, GUN_INSPECT_TIME);
+			else if (window->keys.R.is_pressed && ammo < mag_size)
+				start_action(renderer, GUN_RELOAD, reload_time, seg_reload);
+			else if (window->keys.N.is_pressed)
+				start_action(renderer, GUN_INSPECT, inspect_time, seg_inspect);
 		}
 
 		// sway : the mouse kicks it, a spring drags it home
@@ -230,7 +314,7 @@ struct Player
 
 	// cut to an action : the anim player crossfades from the pose on screen, and
 	// the action's sound plays here so the tab buttons sound like the keys
-	void start_action(GameRenderer* renderer, uint a, float time)
+	void start_action(GameRenderer* renderer, uint a, float time, uint seg)
 	{
 		action = a;
 		action_time = time;
@@ -241,7 +325,7 @@ struct Player
 		if (gun_player == (uint)-1) return;
 
 		renderer->animloader.players[gun_player].control.loop = false; // play once
-		renderer->animloader.blend_to(gun_player, a, time);
+		renderer->animloader.blend_to(gun_player, seg, time);
 	}
 
 	void to_idle(GameRenderer* renderer)
@@ -249,14 +333,14 @@ struct Player
 		if (gun_player == (uint)-1) return;
 
 		renderer->animloader.players[gun_player].control.loop = true;
-		renderer->animloader.blend_to(gun_player, GUN_IDLE, .5f);
+		renderer->animloader.blend_to(gun_player, seg_idle, .5f);
 	}
 
 	void fire(GameRenderer* renderer, Physics* phys)
 	{
 		if (!gun_mesh) return; // nothing to fire
 
-		start_action(renderer, GUN_SHOOT, GUN_SHOT_TIME);
+		start_action(renderer, GUN_SHOOT, GUN_SHOT_TIME, seg_shoot);
 
 		if (ammo == 0) return; // dry click, nothing leaves
 

@@ -20,10 +20,19 @@ in VS_OUT vs_out;
 layout (binding = 0) uniform sampler2D positions; // rgb world pos, a metallic
 layout (binding = 1) uniform sampler2D normals;   // rgb world normal, a roughness
 layout (binding = 2) uniform sampler2D albedo;    // rgb base color, a = ao
+layout (binding = 3) uniform sampler2DShadow shadow_map;
 
 layout (location = 0) out vec4 pixel_color;
 
 uniform mat4 proj_view; // the occlusion taps land with it
+
+uniform mat4  light_proj_view;
+uniform vec3  shadow_direction;
+uniform float shadow_texel;
+uniform float shadow_world_texel;
+uniform float shadow_on;
+uniform float shadow_moon;
+uniform float shadow_bias;
 
 // ---- per-scene lighting ---------------------------------------------------
 // uploaded from GameWindow::draw_gbuf. directions are the direction the light
@@ -38,10 +47,15 @@ uniform vec3  rim_direction;
 uniform vec3  rim_color;
 uniform float rim_power;
 
-uniform float exposure;
+uniform vec3  moon_direction;
+uniform vec3  moon_color;
+uniform float moon_power;
+uniform float moon_disk;
+
 uniform float fog_density;
 uniform float multiscatter;
 uniform float ao_strength;
+uniform float night; // 0 = day, 1 = night : drives the emissive markers
 
 uniform vec3 zenith;
 uniform vec3 haze;
@@ -78,8 +92,17 @@ vec3 environment(vec3 dir)
     // the sun : an antialiased disk plus a bloom wide enough to smear across a rough
     // sphere instead of sitting on it as a dot
     float d = max(dot(dir, L_sun), 0.0);
-    float disk = smoothstep(0.99930, 0.99975, d);
-    return col + sun_color * (disk * 26.0 + pow(d, 24.0) * 0.35 + pow(d, 4.0) * 0.05) * sun_disk;
+    float sun_patch = smoothstep(0.99930, 0.99975, d);
+    vec3 sky = col + sun_color * (sun_patch * 26.0 + pow(d, 24.0) * 0.35
+                                + pow(d, 4.0) * 0.05) * sun_disk;
+
+    // the moon is a smaller, cooler disk with a faint halo
+    vec3 L_moon = -moon_direction;
+    float dm = max(dot(dir, L_moon), 0.0);
+    float moon_patch = smoothstep(0.99955, 0.99982, dm);
+    sky += moon_color * (moon_patch * 22.0 + pow(dm, 96.0) * 0.30) * moon_disk;
+
+    return sky;
 }
 
 // hemisphere irradiance : three zones is enough for the eye to read the sky's shape
@@ -122,11 +145,6 @@ vec2 env_brdf(float roughness, float NdotV)
     vec4 r = roughness * c0 + c1;
     float a004 = min(r.x * r.x, exp2(-9.28 * NdotV)) * r.x + r.y;
     return vec2(-1.04, 1.04) * a004 + r.zw;
-}
-
-vec3 aces(vec3 x) // Narkowicz fit
-{
-    return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0);
 }
 
 // one analytic light : cook-torrance, and nothing occludes it. the occlusion below
@@ -204,10 +222,41 @@ float ssao(vec3 P, vec3 N)
     return clamp(1.0 - occ / float(taps) * ao_strength, 0.0, 1.0);
 }
 
-// interleaved gradient noise, +/- half an 8-bit step after encode : kills banding
-float screen_dither()
+// 3x3 PCF sun visibility : zero outside the shadow frustum or when the feature
+// is off, so the pass can be toggled without another shader. the normal offset
+// and hardware PCF are what keep the map from banding across a flat surface
+float sun_shadow(vec3 P, vec3 N)
 {
-    return (fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715)))) - 0.5) / 255.0;
+    if (shadow_on < 0.5) return 1.0;
+
+    // move the receiver a little along its normal before projecting : the cheapest
+    // cure for self-shadow acne at grazing angles
+    vec3 Pn = P + N * (shadow_world_texel * 1.5);
+    vec4 lp = light_proj_view * vec4(Pn, 1.0);
+    vec3 proj = lp.xyz / lp.w * 0.5 + 0.5;
+    if (proj.x < 0.0 || proj.x > 1.0 || proj.y < 0.0 || proj.y > 1.0 || proj.z > 1.0)
+        return 1.0;
+
+    float bias = max(shadow_bias * (1.0 - dot(N, -shadow_direction)), shadow_bias * 0.35);
+
+    // eight rotated taps over a hardware 2x2 comparison : a soft edge with no
+    // visible 3x3 grid pattern
+    const vec2 poisson[8] = vec2[](
+        vec2(-0.613, 0.617), vec2(0.170, -0.040), vec2(-0.299, -0.792),
+        vec2(0.645, 0.318), vec2(-0.880, 0.039), vec2(0.961, -0.443),
+        vec2(0.128, 0.879), vec2(-0.315, 0.279));
+
+    float turn = hash(gl_FragCoord.xy) * 6.2831853;
+    mat2 spin = mat2(cos(turn), -sin(turn), sin(turn), cos(turn));
+
+    float lit = 0.0;
+    for (int i = 0; i < 8; i++)
+    {
+        vec2 offset = spin * poisson[i] * shadow_texel * 1.7;
+        lit += texture(shadow_map, vec3(proj.xy + offset, proj.z - bias));
+    }
+
+    return lit / 8.0;
 }
 
 // ---- main -----------------------------------------------------------------
@@ -228,8 +277,7 @@ void main()
     // nothing rasterized here : the open sky
     if (dot(norm_tex.rgb, norm_tex.rgb) < 1e-8)
     {
-        vec3 col = aces(exposure * environment(view_dir));
-        pixel_color = vec4(pow(col, vec3(1.0 / 2.2)) + screen_dither(), 1.0);
+        pixel_color = vec4(environment(view_dir), 1.0);
         return;
     }
 
@@ -238,6 +286,10 @@ void main()
     float metallic  = clamp(pos_tex.a,  0.0, 1.0);
     float roughness = clamp(norm_tex.a, 0.045, 1.0);
     float ao        = clamp(alb_tex.a,  0.0, 1.0);
+
+    // an ao value above 1 marks an emitter : the excess becomes the emissive
+    // strength, and the rest of the pass still treats ao as a plain occlusion
+    float emissive = max(alb_tex.a - 1.0, 0.0);
 
     vec3 N = normalize(norm_tex.rgb);
     vec3 P = pos_tex.rgb;
@@ -264,7 +316,13 @@ void main()
     vec3 L_sun = -sun_direction;
     vec3 L_rim = -rim_direction;
 
-    vec3 direct = direct_light(N, V, L_sun, sun_color * sun_power,
+    float shadow_vis = sun_shadow(P, N);
+    float sun_vis  = shadow_moon > 0.5 ? 1.0 : shadow_vis;
+    float moon_vis = shadow_moon > 0.5 ? shadow_vis : 1.0;
+
+    vec3 direct = direct_light(N, V, L_sun, sun_color * sun_power * sun_vis,
+                               base, F0, metallic, spec_rough, NdotV)
+                + direct_light(N, V, -moon_direction, moon_color * moon_power * moon_vis,
                                base, F0, metallic, spec_rough, NdotV)
                 + direct_light(N, V, L_rim, rim_color * rim_power,
                                base, F0, metallic, spec_rough, NdotV);
@@ -292,12 +350,14 @@ void main()
 
     vec3 color = direct + diffuse_amb + specular_amb;
 
+    // emitters : lit windows, lamp heads, interior panels. only at night, so
+    // the same materials read as plain glass or metal in daylight
+    color += base * emissive * night * 3.0;
+
     // --- distance : the world fades into the sky it stands in ----------------
     float dist = length(P - vs_out.view_position);
     color = mix(color, environment(view_dir), 1.0 - exp(-dist * fog_density));
 
-    // --- output : exposure -> ACES -> display encode, 1 lsb of dither ---------
-    color = aces(exposure * color);
-    color = pow(color, vec3(1.0 / 2.2));
-    pixel_color = vec4(color + screen_dither(), 1.0);
+    // linear HDR : local lights add here, water draws over it, then post encodes
+    pixel_color = vec4(color, 1.0);
 }
