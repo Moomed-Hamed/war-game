@@ -17,48 +17,6 @@ const float MAX_SOUND_SECONDS = 3.f; // safety cap : the head/tail trim does the
 const float TRIM_HEAD = .03f;        // sample thresholds, fraction of the peak
 const float TRIM_TAIL = .06f;
 
-typedef ALuint Audio;
-
-// raw load : one file in, one ready source out
-Audio load_audio(const char* path)
-{
-	uint format = 0, size = 0, sample_rate = 0;
-	byte* audio_data = NULL;
-
-	FILE* file = fopen(path, "rb"); // rb = read binary
-	if (file == NULL)
-	{
-		char msg[MAX_LOG_MSG_LENGTH];
-		snprintf(msg, MAX_LOG_MSG_LENGTH, "audio not found : %s", path);
-		console->add_entry(msg, FIXME, AUDI);
-		return 0;
-	}
-
-	fread(&format     , sizeof(uint), 1, file);
-	fread(&sample_rate, sizeof(uint), 1, file);
-	fread(&size       , sizeof(uint), 1, file);
-
-	audio_data = Alloc(byte, size);
-	fread(audio_data, sizeof(byte), size, file);
-	fclose(file);
-
-	ALuint buffer_id = NULL;
-	alGenBuffers(1, &buffer_id);
-	alBufferData(buffer_id, format, audio_data, size, sample_rate);
-
-	ALuint source_id = NULL;
-	alGenSources(1, &source_id);
-	alSourcei(source_id, AL_BUFFER, buffer_id);
-
-	free(audio_data);
-	return source_id;
-}
-
-void play_audio(Audio source_id)
-{
-	alSourcePlay(source_id);
-}
-
 struct GameAudio
 {
 	struct Sound
@@ -318,4 +276,3 @@ struct GameAudio
 };
 
 GameAudio audio; // one mixer for the process
-Audio pop_sound, shot_sound; // the Audio tab's ad-hoc takes (raw sources)

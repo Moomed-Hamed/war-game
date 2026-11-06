@@ -12,12 +12,8 @@ uniform ivec2 screen_size;
 
 in vec3 light_center;
 in vec3 light_color;
-in vec3 light_dir;
 in float light_radius;
 in float light_power;
-in float light_outer_cos;
-in float light_inner_cos;
-in float light_shape;
 
 layout (location = 0) out vec4 pixel_color;
 
@@ -69,15 +65,6 @@ void main()
 	float x = clamp(d / light_radius, 0.0, 1.0);
 	float window = 1.0 - smoothstep(0.55, 1.0, x);
 	float attenuation = window * window / (1.0 + d * d * 0.35);
-
-	if (light_shape > 0.5)
-	{
-		// a cone : fade from the hot core at the inner angle to zero at the rim
-		float cos_angle = dot(normalize(P - light_center), light_dir);
-		if (cos_angle <= light_outer_cos)
-			discard;
-		attenuation *= smoothstep(light_outer_cos, light_inner_cos, cos_angle);
-	}
 
 	vec3 N = normalize(norm_tex.rgb);
 	vec3 V = normalize(view_pos - P);

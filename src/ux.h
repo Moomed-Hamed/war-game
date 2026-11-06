@@ -367,10 +367,8 @@ static void draw_meshdrawlist_panel(GameRenderer* rndr)
    using namespace CNSL;
 
    static const ImVec4 mode_colors[DRAW_MODE_COUNT] = {
-      ImVec4(0.65f, 0.76f, 0.87f, 1), // 1  static + uv    : dusty blue
-      ImVec4(0.56f, 0.66f, 0.78f, 1), // 3  static, no uv  : deeper blue
-      ImVec4(0.75f, 0.68f, 0.85f, 1), // 2  skinned + uv   : muted lilac
-      ImVec4(0.68f, 0.60f, 0.80f, 1), // 4  skinned, no uv : deeper lilac
+      ImVec4(0.65f, 0.76f, 0.87f, 1), // static + uv : dusty blue
+      ImVec4(0.56f, 0.66f, 0.78f, 1), // water       : deeper blue
    };
 
    section("Mesh Draw List");
@@ -490,24 +488,12 @@ static void draw_gpubuffers_panel(GameRenderer* rndr)
    }
 
    // and the cpu side : what the loaders hold besides the buffers
-   uint disk = 0, clip_ram = 0, tex_ram = 0;
-
-   for (uint i = 0; i < MAX_MESHES; i++)
-   {
-      if (rndr->meshloader.meshes[i].size      != (uint)-1) disk += rndr->meshloader.meshes[i].size;
-      if (rndr->meshloader_anim.meshes[i].size != (uint)-1) disk += rndr->meshloader_anim.meshes[i].size;
-   }
-
-   for (uint i = 1; i < MAX_ANIMATIONS; i++) // slot 0 = no clip
-      if (rndr->animloader.clip_paths[i][0])
-         clip_ram += rndr->animloader.clips[i].num_bones * rndr->animloader.clips[i].num_frames * (uint)sizeof(mat4);
+   uint tex_ram = 0;
 
    for (uint i = 0; i < rndr->txloader.num_textures; i++)
       tex_ram += rndr->txloader.textures[i].width * rndr->txloader.textures[i].height * 3; // decoded to rgb
 
-   kv("mesh files"    , "%.1f KB on disk", disk / 1024.f);
-   kv("clip keyframes", "%.1f KB in ram", clip_ram / 1024.f);
-   kv("textures"      , "~%.1f KB decoded", tex_ram / 1024.f);
+   kv("textures", "~%.1f KB decoded", tex_ram / 1024.f);
 }
 
 // the scene owns the camera and the input : this only reads them
@@ -561,26 +547,11 @@ void draw_DEBUG_console(GameRenderer* rndr, Scene* scene)
       ImGui::Checkbox("interaction ray", &scene->phys.debug.rays);
       ImGui::TextDisabled("green awake | amber asleep | steel static | magenta constraints");
 
-      section("Animation");
-      ImGui::Checkbox("skeleton", &rndr->animdebug.enabled);
-      ImGui::SameLine();
-      ImGui::Checkbox("bones", &rndr->animdebug.bones);
-      ImGui::SameLine();
-      ImGui::Checkbox("parent links", &rndr->animdebug.links);
-      ImGui::SameLine();
-      ImGui::Checkbox("joint axes", &rndr->animdebug.axes);
-      ImGui::TextDisabled("bone tint follows the chain/index ramp");
-
       section("Lighting");
-      ImGui::Checkbox("light volumes", &debug_draw.lights);
+      ImGui::Checkbox("light wires", &debug_draw.lights);
       ImGui::SameLine();
-      ImGui::Checkbox("spot direction", &debug_draw.light_directions);
-
-      uint points = 0, cones = 0;
-      for (uint i = 0; i < scene->num_lights; i++)
-         if (scene->lights[i].shape == LIGHT_CONE) cones++; else points++;
-      ImGui::Text("%u point  |  %u spot  |  %s", points, cones,
-                  scene->local_lights ? "volumes on" : "volumes off");
+      ImGui::Checkbox("local lighting", &scene->local_lights);
+      ImGui::Text("%u point lights", scene->num_lights);
       ImGui::TextDisabled("wire tint follows each light's colour");
 
       section("Rendering");
@@ -592,15 +563,13 @@ void draw_DEBUG_console(GameRenderer* rndr, Scene* scene)
       ImGui::TextDisabled("axes : X red | Y green | Z blue | frustum cyan");
 
       section("Scene");
-      ImGui::Text("%u props  |  %u actors  |  %u lights", scene->num_props,
-                  scene->num_actors, scene->num_lights);
+      ImGui::Text("%u props  |  %u lights", scene->num_props, scene->num_lights);
 
       if (ImGui::Button("all debug off"))
       {
          scene->phys.debug.enabled = false;
          scene->phys.debug.constraints = false;
          scene->phys.debug.rays = false;
-         rndr->animdebug.enabled = false;
          debug_draw.lights = false;
          debug_draw.camera = false;
          debug_draw.axes = false;
@@ -628,15 +597,12 @@ void draw_PHYS_console(Physics* phys)
          ImVec4(0.86f, 0.64f, 0.58f, 1), // cone     : clay
       };
 
-      // joint kinds : hinge, cone twist, hinge2 (the car's wheels)
-      static const char* joint_names[] = { "none", "hinge", "cone", "hinge2",
-                                           "point", "slider", "fixed" };
+      // joint kinds : hinge, cone twist, slider, fixed
+      static const char* joint_names[] = { "none", "hinge", "cone", "slider", "fixed" };
       static const ImVec4 joint_colors[] = {
          ImVec4(1, 1, 1, 1),
          ImVec4(0.70f, 0.76f, 0.88f, 1), // hinge  : pale slate
          ImVec4(0.80f, 0.70f, 0.86f, 1), // cone   : soft mauve
-         ImVec4(0.86f, 0.78f, 0.56f, 1), // hinge2 : soft ochre
-         ImVec4(0.72f, 0.86f, 0.80f, 1), // point  : mint
          ImVec4(0.90f, 0.66f, 0.54f, 1), // slider : clay
          ImVec4(0.82f, 0.80f, 0.62f, 1), // fixed  : sand
       };
@@ -667,40 +633,6 @@ void draw_PHYS_console(Physics* phys)
          ImGui::TextColored(shape_colors[s], "%u %s", shape_counts[s], shape_names[s]);
       }
 
-      // vehicle : live numbers read straight off the raycast car (only when built)
-      if (phys->vehicle.chassis_id)
-      {
-         section("Vehicle");
-         float speed = phys->vehicle_speed();
-         kv("speed", "%.2f m/s  |  %.1f km/h", speed, speed * 3.6f);
-         kv("steer", "%.1f deg", phys->vehicle_steer() * 180.f / PI);
-         kv("wheel", "%.2f rev", phys->vehicle_spin() / (2.f * PI));
-         kv("input", "engine %.0f | steer %.0f deg", phys->vehicle.spin_cmd,
-            phys->vehicle.steer_cmd * 180.f / PI);
-
-         if (phys->vehicle.car && ImGui::BeginTable("physwheels", 4, TABLE_FLAGS))
-         {
-            ImGui::TableSetupColumn("axle",      ImGuiTableColumnFlags_WidthFixed, ui(56));
-            ImGui::TableSetupColumn("contact",   ImGuiTableColumnFlags_WidthFixed, ui(46));
-            ImGui::TableSetupColumn("susp m",    ImGuiTableColumnFlags_WidthFixed, ui(52));
-            ImGui::TableSetupColumn("steer deg", ImGuiTableColumnFlags_WidthFixed, ui(66));
-            ImGui::TableHeadersRow();
-
-            for (int i = 0; i < 4; i++)
-            {
-               const btWheelInfo& w = phys->vehicle.car->getWheelInfo(i);
-               ImGui::TableNextRow();
-               ImGui::TableNextColumn(); ImGui::Text("%s %u", i < 2 ? "front" : "rear", i % 2 + 1);
-               ImGui::TableNextColumn(); ImGui::Text("%s", w.m_raycastInfo.m_isInContact ? "yes" : "no");
-               ImGui::TableNextColumn(); ImGui::Text("%.2f", w.m_raycastInfo.m_suspensionLength);
-               ImGui::TableNextColumn();
-               if (i < 2) ImGui::Text("%.1f", w.m_steering * 180.f / PI);
-               else       ImGui::TextDisabled("-");
-            }
-            ImGui::EndTable();
-         }
-      }
-
       section("Constraints");
       if (phys->num_joints == 0)
          ImGui::TextDisabled("none built yet");
@@ -724,9 +656,8 @@ void draw_PHYS_console(Physics* phys)
             ImGui::TableNextColumn(); ImGui::TextColored(shape_colors[phys->bodies[jt.a].shape], "%u", jt.a);
             ImGui::TableNextColumn(); ImGui::TextColored(shape_colors[phys->bodies[jt.b].shape], "%u", jt.b);
             ImGui::TableNextColumn();
-            if (jt.kind == PHYS_CONETWIST)   ImGui::Text("swing %.0f | twist %.0f", jt.lo * to_deg, jt.hi * to_deg);
-            else if (jt.kind == PHYS_HINGE2) ImGui::Text("steer +-%.0f", jt.hi * to_deg);
-            else                             ImGui::Text("%.0f .. %.0f", jt.lo * to_deg, jt.hi * to_deg);
+            if (jt.kind == PHYS_CONETWIST) ImGui::Text("swing %.0f | twist %.0f", jt.lo * to_deg, jt.hi * to_deg);
+            else                           ImGui::Text("%.0f .. %.0f", jt.lo * to_deg, jt.hi * to_deg);
          }
          ImGui::EndTable();
       }
@@ -804,159 +735,6 @@ void draw_ASST_console(GameWindow* window, GameRenderer* rndr)
 
    if (ImGui::BeginTabItem("Assets"))
    {
-      // both mesh loaders and draw buffers share field names, so one table covers both
-      auto mesh_table = [](const char* table_id, auto* meshes, auto* db, uint vert_bytes, TextureLoader* tx)
-      {
-         if (!ImGui::BeginTable(table_id, 7,
-            TABLE_FLAGS))
-            return;
-
-         ImGui::TableSetupColumn("id"  , ImGuiTableColumnFlags_WidthFixed, ui(30));
-         ImGui::TableSetupColumn("file", ImGuiTableColumnFlags_WidthFixed, ui(190));
-         ImGui::TableSetupColumn("disk", ImGuiTableColumnFlags_WidthFixed, ui(54));
-         ImGui::TableSetupColumn("verts", ImGuiTableColumnFlags_WidthFixed, ui(58));
-         ImGui::TableSetupColumn("tris",  ImGuiTableColumnFlags_WidthFixed, ui(54));
-         ImGui::TableSetupColumn("gpu" , ImGuiTableColumnFlags_WidthFixed, ui(54));
-         ImGui::TableSetupColumn("texture", ImGuiTableColumnFlags_WidthFixed, ui(100));
-         ImGui::TableHeadersRow();
-
-         // texture id -> file name only (the loader holds the full path)
-         auto tx_name = [](const char* path)
-         {
-            const char* slash = strrchr(path, '/');
-            return slash ? slash + 1 : path;
-         };
-
-         for (uint m = 0; m < MAX_MESHES; m++)
-         {
-            if (meshes[m].id == 0) continue;
-
-            // disk size (get_file_size returns (uint)-1 on failure)
-            char disk[24];
-            if (meshes[m].size == (uint)-1)
-               snprintf(disk, sizeof(disk), "?");
-            else
-               snprintf(disk, sizeof(disk), "%.1f KB", meshes[m].size / 1024.f);
-
-            // find this mesh's slot in the draw buffer (holds the vertex counts)
-            bool in_gpu_buffer = false;
-
-            for (uint i = 0; i < MAX_MESHES; i++)
-            {
-               if (db->mesh_info[i].mesh_id != meshes[m].id) continue;
-               in_gpu_buffer = true;
-
-               uint gpu_bytes = (db->mesh_info[i].num_vertices * vert_bytes)
-                              + (db->mesh_info[i].num_indices  * sizeof(uint));
-
-               uint tx_id = db->mesh_info[i].tx_id;
-
-               ImGui::TableNextRow();
-               ImGui::TableNextColumn(); ImGui::Text("%u", meshes[m].id);
-               ImGui::TableNextColumn(); ImGui::Text("%s", meshes[m].filepath);
-               ImGui::TableNextColumn(); ImGui::Text("%s", disk);
-               ImGui::TableNextColumn(); ImGui::Text("%u", db->mesh_info[i].num_vertices);
-               ImGui::TableNextColumn(); ImGui::Text("%u", db->mesh_info[i].num_indices / 3);
-               ImGui::TableNextColumn(); ImGui::Text("%.1f KB", gpu_bytes / 1024.f);
-               ImGui::TableNextColumn();
-               if (tx_id < tx->num_textures)
-                  ImGui::Text("%u : %s", tx_id, tx_name(tx->textures[tx_id].path));
-               else
-                  ImGui::TextColored(severity_colors[WARNING], "%u : missing", tx_id);
-               break;
-            }
-
-            // id reserved but nothing in the buffer = load failed (reason is in Console tab)
-            if (!in_gpu_buffer)
-            {
-               ImGui::TableNextRow();
-               ImGui::TableNextColumn(); ImGui::Text("%u", meshes[m].id);
-               ImGui::TableNextColumn();
-               ImGui::TextColored(severity_colors[FIXME], "%s  (NOT IN GPU BUFFER)", meshes[m].filepath);
-               ImGui::TableNextColumn(); ImGui::Text("%s", disk);
-               ImGui::TableNextColumn(); ImGui::TextColored(severity_colors[FIXME], "-");
-               ImGui::TableNextColumn(); ImGui::TextColored(severity_colors[FIXME], "-");
-               ImGui::TableNextColumn(); ImGui::TextColored(severity_colors[FIXME], "-");
-               ImGui::TableNextColumn(); ImGui::TextColored(severity_colors[FIXME], "-");
-            }
-         }
-         ImGui::EndTable();
-      };
-
-      // ---- meshes : one layout at a time. the picker is the drawer mode, which also
-      // makes the no-uv buffers visible here instead of nowhere
-      section("Meshes");
-
-      // the table id has to differ per layout : imgui keys its state on that string
-      static const char* mesh_table_ids[DRAW_MODE_COUNT] = {
-         "meshtable_1", "meshtable_3", "meshtable_2", "meshtable_4",
-      };
-
-      static int mesh_layout = MODE_STATIC_UV;
-      const char* layouts[DRAW_MODE_COUNT];
-      for (uint m = 0; m < DRAW_MODE_COUNT; m++) layouts[m] = DRAW_MODE_INFO[m].name;
-
-      ImGui::SetNextItemWidth(ui(300));
-      ImGui::Combo("layout", &mesh_layout, layouts, DRAW_MODE_COUNT);
-
-      // the skinned modes read the anim loader's meshes, the static ones the mesh loader's.
-      // the two loaders' rows are different types, so this stays a branch, not a ternary
-      DrawBuffer& db          = rndr->buffer((uint)mesh_layout);
-      const char* table_id    = mesh_table_ids[mesh_layout];
-      uint        vertex_size = DRAW_MODE_INFO[mesh_layout].vertex_size;
-
-      if (DRAW_MODE_INFO[mesh_layout].skinned)
-         mesh_table(table_id, rndr->meshloader_anim.meshes, &db, vertex_size, &rndr->txloader);
-      else
-         mesh_table(table_id, rndr->meshloader.meshes,      &db, vertex_size, &rndr->txloader);
-
-      // ---- animation clips : skeleton (parents + inverse-bind) + keyframes per loaded slot
-      section("Animations");
-      {
-         AnimLoader* anim = &rndr->animloader;
-
-         // widest skeleton any loaded clip uses : that is what the pose ubo has to hold
-         uint bones = 0;
-         for (uint i = 1; i < MAX_ANIMATIONS; i++) // slot 0 = no clip
-            if (anim->clip_paths[i][0] && anim->clips[i].num_bones > bones)
-               bones = anim->clips[i].num_bones;
-
-         ImGui::Text("widest skeleton : %u bones / %u max | pose ubo : %u bytes (binding 1)",
-            bones, MAX_ANIM_BONES, (uint)(MAX_ANIM_BONES * sizeof(mat4)));
-
-         if (ImGui::BeginTable("cliptable", 6,
-            TABLE_FLAGS))
-         {
-            ImGui::TableSetupColumn("slot"  , ImGuiTableColumnFlags_WidthFixed, ui(36));
-            ImGui::TableSetupColumn("file"  , ImGuiTableColumnFlags_WidthFixed, ui(190));
-            ImGui::TableSetupColumn("bones" , ImGuiTableColumnFlags_WidthFixed, ui(48));
-            ImGui::TableSetupColumn("frames", ImGuiTableColumnFlags_WidthFixed, ui(52));
-            ImGui::TableSetupColumn("holds" , ImGuiTableColumnFlags_WidthFixed, ui(48));
-            ImGui::TableSetupColumn("ram"   , ImGuiTableColumnFlags_WidthFixed, ui(64));
-            ImGui::TableHeadersRow();
-
-            for (uint i = 1; i < MAX_ANIMATIONS; i++) // slot 0 = no clip
-            {
-               Animation* clip = &anim->clips[i];
-               if (anim->clip_paths[i][0] == 0) continue; // free slot
-
-               // keyframes + inverse-bind matrices + parent list
-               uint ram_bytes = clip->num_bones * clip->num_frames * (uint)sizeof(mat4)
-                              + MAX_ANIM_BONES * (uint)sizeof(mat4)
-                              + MAX_ANIM_BONES * (uint)sizeof(int);
-
-               ImGui::TableNextRow();
-               ImGui::TableNextColumn(); ImGui::Text("%u", i);
-               ImGui::TableNextColumn(); ImGui::Text("%s", anim->clip_paths[i]);
-               ImGui::TableNextColumn(); ImGui::Text("%u", clip->num_bones);
-               ImGui::TableNextColumn(); ImGui::Text("%u", clip->num_frames);
-               ImGui::TableNextColumn(); ImGui::Text("%u", clip->num_holds);
-               ImGui::TableNextColumn(); ImGui::Text("%.1f KB", ram_bytes / 1024.f);
-            }
-            ImGui::EndTable();
-         }
-      }
-
       // ---- textures : the loader's contents, one at a time
       draw_texture_panel(rndr);
 
@@ -976,7 +754,7 @@ void draw_ASST_console(GameWindow* window, GameRenderer* rndr)
          };
 
          shader_row("geometry ", "geom.vert/frag", &rndr->shaders[0]);
-         shader_row("skinned  ", "anim.vert/geom.frag", &rndr->shaders[1]);
+         shader_row("water    ", "water.vert/frag", &rndr->shaders[1]);
          shader_row("lighting ", "gbuf.vert/frag", &window->gbuf.shader);
       }
 
@@ -984,424 +762,12 @@ void draw_ASST_console(GameWindow* window, GameRenderer* rndr)
    }
 }
 
-// ---------------- tab 4 : Anim ----------------
-// an inspector for the skinned meshes the scene draws : pick one from the dropdown
-// and everything under it belongs to that mesh - the player posing it, the clip that
-// player runs (skeleton, segments and per-segment feel) and the playback controls.
-// one player per clip in flight, so several meshes animate at once
-void draw_ANIM_console(GameRenderer* rndr)
-{
-   using namespace CNSL;
-
-   if (ImGui::BeginTabItem("Anim"))
-   {
-      AnimLoader* anim = &rndr->animloader;
-
-      static const char* eases[] = { "linear", "smooth", "in-out cubic", "out cubic", "in-out quint" };
-      static int  selected   = 0; // segment the editor below acts on
-      static bool show_juice = false;
-      static bool combine    = false;
-
-      // the mesh loader keeps the path every id was loaded from. id 0 is every unused
-      // loader slot, so it is never looked up, and a name is never empty : an empty
-      // label in a combo is how garbage ends up on screen
-      static char fallback[32];
-
-      auto path_of = [&](uint mesh_id) -> const char*
-      {
-         if (mesh_id == 0) return "";
-         for (uint i = 0; i < MAX_MESHES; i++)
-            if (rndr->meshloader_anim.meshes[i].id == mesh_id)
-               return rndr->meshloader_anim.meshes[i].filepath;
-         return "";
-      };
-      auto name_of = [&](uint mesh_id) -> const char*
-      {
-         const char* path  = path_of(mesh_id);
-         const char* slash = strrchr(path, '/');
-         const char* name  = (slash ? slash + 1 : path);
-
-         if (name[0]) return name;
-         snprintf(fallback, sizeof(fallback), "mesh %u", mesh_id);
-         return fallback;
-      };
-      auto clip_of = [&](uint clip_id) -> const char*
-      {
-         const char* path  = (clip_id < MAX_ANIMATIONS) ? anim->clip_paths[clip_id] : "";
-         const char* slash = strrchr(path, '/');
-         const char* name  = (slash ? slash + 1 : path);
-
-         if (name[0]) return name;
-         snprintf(fallback, sizeof(fallback), "clip %u", clip_id);
-         return fallback;
-      };
-
-      // ---- the mesh : the dropdown the whole tab hangs off
-      section("Mesh");
-
-      // both skinned buffers : an entry past MAX_MESHES is the no-uv one, so a single
-      // pick stays unambiguous without a second dropdown
-      auto buf_of = [&](uint entry) -> DrawBuffer*
-      {
-         return &rndr->buffer((entry >= MAX_MESHES) ? MODE_ANIM_NOUV : MODE_ANIM_UV);
-      };
-      auto slot_of    = [](uint entry) { return (entry >= MAX_MESHES) ? entry - MAX_MESHES : entry; };
-      auto mesh_id_at = [&](uint entry) { return buf_of(entry)->mesh_info[slot_of(entry)].mesh_id; };
-
-      uint slots[MAX_MESHES * 2];
-      uint num_slots = 0;
-
-      DrawBuffer& anim_uv   = rndr->buffer(MODE_ANIM_UV);
-      DrawBuffer& anim_nouv = rndr->buffer(MODE_ANIM_NOUV);
-
-      for (uint i = 0; i < MAX_MESHES; i++)
-         if (anim_uv.mesh_info[i].mesh_id)
-            slots[num_slots++] = i;
-
-      for (uint i = 0; i < MAX_MESHES; i++)
-         if (anim_nouv.mesh_info[i].mesh_id)
-            slots[num_slots++] = i + MAX_MESHES;
-
-      if (num_slots == 0)
-      {
-         ImGui::TextColored(severity_colors[FIXME], "no animated mesh in the scene");
-         ImGui::EndTabItem();
-         return;
-      }
-
-      static uint pick = (uint)-1; // an entry : it never moves, unlike a list index
-      bool valid = false;
-      for (uint i = 0; i < num_slots; i++)
-         if (slots[i] == pick) valid = true;
-      if (!valid) pick = slots[0];
-
-      auto* mi = &buf_of(pick)->mesh_info[slot_of(pick)];
-
-      ImGui::SetNextItemWidth(ui(300));
-      if (ImGui::BeginCombo("mesh", name_of(mi->mesh_id)))
-      {
-         for (uint i = 0; i < num_slots; i++)
-         {
-            uint mesh_id = mesh_id_at(slots[i]);
-            bool nouv    = (slots[i] >= MAX_MESHES);
-
-            char label[96];
-            snprintf(label, sizeof(label), "%u : %.40s%s##amesh%u",
-               mesh_id, name_of(mesh_id), nouv ? "  (no uv)" : "", slots[i]);
-            if (ImGui::Selectable(label, slots[i] == pick)) pick = slots[i];
-            if (slots[i] == pick) ImGui::SetItemDefaultFocus();
-         }
-         ImGui::EndCombo();
-      }
-
-      kv("source", "%.44s", name_of(mi->mesh_id));
-      kv("geometry", "%u verts | %u tris | %u instances",
-         mi->num_vertices, mi->num_indices / 3, mi->num_instances);
-      kv("texture", "id %u", mi->tx_id);
-
-      // ---- the player posing it : writing here is what update() reads next frame
-      uint player = mi->anim_player;
-      bool posed  = player < anim->num_players;
-
-      ImGui::SetNextItemWidth(ui(300));
-      if (ImGui::BeginCombo("posed by", posed ? clip_of(anim->players[player].clip_id)
-                                             : "none - identity pose"))
-      {
-         if (ImGui::Selectable("none - identity pose", !posed))
-            mi->anim_player = (uint)-1;
-
-         for (uint i = 0; i < anim->num_players; i++)
-         {
-            char label[80];
-            snprintf(label, sizeof(label), "%u : %.40s##aply%u",
-               i, clip_of(anim->players[i].clip_id), i);
-            if (ImGui::Selectable(label, posed && i == player))
-               mi->anim_player = i;
-            if (posed && i == player) ImGui::SetItemDefaultFocus();
-         }
-         ImGui::EndCombo();
-      }
-
-      // ---- the rig on screen : the animator's own overlay pass. it follows whatever
-      // the dropdown is showing, so it is always the mesh being inspected
-      section("Skeleton");
-      ImGui::Checkbox("skeleton", &rndr->animdebug.enabled);
-      ImGui::SameLine();
-      ImGui::Checkbox("bones", &rndr->animdebug.bones);
-      ImGui::SameLine();
-      ImGui::Checkbox("parent links", &rndr->animdebug.links);
-      ImGui::SameLine();
-      ImGui::Checkbox("joint axes", &rndr->animdebug.axes);
-
-      if (rndr->animdebug.enabled)
-      {
-         rndr->animdebug.slot  = slot_of(pick); // the overlay takes a slot plus its buffer
-         rndr->animdebug.no_uv = (pick >= MAX_MESHES);
-         kv("overlay", "mesh %u, in world space", mi->mesh_id);
-
-         // what the tint means : one colour per bone, in index order
-         ImGui::TextDisabled("tint");
-         for (uint t = 0; t < SKELETON_TIERS; t++)
-         {
-            ImGui::SameLine();
-            vec3 c = SKELETON_TIER_COLOR[t];
-            ImGui::TextColored(ImVec4(c.r, c.g, c.b, 1.f),
-               (t + 1 == SKELETON_TIERS) ? "%u+" : "%u", t);
-         }
-
-         // the wiring in words. these rigs are flat - one root, every part hanging off
-         // it - so this, not a chain depth, is what says which bone moves which
-         if (posed)
-         {
-            Animation* bones_of = &anim->clips[anim->players[player].clip_id];
-            ImGui::TextDisabled("bones");
-            for (uint b = 0; b < bones_of->num_bones; b++)
-            {
-               int  p = bones_of->parents[b];
-               vec3 c = SKELETON_TIER_COLOR[(b < SKELETON_TIERS) ? b : SKELETON_TIERS - 1];
-
-               ImGui::SameLine();
-               ImGui::TextColored(ImVec4(c.r, c.g, c.b, 1.f),
-                  (p < 0 || p == (int)b) ? "%u root" : "%u<-%d", b, p);
-            }
-         }
-      }
-
-      if (!posed)
-      {
-         ImGui::TextDisabled("nothing bound : this mesh draws its identity pose");
-      }
-      else
-      {
-         Anim_Player* pl = &anim->players[player];
-         Animation* clip = &anim->clips[pl->clip_id];
-         if (selected >= (int)clip->num_segs) selected = (int)clip->num_segs - 1; // the pick can swap to a shorter clip
-
-         // ---- playback : the timeline, the transport and the clock
-         section("Playback");
-
-         const Anim_Segment& pseg = clip->segs[pl->state.seg]; // the playing one
-
-         // timeline + scrub : drag to inspect the playing segment
-         if (!pl->control.scrubbing)
-            pl->control.scrub_t = (pl->state.duration > 0) ? pl->state.elapsed / pl->state.duration : 0.f;
-         ImGui::SliderFloat("##scrub", &pl->control.scrub_t, 0.f, 1.f, "%.3f");
-         pl->control.scrubbing = ImGui::IsItemActive();
-
-         // green bands = rotation holds of this segment found at load
-         ImDrawList* draw_list = ImGui::GetWindowDrawList();
-         ImVec2 r0 = ImGui::GetItemRectMin(), r1 = ImGui::GetItemRectMax();
-         float span = (float)(pseg.last - pseg.first + 1);
-         for (uint h = 0; h < clip->num_holds; h++)
-         {
-            const Anim_Hold& hold = clip->holds[h];
-            if (hold.last < pseg.first || hold.first > pseg.last) continue; // another segment's rest
-            uint b0 = (hold.first > pseg.first) ? hold.first : pseg.first; // clamp into the range
-            uint b1 = (hold.last < pseg.last) ? hold.last : pseg.last;
-            float x0 = r0.x + ((b0 - pseg.first) / span) * (r1.x - r0.x);
-            float x1 = r0.x + (((b1 + 1) - pseg.first) / span) * (r1.x - r0.x);
-            draw_list->AddRectFilled(ImVec2(x0, r0.y), ImVec2(x1, r1.y), IM_COL32(118, 172, 124, 78));
-            draw_list->AddLine(ImVec2(x0, r0.y), ImVec2(x0, r1.y), IM_COL32(150, 198, 150, 215), ui(1.f));
-         }
-
-         // transport : one dropdown, and its own label is the playback state
-         const char* play_state = pl->control.paused ? "paused"
-            : pl->state.playing ? "playing"
-            : (pl->state.duration > 0 ? "finished" : "static frame 0");
-
-         ImGui::SetNextItemWidth(ui(170));
-         if (ImGui::BeginCombo("playback", play_state))
-         {
-            if (ImGui::Selectable("play", !pl->control.paused))
-            {
-               pl->control.paused = false;
-               if (!pl->state.playing && pl->state.duration > 0)
-                  pl->control.restart = true; // finished : play means start over
-            }
-            if (ImGui::Selectable("pause", pl->control.paused))
-               pl->control.paused = true;
-            if (ImGui::Selectable("restart"))
-               pl->control.restart = true;
-            ImGui::EndCombo();
-         }
-
-         kv("clock", "%.2f / %.2f s", pl->state.elapsed, pl->state.duration);
-         kv("frame", "%.2f / %u", pl->state.frame_f, clip->num_frames);
-         kv("segment", "%u / %u", pl->state.seg, clip->num_segs);
-         kv("seam", "%.2f s blend where the loop wraps", anim->seam_duration);
-
-         ImGui::SliderFloat("speed", &pl->control.speed, 0.1f, 2.f, "%.2fx");
-         ImGui::Checkbox("loop", &pl->control.loop);
-
-         // ---- the clip : several animations live in one file as frame ranges
-         section("Clip");
-         kv("file", "%.44s", clip_of(pl->clip_id));
-         kv("skeleton", "%u bones | %u frames", clip->num_bones, clip->num_frames);
-         kv("holds", "%u rotation rests | %u segments", clip->num_holds, clip->num_segs);
-         kv("length", "%.2f s : set by play(), scaled by speed", pl->state.duration);
-
-         for (uint s = 0; s < clip->num_segs; s++)
-         {
-            Anim_Segment& sg = clip->segs[s];
-            char label[80];
-            snprintf(label, sizeof(label), "%s%u : frames %u-%u | %s | juice %.2f",
-               (s == pl->state.seg) ? "> " : "  ", s, sg.first, sg.last, eases[sg.ease], sg.juice);
-            if (ImGui::Selectable(label, selected == (int)s)) selected = s;
-         }
-
-         Anim_Segment& seg = clip->segs[selected];
-         int range[2] = { (int)seg.first, (int)seg.last };
-         if (ImGui::SliderInt2("frames", range, 0, (int)clip->num_frames - 1))
-         {
-            if (range[0] > range[1]) range[1] = range[0]; // keep first <= last
-            seg.first = range[0]; seg.last = range[1];
-         }
-
-         if (ImGui::Button("play"))
-            anim->play(pl->clip_id, (uint)selected, pl->duration);
-         ImGui::SameLine();
-         if (ImGui::Button("add") && clip->num_segs < MAX_ANIM_SEGMENTS)
-         {
-            uint mid = (seg.first + seg.last) / 2;
-            if (mid > seg.first && mid < seg.last)
-            {
-               for (uint i = clip->num_segs; i > (uint)selected + 1; i--)
-                  clip->segs[i] = clip->segs[i - 1];
-               Anim_Segment tail = seg;
-               seg.last = mid;
-               tail.first = mid + 1;
-               clip->segs[selected + 1] = tail;
-               clip->num_segs++;
-            }
-         }
-         ImGui::SameLine();
-         if (ImGui::Button("remove") && clip->num_segs > 1)
-         {
-            for (uint i = selected; i + 1 < clip->num_segs; i++)
-               clip->segs[i] = clip->segs[i + 1];
-            clip->num_segs--;
-            if (selected >= (int)clip->num_segs) selected--;
-         }
-         ImGui::SameLine();
-         if (ImGui::Button("split at holds"))
-         {
-            uint n = 0, start = 0;
-            for (uint h = 0; h < clip->num_holds && n < MAX_ANIM_SEGMENTS; h++)
-            {
-               if (clip->holds[h].last < start) continue;
-               clip->segs[n].first = start;               // each hold's rest tail stays
-               clip->segs[n].last  = clip->holds[h].last; // with the animation before it
-               clip->segs[n].ease  = 0;
-               clip->segs[n].juice = 0.4f;
-               start = clip->holds[h].last + 1;
-               n++;
-            }
-            if (start < clip->num_frames && n < MAX_ANIM_SEGMENTS)
-            {
-               clip->segs[n].first = start;
-               clip->segs[n].last  = clip->num_frames - 1;
-               clip->segs[n].ease  = 0;
-               clip->segs[n].juice = 0.4f;
-               n++;
-            }
-            if (n) clip->num_segs = n; // 0 = the whole clip was one hold : keep as-is
-            if (selected >= (int)clip->num_segs) selected = clip->num_segs - 1;
-         }
-
-         // ---- the selected segment : frame range, feel and what both do to the clock
-         section("Segment");
-         ImGui::Text("segment %d of %u", selected, clip->num_segs);
-         ImGui::Combo("ease", &clip->segs[selected].ease, eases, 5);
-         ImGui::SliderFloat("juice", &clip->segs[selected].juice, 0.f, 1.f, "%.2f");
-
-         // time warp graph : clock (x) -> clip position (y), all methods at once.
-         // bright = selected segment's ease, dot = live playback head.
-         // juice layer = the spring chasing a ramp, same constants as apply_spring ;
-         // combine = the spring chases the selected ease instead, so you see both together
-         {
-            const int N = 48;
-            int ease = clip->segs[selected].ease;
-            ImVec2 p0 = ImGui::GetCursorScreenPos();
-            ImVec2 size(ui(240), ui(140)), p1(p0.x + size.x, p0.y + size.y);
-            ImDrawList* dl = ImGui::GetWindowDrawList();
-
-            dl->AddRectFilled(p0, p1, IM_COL32(8, 10, 15, 255)); // plot bg
-            for (int q = 1; q < 4; q++) // quarter grid
-            {
-               dl->AddLine(ImVec2(p0.x + size.x * q / 4, p0.y), ImVec2(p0.x + size.x * q / 4, p1.y),
-                  IM_COL32(255, 255, 255, 14));
-               dl->AddLine(ImVec2(p0.x, p0.y + size.y * q / 4), ImVec2(p1.x, p0.y + size.y * q / 4),
-                  IM_COL32(255, 255, 255, 14));
-            }
-            dl->AddLine(p0, p1, IM_COL32(255, 255, 255, 40)); // linear reference
-            dl->AddRect(p0, p1, IM_COL32(255, 255, 255, 70));
-
-            for (int m = 0; m < 5; m++)
-            {
-               ImVec2 pts[51];
-               for (int s = 0; s <= N; s++)
-               {
-                  float u = s / (float)N;
-                  float w = anim->time_warp(u, m);
-                  pts[s] = ImVec2(p0.x + u * size.x, p1.y - w * size.y);
-               }
-               bool active = (m == ease);
-               dl->AddPolyline(pts, N + 1,
-                  active ? IM_COL32(150, 172, 205, 255) : IM_COL32(158, 152, 142, 90),
-                  active ? ui(2.f) : ui(1.f), true);
-            }
-
-            // juice layer : spring response over a 2s window (ramps 0..1s, then settles)
-            if (show_juice)
-            {
-               float w = clip->segs[selected].juice;
-               if (w > 0.01f)
-               {
-                  float k    = 60.f + 740.f * w * w; // same constants as apply_spring
-                  float zeta = 0.85f - 0.35f * w;
-                  float c    = 2.f * zeta * sqrtf(k);
-                  float pos = 0, vel = 0, sdt = 1.f / 60;
-
-                  ImVec2 pts[121];
-                  for (int i = 0; i <= 120; i++)
-                  {
-                     float t = i * sdt;                    // 0..2s
-                     float ramp = (t < 1.f) ? t : 1.f;     // ramps over 1s, then holds
-                     float target = combine ? anim->time_warp(ramp, ease) : ramp;
-                     vel += ((target - pos) * k - vel * c) * sdt;
-                     pos += vel * sdt;
-                     pts[i] = ImVec2(p0.x + (t / 2.f) * size.x, p1.y - pos * size.y);
-                  }
-                  dl->AddPolyline(pts, 121, IM_COL32(218, 158, 190, 205), ui(1.5f), false);
-               }
-            }
-
-            // live playback dot on the selected ease
-            float raw = (pl->state.duration > 0) ? pl->state.elapsed / pl->state.duration : 0.f;
-            ImVec2 dot(p0.x + raw * size.x, p1.y - anim->time_warp(raw, ease) * size.y);
-            dl->AddLine(ImVec2(dot.x, p0.y), ImVec2(dot.x, p1.y), IM_COL32(225, 200, 130, 75), ui(1.f));
-            dl->AddCircleFilled(dot, ui(3.f), IM_COL32(225, 200, 130, 255));
-
-            ImGui::Dummy(size);
-            ImGui::Checkbox("juice layer", &show_juice);
-            ImGui::SameLine();
-            ImGui::Checkbox("combine with ease", &combine);
-            ImGui::Text("x : clock    y : clip position    dot = playback head");
-         }
-
-      }
-
-      ImGui::EndTabItem();
-   }
-}
-
 // ---------------- tab : Player ----------------
-void draw_PLAYER_console(Scene* scene, GameRenderer* rndr)
+void draw_PLAYER_console(Scene* scene)
 {
    using namespace CNSL;
 
    Player* player = &scene->player;
-   static const char* action_names[] = { "reload", "shoot", "inspect", "idle" };
 
    if (ImGui::BeginTabItem("Player"))
    {
@@ -1410,67 +776,6 @@ void draw_PLAYER_console(Scene* scene, GameRenderer* rndr)
       kv("position", "%.2f %.2f %.2f", player->camera.position.x, player->camera.position.y,
          player->camera.position.z);
       kv("grounded / bob", "%s / %.2f", player->grounded ? "yes" : "no", player->bob);
-      kv("fov punch", "%.2f deg", player->fov_punch);
-
-      section("View model");
-      uint action = (player->action <= 3) ? player->action : 3; // defensive index
-      kv("action", "%s", action_names[action]);
-      kv("time left", "%.2f s", player->action_time);
-      kv("ammo", "%u / %u", player->ammo, player->mag_size);
-      kv("shots", "%u fired, %u hit", player->fired, player->hits);
-      kv("mesh / player", "%u / %u", player->gun_mesh, player->gun_player);
-      kv("sway", "%.3f %.3f", player->sway.x, player->sway.y);
-      kv("kick", "%.2f %.2f %.2f", player->kick.x, player->kick.y, player->kick.z);
-
-      // drive the gun from here too : handy without grabbing the mouse
-      if (player->gun_mesh)
-      {
-         if (ImGui::SmallButton("fire"))    player->fire(rndr, &scene->phys);
-         ImGui::SameLine();
-         if (ImGui::SmallButton("reload"))
-            player->start_action(rndr, GUN_RELOAD, player->reload_time, player->seg_reload);
-         ImGui::SameLine();
-         if (ImGui::SmallButton("inspect"))
-            player->start_action(rndr, GUN_INSPECT, player->inspect_time, player->seg_inspect);
-      }
-      else ImGui::TextDisabled("no view model in this scene");
-
-      section("Bullets");
-      uint live_rounds = player->bullets_alive();
-      kv("alive", "%u / %u", live_rounds, MAX_BULLETS);
-
-      if (live_rounds == 0)
-         ImGui::TextDisabled("none in flight");
-      else if (ImGui::BeginTable("playerbullets", 7,
-         TABLE_FLAGS))
-      {
-         ImGui::TableSetupColumn("#",     ImGuiTableColumnFlags_WidthFixed, ui(24));
-         ImGui::TableSetupColumn("pos x", ImGuiTableColumnFlags_WidthFixed, ui(52));
-         ImGui::TableSetupColumn("pos y", ImGuiTableColumnFlags_WidthFixed, ui(52));
-         ImGui::TableSetupColumn("pos z", ImGuiTableColumnFlags_WidthFixed, ui(52));
-         ImGui::TableSetupColumn("speed", ImGuiTableColumnFlags_WidthFixed, ui(56));
-         ImGui::TableSetupColumn("life",  ImGuiTableColumnFlags_WidthFixed, ui(44));
-         ImGui::TableSetupColumn("state", ImGuiTableColumnFlags_WidthFixed, ui(50));
-         ImGui::TableHeadersRow();
-
-         for (uint i = 0; i < MAX_BULLETS; i++)
-         {
-            Player::Bullet& b = player->bullets[i];
-            if (b.life <= 0) continue;
-
-            ImGui::TableNextRow();
-            ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, IM_COL32(230, 184, 112, 18)); // live rounds glow
-
-            ImGui::TableNextColumn(); ImGui::Text("%u", i);
-            ImGui::TableNextColumn(); ImGui::Text("%.2f", b.pos.x);
-            ImGui::TableNextColumn(); ImGui::Text("%.2f", b.pos.y);
-            ImGui::TableNextColumn(); ImGui::Text("%.2f", b.pos.z);
-            ImGui::TableNextColumn(); ImGui::Text("%.1f", length(b.vel));
-            ImGui::TableNextColumn(); ImGui::Text("%.2f", b.life);
-            ImGui::TableNextColumn(); ImGui::TextColored(severity_colors[SUCCESS], "flying");
-         }
-         ImGui::EndTable();
-      }
 
       ImGui::EndTabItem();
    }
@@ -1839,7 +1144,7 @@ static void draw_scene_select(GameWindow* window, SceneManager* scenes)
 	ImGui::End();
 }
 
-static void draw_main_menu(GameWindow* window, SceneManager* scenes)
+static void draw_main_menu(GameWindow* window)
 {
 	float scale = window->screen_height / 1080.f;
 	ImGuiIO& io = ImGui::GetIO();
@@ -1925,7 +1230,7 @@ void draw_game_menus(GameWindow* window, SceneManager* scenes)
 		return;
 	}
 
-	if (game_screen == GAME_SCREEN_MENU) draw_main_menu(window, scenes);
+	if (game_screen == GAME_SCREEN_MENU) draw_main_menu(window);
 	else if (game_screen == GAME_SCREEN_PAUSED) draw_pause_menu(window, scenes);
 }
 
@@ -1981,8 +1286,7 @@ void draw_console(GameConsole* console, GameRenderer* rndr, GameWindow* window, 
    draw_RENDER_console(rndr, window, &scene->camera);
    draw_DEBUG_console(rndr, scene);
    draw_PHYS_console(&scene->phys);
-   draw_PLAYER_console(scene, rndr);
-   draw_ANIM_console(rndr);
+   draw_PLAYER_console(scene);
    draw_ASST_console(window, rndr);
    draw_AUDIO_console();
    draw_MAIN_console(console);

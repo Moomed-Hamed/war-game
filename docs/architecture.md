@@ -27,12 +27,12 @@ src:
 | File | Purpose |
 |---|---|
 | `logger.h` | In-game console log |
-| `loader.h` | Loading and processing assets from disk |
+| `loader.h` | Generated mesh primitives, texture loading, shader programs |
 | `audio.h` | Sound effects and music |
 | `window.h` | Window, input, timing, g-buffer, HDR targets, tonemap, audio device |
 | `drawer.h` | Draw call preparation, light volumes, forward water |
-| `physics.h` | Bullet world, bodies, joints, heightfields, vehicles |
-| `player.h` | Capsule movement, view gun, projectiles |
+| `physics.h` | Bullet world, rigid bodies, constraints, soft bodies |
+| `player.h` | Capsule movement and the free fly camera |
 | `fluids.h` | FFT ocean, foam field, short-chop normals, shallow water patch |
 | `scene.h` | Scene content, shared builders, physics/render/water scenes, scene manager |
 | `ux.h` | Console, scene selector, debug tools |
@@ -45,18 +45,24 @@ src:
 1. `GameRenderer::draw_shadows` renders the static world into the sun depth map.
 2. `GameRenderer::draw` fills the g-buffer (position, normal, albedo, depth).
 3. `GameWindow::draw_lighting` runs the sun (PCF shadowed), ambient, sky and fog into a linear HDR target.
-4. `GameRenderer::draw_light_volumes` adds point and cone spot lights, one instanced volume per light.
+4. `GameRenderer::draw_light_volumes` adds the point lights, one instanced volume per light.
 5. `GameRenderer::draw_water` copies the lit frame and draws forward water with refraction, absorption, sky reflection, sun specular, crest scattering, breaking shore foam and a CC0 foam lace mask.
 6. `GameWindow::post_process` applies exposure, contrast, saturation, ACES and gamma to the screen.
-7. `debug_draw` appends physics, animation, light-volume and scene-guide wires into one colour-coded overlay.
+7. `debug_draw` appends physics, light-volume and scene-guide wires into one colour-coded overlay.
 
 ## Current scope
 
-The shipping project is now a small-level 1v1 foundation: rendering, physics,
-water and the shared engine tech. The procedural city, building generator, hub,
-weapons scene, terrain/world scene and vehicle scene have been removed from the
-build. Their research and source snapshots are under `megastudy/procgen-city/`
-and `megastudy/terrain-archive/`.
+The shipping project is now a rendering/physics/water foundation: scene
+content, the deferred renderer, Bullet rigid and soft bodies, the FFT ocean and
+the shallow-water patch. The procedural city, building generator, hub, weapons
+scene, terrain/world scene and vehicle scene have been removed from the build.
+Their research and source snapshots are under `megastudy/procgen-city/` and
+`megastudy/terrain-archive/`.
+
+Dead runtime code was removed with the scenes: the skinned/animation loader and
+shaders, the weapon view model and projectiles, the vehicle controls, the static
+no-uv draw mode, file mesh loading and the spot-light path. The renderer now has
+two draw modes only: static + uv and forward water.
 
 The scene list is: **menu**, **physics**, **render**, **ocean**, **shallow**.
 The game starts in the menu backdrop. The menu has **Scenes**, **Options** and
@@ -131,6 +137,15 @@ metal/roughness matrix, ten named material spheres, local-light stress volumes,
 a texture-vs-flat comparison and a live hero material edited in the Scenes tab.
 It is a test bed for the deferred g-buffer and lighting, not gameplay content.
 
+The studio preset uses a brighter sun and ambient fill than the old dark set,
+and the lab surfaces sit at mid-grey so the material spheres and metal/roughness
+matrix stay readable. Four coloured point lights sit just above the material
+row; their bulbs are real props, so the lights have a visible source. Light
+debug wires are deliberately sparse: a small source marker, a drop line and the
+circle where the reach meets the stage top, drawn in the light's own colour. The
+Debug tab and the Render scene's Scenes controls can toggle local lighting and
+the wires.
+
 ## Water scenes
 
 There are two water paths:
@@ -141,8 +156,17 @@ There are two water paths:
 - **shallow**: a small finite-difference patch inside a stone basin, showing
   drops, reflection and damping at a much smaller scale.
 
-Both feed the same water uniforms into the renderer and keep their own Scenes
-controls.
+The forward water pass is double-sided: the sea is one layer of triangles, so
+from below and wherever a choppy crest folds over itself the back faces are
+still water. Culling them punched holes that showed the sky disk or the dark
+seabed through the surface. Surface normals are clamped above the horizon, so a
+steep facet can never reflect the dark ground hemisphere into the sea, and the
+reflection environment contains no hard sun/moon disk: the disk belongs to the
+sky pass, while water gets a broad scatter plus a GGX glint that widens with
+distance. Fog over water always samples the sky hemisphere.
+
+Both water scenes feed the same water uniforms into the renderer and keep their
+own Scenes controls.
 
 ## Removed systems
 

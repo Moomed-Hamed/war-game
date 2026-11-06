@@ -71,15 +71,15 @@ vec3 environment(vec3 dir)
 	vec3 col = (h > 0.0) ? mix(horizon, zenith, pow(h, 0.55))
 	                     : mix(horizon, ground, pow(-h, 0.45));
 
+	// no sun or moon disk here. a rough surface never mirrors a hard disk : the
+	// reflection is broad sky scatter, and the tight glint is the GGX lobe below.
+	// a disk in this function reads as a second sun sitting under the water.
 	float d = max(dot(dir, L_sun), 0.0);
-	float sun_patch = smoothstep(0.99930, 0.99975, d);
-	vec3 sky = col + sun_color * (sun_patch * 26.0 + pow(d, 24.0) * 0.35
-	                            + pow(d, 4.0) * 0.05);
+	vec3 sky = col + sun_color * (pow(d, 10.0) * 0.16 + pow(d, 3.0) * 0.03);
 
 	vec3 L_moon = -moon_direction;
 	float dm = max(dot(dir, L_moon), 0.0);
-	float moon_patch = smoothstep(0.99955, 0.99982, dm);
-	sky += moon_color * (moon_patch * 22.0 + pow(dm, 96.0) * 0.30) * moon_disk;
+	sky += moon_color * (pow(dm, 10.0) * 0.10) * moon_disk;
 	return sky;
 }
 
@@ -138,8 +138,17 @@ void main()
 
 	float detail_fade = 1.0 - smoothstep(80.0, 250.0, dist);
 	vec3 detail = vec3(d1.x + d2.x + d3.x * .55, 0.0,
-	                   d1.y + d2.y + d3.y * .55) * water_detail * detail_fade;
-	vec3 N = normalize(vs_out.normal + detail);
+	                   d1.y + d2.y + d3.y * .55) * (water_detail * 0.68 * detail_fade);
+	vec3 N = vs_out.normal + detail;
+	// the chop can only tip the surface so far : a normal that points down samples
+	// the dark ground hemisphere and reads as a black patch on the sea
+	N.y = max(N.y, 0.12);
+	N = normalize(N);
+	vec3 Nup = N; // always the sunlit side, even when the face is seen from below
+
+	// seen from under the surface the same normal belongs to the underside, so it
+	// must face the camera or fresnel picks the dark reflection every time
+	if (!gl_FrontFacing) N = -N;
 
 	// glitter : a tiny high-frequency normal just for the sun/moon highlight. the
 	// lace mask is already in memory, so it makes a cheap sparkle field
@@ -148,6 +157,8 @@ void main()
 	float gx = texture(foam_pattern, g_uv).r - 0.5;
 	float gz = texture(foam_pattern, g_uv.yx + vec2(.31, .17)).r - 0.5;
 	vec3 Ng = normalize(N + vec3(gx, 0.0, gz) * (0.20 * water_detail * glitter_fade));
+	Ng.y = max(Ng.y, 0.12);
+	Ng = normalize(Ng);
 
 	float water_z = linear_depth(gl_FragCoord.z);
 	float scene_z = linear_depth(texture(scene_depth, screen_uv).r);
@@ -170,20 +181,27 @@ void main()
 	                       + sun_color * sun_power * 0.25);
 	vec3 beneath = background * transmittance + scattered * (1.0 - transmittance);
 
-	// fresnel : more sky at grazing angles
+	// fresnel : more sky at grazing angles. the reflected ray is kept above the
+	// horizon so a steep facet can never reflect the dark underwater hemisphere
 	float NdotV = max(dot(N, V), 1e-3);
 	float fresnel = 0.02 + 0.98 * pow(1.0 - NdotV, 5.0);
-	vec3 reflection = environment(reflect(-V, N));
+	vec3 R = reflect(-V, N);
+	R.y = max(R.y, 0.015);
+	vec3 reflection = environment(normalize(R));
 	vec3 color = mix(beneath, reflection, fresnel);
 
-	// sun highlight : a tight GGX lobe, with the roughness the preset asks for
+	// sun highlight : a tight GGX lobe, widened with distance so the far water
+	// does not alias into a field of hard white pixels
 	vec3 L = -sun_direction;
 	float NdotL = max(dot(N, L), 0.0);
 	if (NdotL > 0.0)
 	{
-		vec3 H = normalize(V + L);
-		float NDF = distribution_ggx(max(dot(Ng, H), 0.0), max(mat_b.r, 0.035));
-		float G = geometry_smith(NdotV, NdotL, max(mat_b.r, 0.035));
+		float sun_rough = mix(max(mat_b.r, 0.09), 0.20, smoothstep(25.0, 200.0, dist));
+		vec3 hv = V + L;
+		if (dot(hv, hv) < 1e-8) hv = N; // backlit : a zero half-vector would be NaN
+		vec3 H = normalize(hv);
+		float NDF = distribution_ggx(max(dot(Ng, H), 0.0), sun_rough);
+		float G = geometry_smith(NdotV, NdotL, sun_rough);
 		vec3 F = fresnel_schlick(max(dot(H, V), 0.0), vec3(0.02));
 		vec3 specular = NDF * G * F / (4.0 * NdotV * NdotL + 1e-6);
 		color += specular * sun_color * sun_power * NdotL;
@@ -195,8 +213,9 @@ void main()
 	if (NdotLm > 0.0 && moon_power > 0.0)
 	{
 		vec3 Hm = normalize(V + Lm);
-		float NDFm = distribution_ggx(max(dot(Ng, Hm), 0.0), max(mat_b.r, 0.035));
-		float Gm = geometry_smith(NdotV, NdotLm, max(mat_b.r, 0.035));
+		if (dot(V + Lm, V + Lm) < 1e-8) Hm = N; // same guard as the sun lobe
+		float NDFm = distribution_ggx(max(dot(Ng, Hm), 0.0), max(mat_b.r, 0.09));
+		float Gm = geometry_smith(NdotV, NdotLm, max(mat_b.r, 0.09));
 		vec3 Fm = fresnel_schlick(max(dot(Hm, V), 0.0), vec3(0.02));
 		vec3 specularm = NDFm * Gm * Fm / (4.0 * NdotV * NdotLm + 1e-6);
 		color += specularm * moon_color * moon_power * NdotLm;
@@ -207,7 +226,7 @@ void main()
 	// phase term peaks when the sun is behind the wave from this view
 	float crest_height = vs_out.world_position.y - water_level;
 	float crest = smoothstep(0.02, 0.40, crest_height);
-	float steep = smoothstep(0.02, 0.45, 1.0 - N.y);
+	float steep = smoothstep(0.02, 0.45, 1.0 - Nup.y);
 	float peak = crest * (0.35 + 0.65 * steep);
 	// wrapped phase : strongest when the sun is behind the crest, but the volume
 	// still carries a little light from the side and above
@@ -253,9 +272,13 @@ void main()
 	float foam_spec = pow(max(dot(reflect(-V, Ng), -sun_direction), 0.0), 24.0) * foam;
 	color += foam_spec * sun_color * sun_power * 0.22;
 
-	// fog : the same distance fade as the opaque pass
+	// fog : the same distance fade as the opaque pass. the fog colour comes from
+	// the sky above the horizon, never the dark ground hemisphere under the sea
 	vec3 view_dir = normalize(vs_out.world_position - view_pos);
+	view_dir.y = max(view_dir.y, 0.02);
 	color = mix(color, environment(view_dir), 1.0 - exp(-dist * fog_density));
 
+	if (any(isnan(color))) color = reflection; // a bad normal must not punch a hole
+	color = clamp(color, vec3(0.0), vec3(64.0));
 	pixel_color = vec4(color, 1.0);
 }

@@ -47,24 +47,12 @@ struct Lighting
 // this radius over the g-buffer, so only the pixels it covers run the light math
 const uint MAX_LIGHTS = 64;
 
-enum Light_Shape : uint
-{
-	LIGHT_SPHERE = 0,
-	LIGHT_CONE,
-};
-
 struct Point_Light
 {
 	vec3  position;
 	float radius;
 	vec3  color;
 	float intensity;
-
-	vec3  direction;   // cone axis, normalised
-	float outer_angle; // radians, cone half-angle
-
-	Light_Shape shape;
-	float inner_angle; // radians, cone hot core
 };
 
 enum LightingPreset
@@ -241,14 +229,14 @@ Lighting lighting_studio()
 
 	l.sun_direction = normalize(vec3(-0.40f, -0.85f, -0.35f));
 	l.sun_color     = vec3(1.00f, 0.97f, 0.92f);
-	l.sun_power     = 3.6f;
+	l.sun_power     = 4.2f;
 	l.sun_disk      = 0.35f;
 
 	l.rim_direction = normalize(vec3(0.45f, -0.35f, 0.62f));
 	l.rim_color     = vec3(0.55f, 0.65f, 0.95f);
 	l.rim_power     = 0.85f;
 
-	l.exposure      = 1.0f;
+	l.exposure      = 1.28f;
 	l.fog_density   = 0.0f;
 	l.ao_strength   = 1.2f;
 
@@ -257,9 +245,9 @@ Lighting lighting_studio()
 	l.glow   = vec3(0.060f, 0.060f, 0.070f);
 	l.ground = vec3(0.010f, 0.010f, 0.012f);
 
-	l.ambient_up   = vec3(0.220f, 0.230f, 0.260f);
-	l.ambient_side = vec3(0.110f, 0.115f, 0.130f);
-	l.ambient_down = vec3(0.030f, 0.030f, 0.035f);
+	l.ambient_up   = vec3(0.350f, 0.365f, 0.410f);
+	l.ambient_side = vec3(0.180f, 0.190f, 0.220f);
+	l.ambient_down = vec3(0.055f, 0.055f, 0.065f);
 
 	return l;
 }

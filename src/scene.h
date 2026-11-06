@@ -15,12 +15,6 @@ static float ux_panel_width(GameWindow* window)
 	return width > max_width ? max_width : width;
 }
 
-// what the world's guns are made of : dull steel, the mesh's texture keeps the detail
-const vec3 GUN_ALBEDO = vec3(0.55f, 0.56f, 0.58f);
-
-const uint NUM_WEAPONS = 7;      // the weapon row
-const uint WEAPON_VIEW_MODEL = 6; // testpistol : the on-foot view model
-const uint MAX_ACTORS  = 16;     // skinned meshes animating in place
 const uint MAX_PROPS   = 65536;  // scene instances are uploaded once per mesh run
 static float game_fov = 60.f;    // options menu : vertical field of view
 
@@ -37,16 +31,11 @@ struct Scene
 	vec3   orbit_target;
 	float  orbit_yaw, orbit_pitch, orbit_distance;
 
-	// vehicles : a smoothed chase camera read from the car, not the player
-	bool   car_camera;
-	Camera vehicle_view;
-	float  chase_distance, chase_height;
-
 	Physics phys; // owns motion, the props read their pose from it
 	Water   water;   // fft ocean grid for the ocean scene
 	Shallow_Water shallow; // small fd patch for the shallow scene
 
-	Player player; // the capsule, the view gun and its projectiles
+	Player player; // the capsule and its camera
 
 	// world content : a mesh plus an optional body. collider sizes are in
 	// world units (mesh scale already applied) ; dynamic props get pos/rot
@@ -54,10 +43,7 @@ struct Scene
 	struct Prop {
 		uint mesh_id;
 		uint phys_id;    // 0 = static decoration
-		uint wheel_index; // vehicles : raycast wheel visual, (uint)-1 = none
-		bool no_uv;      // which static buffer this mesh lives in (mode 1 or mode 3)
-		bool water;      // forward water pass instead of the static buffers
-		uint draw_mode;  // explicit DrawMode, (uint)-1 = derive from no_uv/water
+		bool water;      // forward water pass instead of the static buffer
 		vec3 pos;
 		mat3 rot;
 		vec3 scale;
@@ -66,14 +52,6 @@ struct Scene
 		char label[24]; // drawn over it in the world (empty = none)
 	} props[MAX_PROPS];
 	uint num_props;
-
-	// skinned meshes that animate in place : the scene submits one instance each
-	struct Actor {
-		uint  mesh, player;
-		vec3  pos;
-		float yaw, scale;
-	} actors[MAX_ACTORS];
-	uint num_actors;
 
 	bool show_labels; // debug toggle : world labels on/off
 	bool reload_requested; // scene asks the manager to rebuild it next frame
@@ -85,6 +63,7 @@ struct Scene
 	float    shadow_extent; // metres the sun shadow map covers around the camera
 	float    far_plane;     // draw distance for this scene, scaled by its ground size
 	float    fly_speed_scale; // free-camera speed for this scene's world size
+	float    light_floor_y;   // surface the light debug footprints sit on
 
 	// day/night : slot 0..24, optionally advancing while cycle_playing
 	bool  cycle;
@@ -110,66 +89,6 @@ struct Scene
 		l.color       = color;
 		l.radius      = radius;
 		l.intensity   = intensity;
-		l.direction   = vec3(0, -1, 0);
-		l.shape       = LIGHT_SPHERE;
-		l.outer_angle = 0.f;
-		l.inner_angle = 0.f;
-	}
-
-	// a spot light : the volume is a cone from the light head along dir
-	void add_spot_light(vec3 position, vec3 dir, vec3 color, float radius, float intensity,
-	                    float outer_degrees, float inner_degrees)
-	{
-		if (num_lights >= MAX_LIGHTS)
-		{
-			console->add_entry("light slots full : raise MAX_LIGHTS", FIXME, RNDR);
-			return;
-		}
-
-		Point_Light& l = lights[num_lights++];
-		l.position    = position;
-		l.color       = color;
-		l.radius      = radius;
-		l.intensity   = intensity;
-		l.direction   = normalize(dir);
-		l.shape       = LIGHT_CONE;
-		l.outer_angle = outer_degrees * PI / 180.f;
-		l.inner_angle = inner_degrees * PI / 180.f;
-	}
-
-	// two headlights that follow a car body every frame
-	uint headlight_body;
-	int  headlight_light[2];
-
-	void add_vehicle_headlights(uint phys_id)
-	{
-		headlight_body = phys_id;
-		for (uint i = 0; i < 2; i++)
-		{
-			add_spot_light(vec3(0), vec3(0, 0, 1), vec3(1.f, .92f, .76f),
-			               26.f, 8.f, 24.f, 10.f);
-			headlight_light[i] = (int)num_lights - 1;
-		}
-	}
-
-	void update_vehicle_headlights()
-	{
-		if (!headlight_body) return;
-
-		vec3 pos;
-		mat3 rot;
-		if (!phys.get_transform(headlight_body, &pos, &rot)) return;
-
-		vec3 forward = normalize(rot[2]);
-		vec3 right   = normalize(rot[0]);
-		for (uint i = 0; i < 2; i++)
-		{
-			if (headlight_light[i] < 0 || headlight_light[i] >= (int)num_lights) continue;
-
-			Point_Light& l = lights[headlight_light[i]];
-			l.position  = pos + forward * 2.2f + right * (i ? .70f : -.70f) + vec3(0, .55f, 0);
-			l.direction = normalize(forward - vec3(0, .08f, 0));
-		}
 	}
 
 	// one more instance in the world, posed at (pos, yaw, scale)
@@ -178,7 +97,7 @@ struct Scene
 		return add_prop(mesh_id, pos, yaw, vec3(scale));
 	}
 
-	// non-uniform sizes (chassis, wheels) set every axis directly
+	// non-uniform sizes (boxes, panels) set every axis directly
 	Prop& add_prop(uint mesh_id, vec3 pos, float yaw, vec3 scale)
 	{
 		// no room : say so and drop the prop, rather than writing past the array
@@ -193,10 +112,7 @@ struct Scene
 		Prop& p = props[num_props++];
 		p.mesh_id = mesh_id;
 		p.phys_id = 0;
-		p.wheel_index = (uint)-1;
-		p.no_uv   = false;
 		p.water   = false;
-		p.draw_mode = (uint)-1;
 		p.pos     = pos;
 		p.rot     = mat3(glm::rotate(mat4(1), yaw, vec3(0, 1, 0)));
 		p.scale   = scale;
@@ -204,22 +120,6 @@ struct Scene
 		p.mat_b   = INSTANCE_DEFAULT.mat_b;
 		p.label[0] = 0;
 		return p;
-	}
-
-	void add_actor(uint mesh, uint player, vec3 pos, float yaw, float scale)
-	{
-		if (num_actors >= MAX_ACTORS)
-		{
-			console->add_entry("scene actor slots full", FIXME, RNDR);
-			return;
-		}
-
-		Actor& a = actors[num_actors++];
-		a.mesh   = mesh;
-		a.player = player;
-		a.pos    = pos;
-		a.yaw    = yaw;
-		a.scale  = scale;
 	}
 
 	void use_lighting(uint kind)
@@ -255,6 +155,7 @@ struct Scene
 		fly_speed_scale = 1.f;
 		time_of_day = 15.f;
 		time_speed = .5f;
+		light_floor_y = floor_y;
 		use_lighting(LIGHT_DAY);
 
 		camera.position = cam_pos;
@@ -273,13 +174,12 @@ struct Scene
 	}
 
 	// ---- shared finish : keep every mesh's instances in one run, and log the load
-	void finish(GameRenderer* renderer, const char* name)
+	void finish(const char* name)
 	{
 		// a scene without a player still gets eyes to look through
-		if (!player.body) player.init(renderer, &phys, vec3(0, 5, 8), 0, 0);
+		if (!player.body) player.init(&phys, vec3(0, 5, 8));
 
 		group_props();
-		group_actors();
 
 		char msg[MAX_LOG_MSG_LENGTH];
 		snprintf(msg, sizeof(msg), "Scene loaded : %s", name);
@@ -303,41 +203,12 @@ struct Scene
 		}
 	}
 
-	// the gun's mesh is the view model's : its actor goes immediately after it,
-	// so that mesh still has one contiguous run of instances
-	void group_actors()
-	{
-		for (uint i = 1; i < num_actors; i++)
-		{
-			Actor key = actors[i];
-			int j = (int)i - 1;
-			while (j >= 0 && actors[j].mesh > key.mesh)
-			{
-				actors[j + 1] = actors[j];
-				j--;
-			}
-			actors[j + 1] = key;
-		}
-
-		if (!player.gun_mesh) return;
-
-		uint at = 0;
-		for (uint i = 0; i < num_actors; i++)
-			if (actors[i].mesh == player.gun_mesh)
-			{
-				Actor gun = actors[i];
-				for (uint j = i; j > at; j--) actors[j] = actors[j - 1];
-				actors[at++] = gun;
-			}
-	}
-
 	// teardown : the world and its debug wires. the renderer clears its own
 	// buffers and caches from SceneManager
 	void shutdown(GameRenderer*)
 	{
 		phys.shutdown();
 		num_props = 0;
-		num_actors = 0;
 	}
 
 	// called once per frame : input -> camera -> matrices, then submit this frame's instances
@@ -367,56 +238,17 @@ struct Scene
 			update_fly_camera(&camera, window, window->dtime, fly_speed_scale);
 		}
 
-		player.update(window, renderer, &phys, !car_camera);
+		player.update(window, &phys);
 
-		// only the chase view drives : walking or flying leaves the car parked
-		phys.update_vehicle(window, car_camera && !player.flycam);
 		phys.step(window->dtime);
-		update_vehicle_headlights();
 
-		// vehicles : the chase camera reads the car, not the player capsule
-		if (car_camera && !player.flycam && phys.vehicle.chassis_id)
-		{
-			vec3 car_pos;
-			mat3 car_rot;
-			if (phys.get_transform(phys.vehicle.chassis_id, &car_pos, &car_rot))
-			{
-				vec3 forward = car_rot[2];
-				forward.y = 0.f;
-				if (length(forward) < .01f) forward = vec3(0, 0, 1);
-				else forward = normalize(forward);
-
-				vec3 target  = car_pos + forward * 3.f + vec3(0, 1.f, 0);
-				vec3 desired = car_pos - forward * chase_distance + vec3(0, chase_height, 0);
-
-				float k = 1.f - expf(-6.f * window->dtime);
-				vehicle_view.position += (desired - vehicle_view.position) * k;
-				vehicle_view.front = normalize(target - vehicle_view.position);
-				vehicle_view.up = vec3(0, 1, 0);
-
-				camera.position = vehicle_view.position; // fog and sky read the active view
-			}
-		}
-
-		// the player's camera while walking, the car camera, the free camera or
-		// the studio orbit camera
-		Camera& view = orbit_cam ? camera
-		             : (player.flycam ? camera
-		             : (car_camera && phys.vehicle.chassis_id ? vehicle_view : player.camera));
+		// the player's camera while walking, or the scene's orbit camera
+		Camera& view = orbit_cam ? camera : (player.flycam ? camera : player.camera);
 
 		// the g-buffer reads this for fog and sky : keep it on the active view
-		if (!orbit_cam && !player.flycam && !car_camera) camera.position = view.position;
+		if (!orbit_cam && !player.flycam) camera.position = view.position;
 
-		// a little FOV stretch with speed, only in the chase view
-		float speed_fov = 0.f;
-		if (car_camera && !player.flycam)
-		{
-			float kmh = fabsf(phys.vehicle_speed() * 3.6f);
-			speed_fov = kmh / 160.f * 8.f;
-			if (speed_fov > 8.f) speed_fov = 8.f;
-		}
-
-		float fov = (game_fov + player.fov_punch + speed_fov) * PI / 180.f;
+		float fov = game_fov * PI / 180.f;
 		window->far_plane = far_plane;
 		mat4 proj = glm::perspective(fov, (float)window->screen_width / window->screen_height, 0.1f, window->far_plane);
 
@@ -446,24 +278,12 @@ struct Scene
 
 			if (p.phys_id)
 				phys.get_transform(p.phys_id, &p.pos, &p.rot);
-			else if (p.wheel_index < 4)
-			{
-				if (phys.get_wheel_transform(p.wheel_index, &p.pos, &p.rot))
-				{
-					// the wheel mesh is y-up, the raycast wheel's axle is its local x
-					static const mat3 wheel_mesh_rot =
-						mat3(glm::rotate(mat4(1), -PI / 2, vec3(0, 0, 1)));
-					p.rot = p.rot * wheel_mesh_rot;
-				}
-			}
 
 			Instance inst = { glm::translate(mat4(1), p.pos) * mat4(p.rot) * glm::scale(mat4(1), p.scale),
 			                  p.mat_a, p.mat_b };
 
-			// water leaves the opaque pass; everything else says which layout its mesh
-			// was built for. a prop can also name its draw mode outright
-			uint mode = p.water ? MODE_WATER : (p.no_uv ? MODE_STATIC_NOUV : MODE_STATIC_UV);
-			if (p.draw_mode != (uint)-1) mode = p.draw_mode;
+			// water leaves the opaque pass; everything else is the static layout
+			uint mode = p.water ? MODE_WATER : MODE_STATIC_UV;
 
 			if (batch_count && (batch_mesh != p.mesh_id || batch_mode != mode))
 			{
@@ -484,190 +304,8 @@ struct Scene
 
 		if (batch_count)
 			renderer->buffer(batch_mode).append_instances(batch_mesh, batch_count, prop_batch);
-
-		// view gun : appended just before the actors, so the shared gun mesh
-		// keeps one contiguous run of instances
-		if (!player.flycam && !car_camera && player.gun_mesh)
-		{
-			Camera& c = player.camera;
-
-			// view -> world : the columns are the camera's own axes
-			mat3 aim;
-			aim[0] = c.right;
-			aim[1] = c.up;
-			aim[2] = -c.front;
-
-			// the clip is authored with the camera at the origin, so it does the placing : the
-			// eye's frame plus the juice is the whole view model transform
-			vec3 place = player.kick * WEAPON_KICK;
-			mat4 model = glm::translate(mat4(1), c.position + aim * place)
-			           * mat4(aim)
-			           * glm::scale(mat4(1), vec3(WEAPON_SCALE))
-			           * glm::rotate(mat4(1), player.sway.x, vec3(0, 1, 0))
-			           * glm::rotate(mat4(1), player.sway.y, vec3(1, 0, 0))
-			           * glm::rotate(mat4(1), player.kick.x * WEAPON_ROLL, vec3(0, 0, 1)); // shot roll
-			Instance inst = material(GUN_ALBEDO, 0.85f, 0.30f, 1.f, 1.f); // gunmetal, texture keeps the detail
-			inst.model = model;
-			renderer->buffer(MODE_ANIM_UV).append_instances(player.gun_mesh, 1, &inst);
-		}
-
-		// actors : parked where the builder put them, still animating
-		for (uint i = 0; i < num_actors; i++)
-		{
-			Actor& a = actors[i];
-			mat4 model = glm::translate(mat4(1), a.pos)
-			      * glm::rotate(mat4(1), a.yaw, vec3(0, 1, 0))
-			      * glm::scale(mat4(1), vec3(a.scale));
-			Instance inst = material(GUN_ALBEDO, 0.85f, 0.30f, 1.f, 1.f); // same steel as the viewmodel
-			inst.model = model;
-			renderer->buffer(MODE_ANIM_UV).append_instances(a.mesh, 1, &inst);
-		}
-
-		// bullets : one contiguous block of instances
-		Instance bullet_inst[MAX_BULLETS];
-		uint num_bullets = 0;
-		for (uint i = 0; i < MAX_BULLETS; i++)
-		{
-			if (player.bullets[i].life <= 0) continue;
-			bullet_inst[num_bullets] = material(vec3(1.f, 0.86f, 0.42f), 0.f, 0.4f); // hot tracer, flat colour
-			bullet_inst[num_bullets].model = glm::translate(mat4(1), player.bullets[i].pos);
-			num_bullets++;
-		}
-		if (num_bullets)
-			renderer->buffer(MODE_STATIC_UV).append_instances(player.bullet_mesh, num_bullets, bullet_inst);
 	}
 };
-
-// the test pistol's four action frames : reload, shoot, inspect, idle
-void slice_testpistol(Animation* clip)
-{
-	clip->segs[0] = {  0, 85, 0, 0.40f }; // reload
-	clip->segs[1] = {  0,  0, 0, 0.40f }; // shoot : no take yet
-	clip->segs[2] = {  0,  0, 0, 0.40f }; // inspect : no take yet
-	clip->segs[3] = {  0,  0, 0, 0.40f }; // idle : no take yet
-	clip->num_segs = 4;
-}
-
-// the display row and the player's armory read the same table : mesh, clip,
-// which take starts it, and how long one cycle runs
-struct Weapon_Setup
-{
-	const char* mesh;
-	const char* clip;
-	uint seg;
-	float dur;
-};
-
-static const Weapon_Setup WEAPON_SETUP[NUM_WEAPONS] = {
-	{ "assets/anim/glock.mesh_anim",       "assets/anim/glock.anim",       0, 2.0f },
-	{ "assets/anim/ak.mesh_anim",          "assets/anim/ak.anim",          0, 2.6f },
-	{ "assets/anim/m4.mesh_anim",          "assets/anim/m4.anim",          1, 2.3f },
-	{ "assets/anim/shotgun.mesh_anim",     "assets/anim/shotgun.anim",     1, 3.2f },
-	{ "assets/anim/pistol_colt.mesh_anim", "assets/anim/pistol_colt.anim", 1, 1.6f },
-	{ "assets/anim/bolt_action.mesh_anim", "assets/anim/bolt_action.anim", 0, 1.4f },
-	{ "assets/anim/testpistol.mesh_anim",  "assets/anim/testpistol.anim",  0, 3.6f },
-};
-
-// magazine size and the four action slices for each weapon. some takes are
-// shared (the AK cycle, the bolt action) so the map is not always 0/1/2/3
-struct Weapon_Action
-{
-	uint mag;
-	uint reload, shoot, inspect, idle;
-};
-
-static const Weapon_Action WEAPON_ACTIONS[NUM_WEAPONS] = {
-	{ 17, 0, 1, 2, 3 }, // glock
-	{ 30, 0, 0, 0, 1 }, // ak
-	{ 30, 1, 2, 0, 3 }, // m4
-	{  8, 1, 0, 2, 3 }, // shotgun
-	{  6, 3, 1, 2, 0 }, // colt
-	{  5, 1, 0, 1, 2 }, // bolt action
-	{ 17, 0, 1, 2, 3 }, // test pistol
-};
-
-struct Weapon_Actor_Ref
-{
-	uint mesh, player;
-};
-
-// frame ranges per weapon + a different feel on every segment
-void weapon_slice(uint index, Animation* clip)
-{
-	switch (index)
-	{
-		case 0: // glock : the classic frame map, felt rather than hurried
-			clip->segs[0] = {   0,  63, 2, 0.85f }; // reload  : slow pull, hard slam, spring
-			clip->segs[1] = {  65,  72, 3, 1.00f }; // shoot   : snaps out, big overshoot
-			clip->segs[2] = {  74, 104, 3, 0.60f }; // inspect : settles with jiggle
-			clip->segs[3] = { 104, 104, 0, 0.40f }; // idle pose
-			clip->num_segs = 4;
-			break;
-		case 1: // ak : one continuous action cycle
-			clip->segs[0] = { 0, 88, 2, 0.35f }; // full cycle
-			clip->segs[1] = { 88, 88, 0, 0.40f }; // idle pose
-			clip->num_segs = 2;
-			break;
-		case 2: // m4
-			clip->segs[0] = {   0,  50, 1, 0.30f }; // inspect
-			clip->segs[1] = {  31, 100, 3, 0.40f }; // reload
-			clip->segs[2] = { 100, 107, 2, 0.60f }; // shoot
-			clip->segs[3] = { 103, 103, 0, 0.40f }; // idle pose
-			clip->num_segs = 4;
-			break;
-		case 3: // shotgun
-			clip->segs[0] = {  0,  16, 2, 0.60f }; // shoot
-			clip->segs[1] = { 17,  77, 3, 0.40f }; // reload
-			clip->segs[2] = { 18,  78, 1, 0.30f }; // inspect
-			clip->segs[3] = { 77,  77, 0, 0.40f }; // idle pose
-			clip->num_segs = 4;
-			break;
-		case 4: // colt : cut at its rotation rests
-			clip->segs[0] = {  0,  2, 0, 0.40f };
-			clip->segs[1] = {  3, 28, 3, 0.45f };
-			clip->segs[2] = { 29, 33, 2, 0.35f };
-			clip->segs[3] = { 34, 46, 1, 0.30f };
-			clip->num_segs = 4;
-			break;
-		case 5: // bolt action : one working cycle, no rotation rest to cut at,
-		        // so linear time and let the motion's own ease do the work
-			clip->segs[0] = {  0, 33, 0, 0.35f }; // full cycle : settle, work the action, settle
-			clip->segs[1] = {  8, 20, 0, 0.60f }; // the action : unlock, back, eject, home, lock
-			clip->segs[2] = { 33, 33, 0, 0.40f }; // idle pose (translation-identical to frame 0)
-			clip->num_segs = 3;
-			break;
-		case 6: // testpistol : a reload take and nothing else yet
-			slice_testpistol(clip);
-			break;
-	}
-}
-
-// load one weapon actor into the animated buffer and start its cycle
-Weapon_Actor_Ref weapon_add_actor(Scene* s, GameRenderer* renderer, uint index, vec3 pos,
-                                  float yaw, float scale)
-{
-	Weapon_Actor_Ref ref = {};
-	if (index >= NUM_WEAPONS) return ref;
-
-	uint mesh = renderer->add_anim_mesh(WEAPON_SETUP[index].mesh);
-	uint clip = 0;
-	renderer->animloader.load(WEAPON_SETUP[index].clip, &clip);
-	if (!mesh || !clip) return ref;
-
-	weapon_slice(index, &renderer->animloader.clips[clip]);
-
-	uint player = renderer->animloader.play(clip, WEAPON_SETUP[index].seg,
-	                                        WEAPON_SETUP[index].dur);
-	if (player == (uint)-1) return ref;
-
-	renderer->bind_player(mesh, player);
-	s->add_actor(mesh, player, pos, yaw, scale);
-
-	ref.mesh = mesh;
-	ref.player = player;
-	return ref;
-}
-
 // the hero sphere's live material : the builder fills the handle, the debug
 // tab edits the values and applies them to the prop
 struct Render_Controls
@@ -716,7 +354,7 @@ void scene_menu(Scene* s, GameRenderer* renderer)
 		block.mat_b = vec4(.72f, 1.f, 0.f, 0.f);
 	}
 
-	s->finish(renderer, "menu");
+	s->finish("menu");
 }
 
 void scene_menu_ux(Scene* s, GameWindow* window)
@@ -743,8 +381,8 @@ void scene_render(Scene* s, GameRenderer* renderer)
 
 	// neutral floor : the grid is a developer texture, not part of the lab
 	Scene::Prop& floor = s->props[0];
-	floor.mat_a = vec4(0.045f, 0.048f, 0.055f, 0.f);
-	floor.mat_b = vec4(0.55f, 1.f, 0.f, 0.f);
+	floor.mat_a = vec4(0.240f, 0.245f, 0.265f, 0.f);
+	floor.mat_b = vec4(0.58f, 1.f, 0.f, 0.f);
 
 	// stage and backdrop : a dark, matte frame for the tests
 	uint cube_mesh  = renderer->add_mesh(MeshFactory::generate_cube(1.f), "assets/textures/checker.bmp");
@@ -752,11 +390,12 @@ void scene_render(Scene* s, GameRenderer* renderer)
 
 	Scene::Prop& stage = s->add_prop(stage_mesh, vec3(0.f, .15f, -4.f), 0, vec3(17.f, .3f, 10.f));
 	stage.phys_id = s->phys.add_box(stage.pos, vec3(8.5f, .15f, 5.f), 0);
-	stage.mat_a = vec4(0.060f, 0.064f, 0.072f, 0.f);
-	stage.mat_b = vec4(0.34f, 1.f, 0.f, 0.f);
+	stage.mat_a = vec4(0.300f, 0.310f, 0.340f, 0.f);
+	stage.mat_b = vec4(0.36f, 1.f, 0.f, 0.f);
+	s->light_floor_y = stage.pos.y + stage.scale.y * .5f; // footprints sit on the stage
 
 	Scene::Prop& backdrop = s->add_prop(stage_mesh, vec3(0.f, 3.f, -9.f), 0, vec3(20.f, 6.f, .2f));
-	backdrop.mat_a = vec4(0.020f, 0.022f, 0.026f, 0.f);
+	backdrop.mat_a = vec4(0.110f, 0.115f, 0.130f, 0.f);
 	backdrop.mat_b = vec4(0.72f, 1.f, 0.f, 0.f);
 
 	// material library : ten named spheres, metals first
@@ -787,7 +426,7 @@ void scene_render(Scene* s, GameRenderer* renderer)
 
 	// metal/roughness matrix : five steps each way on a matte panel
 	Scene::Prop& panel = s->add_prop(stage_mesh, vec3(0.f, 2.1f, -8.75f), 0, vec3(3.6f, 3.6f, .12f));
-	panel.mat_a = vec4(0.030f, 0.032f, 0.038f, 0.f);
+	panel.mat_a = vec4(0.200f, 0.205f, 0.220f, 0.f);
 	panel.mat_b = vec4(0.62f, 1.f, 0.f, 0.f);
 
 	const uint  columns = 5;
@@ -822,7 +461,7 @@ void scene_render(Scene* s, GameRenderer* renderer)
 
 	// hero sphere : the material the UX edits live
 	Scene::Prop& plinth = s->add_prop(stage_mesh, vec3(7.5f, .6f, -2.5f), 0, vec3(1.6f, .6f, 1.6f));
-	plinth.mat_a = vec4(0.060f, 0.064f, 0.072f, 0.f);
+	plinth.mat_a = vec4(0.260f, 0.270f, 0.290f, 0.f);
 	plinth.mat_b = vec4(0.34f, 1.f, 0.f, 0.f);
 
 	Scene::Prop& hero = s->add_prop(sphere_mesh, vec3(7.5f, 1.7f, -2.5f), 0, .8f);
@@ -830,23 +469,27 @@ void scene_render(Scene* s, GameRenderer* renderer)
 	hero.mat_b = vec4(render_controls.hero_roughness, render_controls.hero_ao, 0.f, 0.f);
 	snprintf(hero.label, sizeof(hero.label), "hero");
 
-	// local-light stress row : eight volumes over the material line. each sphere
-	// is the light's reach, so the cost rises with screen coverage, not count
-	for (uint i = 0; i < 8; i++)
+	// local-light row : four volumes over the material line. each floor ring is
+	// the light's reach, so the cost rises with screen coverage, not count
+	static const vec3 light_colors[4] = {
+		vec3(1.00f, .34f, .16f), vec3(1.00f, .78f, .30f),
+		vec3(.32f, .82f, .55f), vec3(.30f, .58f, 1.00f),
+	};
+	for (uint i = 0; i < 4; i++)
 	{
-		float t = (float)i / 7.f;
-		vec3 color = vec3(1.f - t, .25f + t * .55f, t);
-		vec3 at = vec3(-7.f + t * 14.f, 2.6f, -3.2f);
+		float t = (float)i / 3.f;
+		vec3 color = light_colors[i];
+		vec3 at = vec3(-4.5f + t * 9.f, 2.4f, -2.8f);
 
-		s->add_light(at, color, 5.5f, 3.2f);
+		s->add_light(at, color, 3.6f, 26.f);
 
-		Scene::Prop& bulb = s->add_prop(sphere_mesh, at, 0, .11f);
+		Scene::Prop& bulb = s->add_prop(sphere_mesh, at, 0, .09f);
 		bulb.mat_a = vec4(color, 0.f);
 		bulb.mat_b = vec4(.25f, 1.f, 0.f, 0.f);
 	}
 
-	s->player.init(renderer, &s->phys, vec3(0.f, 2.2f, 10.f), 0, 0);
-	s->finish(renderer, "render");
+	s->player.init(&s->phys, vec3(0.f, 2.2f, 10.f));
+	s->finish("render");
 
 	// props are sorted by mesh in finish(), so find the hero afterwards
 	for (uint i = 0; i < s->num_props; i++)
@@ -1048,15 +691,15 @@ void scene_water(Scene* s, GameRenderer* renderer)
 
 	// seabed : a sandy shelf, far enough down that the troughs never reach it
 	Scene::Prop& floor = s->props[0];
-	floor.mat_a = vec4(.12f, .14f, .10f, 0.f);
+	floor.mat_a = vec4(.30f, .27f, .20f, 0.f);
 	floor.mat_b = vec4(.92f, 1.f, 0.f, 0.f);
 
-	s->player.init(renderer, &s->phys, vec3(0, WATER_LEVEL + 3.f, 22.f), 0, 0);
+	s->player.init(&s->phys, vec3(0, WATER_LEVEL + 3.f, 22.f));
 	s->player.flycam = true; // inspect the surface first
 
 	water_build_content(s, renderer, WATER_LEVEL);
 
-	s->finish(renderer, "water");
+	s->finish("water");
 	water_resolve_props(s);
 	s->water_dirty = false;
 	s->water_spectrum = false;
@@ -1164,12 +807,12 @@ void scene_shallow(Scene* s, GameRenderer* renderer)
 	}
 
 	// the player is only a camera here; the basin is walkable if F is pressed
-	s->player.init(renderer, &s->phys, vec3(0, 2.4f, 7.f), 0, 0);
+	s->player.init(&s->phys, vec3(0, 2.4f, 7.f));
 	s->player.flycam = true;
 
 	shallow_build_content(s, renderer, vec3(0), shallow_config.level);
 
-	s->finish(renderer, "shallow");
+	s->finish("shallow");
 	shallow_resolve_props(s);
 }
 
@@ -1548,7 +1191,7 @@ bool physics_body_up(Scene* s, uint id, vec3* out)
 }
 
 // a real Bullet soft-body flag : one pinned hoist column, the rest free.
-void physics_add_flag(Scene* s, uint cube_mesh, uint cylinder_mesh)
+void physics_add_flag(Scene* s, uint cylinder_mesh)
 {
 	vec3 base = vec3(4.6f, 0.f, -27.f);
 
@@ -1813,7 +1456,7 @@ void scene_physics(Scene* s, GameRenderer* renderer)
 
 	physics_add_button(s, cube_mesh, cylinder_mesh);
 	physics_add_triggers(s, cube_mesh, sphere_mesh, cone_mesh);
-	physics_add_flag(s, cube_mesh, cylinder_mesh);
+	physics_add_flag(s, cylinder_mesh);
 	physics_add_soft_cloth(s, cube_mesh, sphere_mesh);
 	physics_add_curtain(s, cube_mesh);
 
@@ -2116,8 +1759,8 @@ void scene_physics(Scene* s, GameRenderer* renderer)
 
 	physics_apply_settings(s);
 
-	s->player.init(renderer, &s->phys, vec3(0.f, 2.5f, 14.f), 0, 0);
-	s->finish(renderer, "physics");
+	s->player.init(&s->phys, vec3(0.f, 2.5f, 14.f));
+	s->finish("physics");
 	physics_build_soft_meshes(s, renderer);
 	physics_resolve_interactive(s);
 }
@@ -2313,7 +1956,7 @@ void scene_render_ux(Scene* s, GameWindow* window)
 		? LIGHTING_PRESET_NAMES[s->lighting_kind] : "-";
 
 	char sub[96];
-	snprintf(sub, sizeof(sub), "%s  |  10 materials  |  8 local lights  |  5x5 metal / roughness", preset);
+	snprintf(sub, sizeof(sub), "%s  |  10 materials  |  4 local lights  |  5x5 metal / roughness", preset);
 
 	hud_text_center(dl, 24.f * scale, cx, 36.f * scale, title, "RENDER");
 	hud_text_center(dl, 14.f * scale, cx, 70.f * scale, dim, sub);
@@ -2336,12 +1979,6 @@ void hud_text(ImDrawList* dl, float size, ImVec2 at, ImU32 color, const char* te
 	ImFont* font = hud_font_of(size);
 	dl->AddText(font, size, ImVec2(at.x + 1.5f, at.y + 1.5f), IM_COL32(0, 0, 0, 170), text);
 	dl->AddText(font, size, at, color, text);
-}
-
-void hud_text_right(ImDrawList* dl, float size, float right, float y, ImU32 color, const char* text)
-{
-	ImVec2 extent = hud_font_of(size)->CalcTextSizeA(size, 9999.f, 0.f, text);
-	hud_text(dl, size, ImVec2(right - extent.x, y), color, text);
 }
 
 void hud_text_center(ImDrawList* dl, float size, float center_x, float y, ImU32 color, const char* text)
@@ -2487,6 +2124,7 @@ void scene_render_debug(Scene* s)
 
 	ImGui::Checkbox("local light volumes", &s->local_lights);
 	ImGui::SameLine();
+	ImGui::Checkbox("light wires", &debug_draw.lights);
 	ImGui::TextDisabled("%u lights", s->num_lights);
 
 	ImGui::Separator();

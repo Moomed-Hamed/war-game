@@ -101,42 +101,16 @@ struct Phys_Debug
 	}
 };
 
-// one hinge2 car : chassis + 4 wheels, suspension and drive on the hinges
-struct Phys_Vehicle
-{
-	uint chassis_id; // phys_id of the chassis (0 = no car built)
-	btRaycastVehicle* car;
-	btVehicleRaycaster* raycaster;
-
-	float spin_cmd, steer_cmd; // last input asked for : ux readout
-	float steer;               // current front wheel angle, radians
-
-	// live tuning : the debug tab edits these
-	float engine_force;         // drive force per wheel
-	float brake_force;
-	float coast_brake;
-	float top_speed;            // km/h where engine fade reaches zero
-	float steer_angle;          // max front wheel angle, radians
-	float steer_rate;           // steering slew, rad/s
-	float wheel_grip;           // tyre friction slip
-	float suspension_stiffness;
-	float suspension_damping;
-	float suspension_compression;
-	float suspension_travel;    // cm
-	float roll_influence;
-};
-
 // joints the scene built. bullet owns the constraints themselves, this is the
 // list the ux reads : limits are radians and mean different things per kind
-enum { PHYS_HINGE = 1, PHYS_CONETWIST, PHYS_HINGE2,
-       PHYS_POINT, PHYS_SLIDER, PHYS_FIXED };
+enum { PHYS_HINGE = 1, PHYS_CONETWIST, PHYS_SLIDER, PHYS_FIXED };
 const uint MAX_JOINTS = 512;
 
 struct Phys_Joint
 {
-	uint kind;    // PHYS_HINGE / PHYS_CONETWIST / PHYS_HINGE2
+	uint kind;    // PHYS_HINGE / PHYS_CONETWIST / PHYS_SLIDER / PHYS_FIXED
 	uint a, b;    // phys_ids the joint links
-	float lo, hi; // hinge : (lo, hi) | cone twist : (swing, twist) | hinge2 : +-steer
+	float lo, hi; // hinge / slider : (lo, hi) | cone twist : (swing, twist)
 };
 
 // one local frame for a ragdoll joint : euler (x, y, z) plus origin, scaled
@@ -162,7 +136,6 @@ struct Physics
 	Phys_Body bodies[MAX_BODIES]; // [0] reserved : phys_id 0 = none
 	uint num_bodies;
 	Phys_Debug debug; // collider, constraint and ray wires over the scene
-	Phys_Vehicle vehicle; // the scene car, driven from update_vehicle()
 	Phys_Joint joints[MAX_JOINTS]; // tracked joints, read by the ux tab
 	uint num_joints;
 
@@ -194,15 +167,6 @@ struct Physics
 	void shutdown()
 	{
 		if (!world) return;
-
-		if (vehicle.car)
-		{
-			world->removeVehicle(vehicle.car);
-			delete vehicle.car;
-			vehicle.car = NULL;
-		}
-		delete vehicle.raycaster;
-		vehicle.raycaster = NULL;
 
 		// soft bodies first : they can hold contact references to rigid bodies
 		btSoftBodyArray& soft = world->getSoftBodyArray();
@@ -244,7 +208,6 @@ struct Physics
 		memset(joints, 0, sizeof(joints));
 		num_bodies = 1;
 		num_joints = 0;
-		vehicle = {};
 	}
 
 	// one body in the world. mass 0 = static. tilt = spawn rotation, radians about
@@ -317,22 +280,6 @@ struct Physics
 		return slot;
 	}
 
-	// drop a body and free its slot for the next streaming add
-	void remove_body(uint phys_id)
-	{
-		if (phys_id == 0 || phys_id >= num_bodies) return;
-
-		Phys_Body& b = bodies[phys_id];
-		if (!b.body) return;
-
-		world->removeRigidBody(b.body);
-		if (b.body->getMotionState()) delete b.body->getMotionState();
-		if (b.body->getCollisionShape()) delete b.body->getCollisionShape();
-		delete b.body;
-
-		b = {};
-	}
-
 	uint add_box(vec3 pos, vec3 half_extents, float mass, vec3 tilt = vec3(0))
 	{
 		return add_body(PHYS_BOX, pos, half_extents, mass, tilt);
@@ -375,63 +322,6 @@ struct Physics
 	uint add_ground(float half_size, float top = 0.f)
 	{
 		return add_body(PHYS_BOX, vec3(0, top - 1.f, 0), vec3(half_size, 1, half_size), 0);
-	}
-
-	// static heightfield : heights are centred on the grid and the body is
-	// lifted by the data's mid height, so world y equals the height value
-	uint add_heightfield(const float* heights, int n, float size, float min_h, float max_h)
-	{
-		return set_heightfield(0, heights, n, size, min_h, max_h);
-	}
-
-	// rebuild a heightfield in an existing slot : the heights array is owned by the
-	// caller, so a live terrain edit updates the data and replaces only the shape
-	uint set_heightfield(uint id, const float* heights, int n, float size, float min_h, float max_h)
-	{
-		if (!heights || n < 2) return 0;
-
-		uint slot = id < num_bodies ? id : 0;
-		if (slot)
-		{
-			btRigidBody* old = bodies[slot].body;
-			if (old)
-			{
-				world->removeRigidBody(old);
-				delete old->getMotionState();
-				delete old->getCollisionShape();
-				delete old;
-			}
-			bodies[slot] = {};
-		}
-		else
-		{
-			if (num_bodies >= MAX_BODIES)
-			{
-				console->add_entry("Physics body slots full (heightfield)", FIXME, PHYS);
-				return 0;
-			}
-			slot = num_bodies++;
-		}
-
-		btHeightfieldTerrainShape* shape =
-			new btHeightfieldTerrainShape(n, n, heights, min_h, max_h, 1, false);
-		float spacing = size / (float)(n - 1);
-		shape->setLocalScaling(btVector3(spacing, 1.f, spacing));
-
-		btTransform start;
-		start.setIdentity();
-		start.setOrigin(btVector3(0.f, (min_h + max_h) * .5f, 0.f));
-
-		btDefaultMotionState* motion = new btDefaultMotionState(start);
-		btRigidBody::btRigidBodyConstructionInfo info(0.f, motion, shape, btVector3(0, 0, 0));
-		btRigidBody* body = new btRigidBody(info);
-		body->setFriction(PHYS_FRICTION);
-		body->setUserIndex(slot);
-		world->addRigidBody(body);
-
-		bodies[slot] = { body, 0, vec3(size * .5f, (max_h - min_h) * .5f, size * .5f), 0.f };
-		bodies[slot].spawn_pos = vec3(0.f, (min_h + max_h) * .5f, 0.f);
-		return slot;
 	}
 
 	// ragdoll : an 11-capsule figure with 10 joints. every part is a regular
@@ -547,16 +437,6 @@ struct Physics
 		add_joint(PHYS_CONETWIST, a, b, swing, twist);
 	}
 
-	btPoint2PointConstraint* add_point(btRigidBody& a, btRigidBody& b,
-	                                   btVector3 pa, btVector3 pb)
-	{
-		btPoint2PointConstraint* j = new btPoint2PointConstraint(a, b, pa, pb);
-		j->m_setting.m_impulseClamp = 8.f;
-		world->addConstraint(j, true);
-		add_joint(PHYS_POINT, a, b, 0.f, 0.f);
-		return j;
-	}
-
 	btSliderConstraint* add_slider(btRigidBody& a, btRigidBody& b,
 	                               btTransform fa, btTransform fb,
 	                               float lo, float hi)
@@ -615,169 +495,6 @@ struct Physics
 		joints[num_joints++] = { kind, (uint)a.getUserIndex(), (uint)b.getUserIndex(), lo, hi };
 	}
 
-	// vehicle : hinge2 suspension car - chassis box + 4 rolled cylinder wheels
-	// with drive and steer motors on the hinges. yaw is the spawn heading
-	uint add_vehicle(vec3 pos, float yaw = 0.f)
-	{
-		if (num_bodies + 1 > MAX_BODIES)
-		{
-			console->add_entry("Not enough room for a vehicle", FIXME, PHYS);
-			return 0;
-		}
-
-		vehicle.engine_force = 900.f;
-		vehicle.brake_force = 45.f;
-		vehicle.coast_brake = 3.f;
-		vehicle.top_speed = 140.f;
-		vehicle.steer_angle = .45f;
-		vehicle.steer_rate = 4.f;
-		vehicle.wheel_grip = 1.5f;
-		vehicle.suspension_stiffness = 35.f;
-		vehicle.suspension_damping = 2.3f;
-		vehicle.suspension_compression = 4.4f;
-		vehicle.suspension_travel = 30.f;
-		vehicle.roll_influence = .05f;
-
-		vehicle.chassis_id = add_box(pos, vec3(1.f, .5f, 2.f), 800.f, vec3(0.f, yaw, 0.f));
-		if (!vehicle.chassis_id) return 0;
-
-		btRigidBody* chassis = bodies[vehicle.chassis_id].body;
-		chassis->setActivationState(DISABLE_DEACTIVATION); // a parked car stays ready
-		chassis->setDamping(.05f, .10f);
-		chassis->setFriction(.6f);
-		chassis->setRestitution(.1f);
-
-		btRaycastVehicle::btVehicleTuning tuning;
-		tuning.m_suspensionStiffness = vehicle.suspension_stiffness;
-		tuning.m_suspensionCompression = vehicle.suspension_compression;
-		tuning.m_suspensionDamping = vehicle.suspension_damping;
-		tuning.m_maxSuspensionTravelCm = vehicle.suspension_travel;
-		tuning.m_frictionSlip = vehicle.wheel_grip;
-		tuning.m_maxSuspensionForce = 6000.f;
-
-		btDefaultVehicleRaycaster* raycaster = new btDefaultVehicleRaycaster(world);
-		btRaycastVehicle* car = new btRaycastVehicle(tuning, chassis, raycaster);
-		car->setCoordinateSystem(0, 1, 2); // x right, y up, z forward
-		world->addVehicle(car);
-
-		vehicle.car = car;
-		vehicle.raycaster = raycaster;
-
-		const float radius = .5f;
-		const float rest_length = .25f;
-
-		for (uint i = 0; i < 4; i++)
-		{
-			bool front = i < 2;
-			float x = (i % 2) ? 1.f : -1.f;
-			float z = front ? 1.35f : -1.35f;
-
-			btWheelInfo& w = car->addWheel(btVector3(x, 0.f, z), btVector3(0, -1, 0),
-			                               btVector3(-1, 0, 0), rest_length, radius, tuning, front);
-			w.m_suspensionStiffness = vehicle.suspension_stiffness;
-			w.m_wheelsDampingCompression = vehicle.suspension_compression;
-			w.m_wheelsDampingRelaxation = vehicle.suspension_damping;
-			w.m_frictionSlip = vehicle.wheel_grip;
-			w.m_rollInfluence = vehicle.roll_influence;
-			w.m_maxSuspensionTravelCm = vehicle.suspension_travel;
-			w.m_maxSuspensionForce = 6000.f;
-		}
-
-		console->add_entry("Vehicle spawned : arrows drive", DEBUG, PHYS);
-		return vehicle.chassis_id;
-	}
-
-	// drive : up/down spin the wheels, left/right steer the front pair. when the
-	// scene is not driving, the car coasts to a stop with the wheels straight
-	void update_vehicle(GameWindow* window, bool driving = true)
-	{
-		if (!vehicle.car) return;
-
-		if (!driving)
-		{
-			vehicle.spin_cmd = 0.f;
-			vehicle.steer_cmd = 0.f;
-			vehicle.steer = 0.f;
-
-			for (uint i = 0; i < 4; i++)
-			{
-				vehicle.car->applyEngineForce(0.f, i);
-				vehicle.car->setBrake(vehicle.coast_brake, i);
-				vehicle.car->setSteeringValue(0.f, i);
-			}
-			return;
-		}
-
-		if (window->focus_status != GAME) return;      // menus own the input
-		if (ImGui::GetIO().WantCaptureKeyboard) return; // typing into the console
-
-		float dt = window->dtime;
-		if (dt <= 0.f) return;
-
-		float speed_kmh = vehicle.car->getCurrentSpeedKmHour();
-		float abs_speed = speed_kmh < 0.f ? -speed_kmh : speed_kmh;
-
-		float engine = 0.f;
-		float brake = vehicle.coast_brake;
-
-		if (window->keys.UP.is_pressed)
-		{
-			float fade = 1.f - abs_speed / vehicle.top_speed;
-			if (fade < 0.f) fade = 0.f;
-			engine = vehicle.engine_force * fade;
-			brake = 0.f;
-		}
-		else if (window->keys.DOWN.is_pressed)
-		{
-			if (speed_kmh > 5.f)
-			{
-				brake = vehicle.brake_force;
-			}
-			else
-			{
-				engine = -vehicle.engine_force * .6f;
-				brake = 0.f;
-			}
-		}
-
-		vehicle.spin_cmd = engine;
-
-		// speed-sensitive steering, slewed toward the target; zero target self-centres
-		float steer_target = 0.f;
-		float speed_factor = 1.f - abs_speed / vehicle.top_speed;
-		if (speed_factor < .35f) speed_factor = .35f;
-		if (window->keys.LEFT.is_pressed) steer_target = vehicle.steer_angle * speed_factor;
-		else if (window->keys.RIGHT.is_pressed) steer_target = -vehicle.steer_angle * speed_factor;
-
-		float slew = vehicle.steer_rate * dt;
-		if (vehicle.steer < steer_target - slew) vehicle.steer += slew;
-		else if (vehicle.steer > steer_target + slew) vehicle.steer -= slew;
-		else vehicle.steer = steer_target;
-
-		vehicle.steer_cmd = steer_target;
-
-		bool handbrake = window->keys.SPACE.is_pressed;
-
-		for (uint i = 0; i < 4; i++)
-		{
-			btWheelInfo& w = vehicle.car->getWheelInfo(i);
-			w.m_suspensionStiffness = vehicle.suspension_stiffness;
-			w.m_wheelsDampingRelaxation = vehicle.suspension_damping;
-			w.m_wheelsDampingCompression = vehicle.suspension_compression;
-			w.m_rollInfluence = vehicle.roll_influence;
-			w.m_maxSuspensionTravelCm = vehicle.suspension_travel;
-
-			bool rear = i >= 2;
-			w.m_frictionSlip = (handbrake && rear) ? vehicle.wheel_grip * .55f : vehicle.wheel_grip;
-
-			vehicle.car->applyEngineForce(engine, i);
-			vehicle.car->setBrake((handbrake && rear) ? vehicle.brake_force * 2.f : brake, i);
-		}
-
-		for (uint i = 0; i < 2; i++)
-			vehicle.car->setSteeringValue(vehicle.steer, i);
-	}
-
 	// fixed 60hz internal step, up to 10 substeps to catch hitches
 	void step(float dt)
 	{
@@ -809,23 +526,6 @@ struct Physics
 		return true;
 	}
 
-	// move a body outright (doors, interior transitions) : zeroed and awake, so
-	// the next step starts from the new pose instead of carrying old momentum
-	void set_body_pose(uint phys_id, vec3 pos)
-	{
-		if (phys_id == 0 || phys_id >= num_bodies || !bodies[phys_id].body) return;
-
-		btRigidBody* b = bodies[phys_id].body;
-		btTransform t = b->getWorldTransform();
-		t.setOrigin(btVector3(pos.x, pos.y, pos.z));
-
-		if (b->getMotionState()) b->getMotionState()->setWorldTransform(t);
-		b->setWorldTransform(t);
-		b->setLinearVelocity(btVector3(0, 0, 0));
-		b->setAngularVelocity(btVector3(0, 0, 0));
-		b->activate();
-	}
-
 	// raw readouts for the ux body table (statics included)
 	vec3 get_position(uint phys_id)
 	{
@@ -839,32 +539,6 @@ struct Physics
 		if (phys_id == 0 || phys_id >= num_bodies || !bodies[phys_id].body) return vec3(0);
 		btVector3 v = bodies[phys_id].body->getLinearVelocity();
 		return vec3(v.x(), v.y(), v.z());
-	}
-
-	// ---- live vehicle numbers for the ux ----
-
-	// chassis speed from the raycast vehicle's own readout
-	float vehicle_speed()
-	{
-		return vehicle.car ? (float)vehicle.car->getCurrentSpeedKmHour() / 3.6f : 0.f;
-	}
-
-	// front wheel angle and wheel rotation
-	float vehicle_steer() { return vehicle.car ? vehicle.steer : 0.f; }
-	float vehicle_spin()  { return vehicle.car ? (float)vehicle.car->getWheelInfo(0).m_rotation : 0.f; }
-
-	// raycast wheel pose for the visual props
-	bool get_wheel_transform(uint index, vec3* pos, mat3* rot)
-	{
-		if (!vehicle.car || index >= (uint)vehicle.car->getNumWheels()) return false;
-
-		const btTransform& t = vehicle.car->getWheelTransformWS((int)index);
-		float m[16];
-		t.getOpenGLMatrix(m);
-
-		if (pos) *pos = vec3(m[12], m[13], m[14]);
-		if (rot) *rot = mat3(vec3(m[0], m[1], m[2]), vec3(m[4], m[5], m[6]), vec3(m[8], m[9], m[10]));
-		return true;
 	}
 
 	// how many tracked joints touch this body (ux table column)
@@ -919,16 +593,6 @@ struct Physics
 
 		b->activate(true);
 		b->applyCentralImpulse(btVector3(impulse.x, impulse.y, impulse.z));
-	}
-
-	// continuous force, used by the wind on the flag / cloth
-	void apply_force(uint phys_id, vec3 force)
-	{
-		if (phys_id == 0 || phys_id >= num_bodies || !bodies[phys_id].body) return;
-		btRigidBody* b = bodies[phys_id].body;
-		if (b->getMass() == 0) return;
-		b->activate(true);
-		b->applyCentralForce(btVector3(force.x, force.y, force.z));
 	}
 
 	// nudge every dynamic body awake : watch the whole scene stir and re-settle

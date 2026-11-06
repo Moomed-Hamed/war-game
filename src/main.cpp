@@ -54,7 +54,7 @@ int main()
 
 		renderer->draw_shadows(window, scene->lighting, scene->camera.position,
 		                       scene->camera.front, scene->shadow_extent); // sun depth pass
-		renderer->draw(window, scene->proj_view);  // static + skinned pass into the gbuf
+		renderer->draw(window, scene->proj_view);  // opaque pass into the gbuf
 		window->draw_lighting(scene->camera.position, scene->proj_view, &scene->lighting); // sun + ambient
 		renderer->draw_light_volumes(window, scene->proj_view, scene->camera.position,
 		                             scene->lights,
@@ -65,11 +65,10 @@ int main()
 		                     scene->lighting); // forward water covers the disks
 		window->post_process(&scene->lighting); // exposure, ACES, display encode
 
-		// one shared wire pass : physics, animation, light volumes and scene guides
+		// one shared wire pass : physics, light volumes and scene guides
 		debug_draw.begin();
 		scene->phys.append_debug();
-		renderer->append_skeleton();
-		renderer->append_light_debug(scene->lights, scene->num_lights);
+		renderer->append_light_debug(scene->lights, scene->num_lights, scene->light_floor_y);
 		debug_draw.append_axes(5.f);
 		debug_draw.append_frustum(scene->proj_view, vec4(.20f, .85f, 1.f, 1.f));
 		debug_draw.draw(scene->proj_view);
